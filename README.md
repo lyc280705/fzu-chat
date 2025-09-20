@@ -1,6 +1,6 @@
 # FZU-Lingxi
 
-[简体中文](README.md)
+[简体中文](README.zh.md)
 
 An intelligent Q&A system for Fuzhou University based on LangGraph and Streamlit.
 
