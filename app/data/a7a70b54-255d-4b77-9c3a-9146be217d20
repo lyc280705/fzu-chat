@@ -1,0 +1,1 @@
+{"lc": 1, "type": "constructor", "id": ["langchain", "schema", "document", "Document"], "kwargs": {"metadata": {"source": "https://math.fzu.edu.cn/info/1099/1915.htm"}, "page_content": "\u5218\u5251\u840d\u7684\u4e2a\u4eba\u7b80\u4ecb\uff1a\u5218\u5251\u840d\u662f\u6570\u7edf\u5b66\u9662\u6559\u6388", "type": "Document"}}

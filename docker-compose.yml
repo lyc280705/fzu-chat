@@ -1,0 +1,37 @@
+
+services:
+  fzu-chat:
+    build: .
+    container_name: fzu-chat
+    restart: always
+    ports:
+      - "100:8501"
+    volumes:
+      - ./app/data:/app/app/data:ro
+      - ./app/faiss:/app/app/faiss:ro
+      - ./app/png:/app/app/png:ro
+      - ./app/conversation_history.sqlite:/app/app/conversation_history.sqlite
+      - ./app/conversation_history.sqlite-shm:/app/app/conversation_history.sqlite-shm
+      - ./app/conversation_history.sqlite-wal:/app/app/conversation_history.sqlite-wal
+    security_opt:
+      - no-new-privileges:true
+    secrets:
+      - dashscope_api_key
+      - bocha_api_key
+      - langsmith_api_key
+      - deepseek_api_key
+      - qianfan_api_key
+    read_only: true
+    tmpfs:
+      - /tmp
+secrets:
+  dashscope_api_key:
+    file: ./dashscope_api_key.txt
+  bocha_api_key:
+    file: ./bocha_api_key.txt
+  langsmith_api_key:
+    file: ./langsmith_api_key.txt
+  deepseek_api_key:
+    file: ./deepseek_api_key.txt
+  qianfan_api_key:
+    file: ./qianfan_api_key.txt

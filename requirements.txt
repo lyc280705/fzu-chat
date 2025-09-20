@@ -1,0 +1,11 @@
+streamlit==1.44.0
+langchain
+langgraph
+langchain-community
+dashscope
+aiosqlite
+faiss-cpu
+sse_starlette
+langgraph-checkpoint-sqlite
+requests
+langchain-deepseek

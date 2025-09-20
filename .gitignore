@@ -1,0 +1,11 @@
+.env
+.vscode/
+chat_history.db
+__pycache__/
+*.pyc
+dashscope_api_key.txt
+deepseek_api_key.txt
+qianfan_api_key.txt
+langsmith_api_key.txt
+bocha_api_key.txt
+conversation_history.sqlite
