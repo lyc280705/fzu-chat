@@ -1,4 +1,4 @@
-# FZU-Lingxi
+# FZU-Chat
 
 [简体中文](README.zh.md)
 
@@ -11,7 +11,7 @@ An intelligent Q&A system for Fuzhou University based on LangGraph and Streamlit
 
 ## Project Introduction
 
-FZU-Lingxi is an intelligent Q&A system designed for the teachers and students of Fuzhou University. It uses RAG technology, combined with the LangGraph workflow and various large language models, to provide users with accurate and timely campus information query services.
+FZU-Chat is an intelligent Q&A system designed for the teachers and students of Fuzhou University. It uses RAG technology, combined with the LangGraph workflow and various large language models, to provide users with accurate and timely campus information query services.
 
 ### Core Features
 
@@ -203,7 +203,7 @@ This project uses a custom license. For details, please refer to the [LICENSE](L
 If you need to cite this project, please use the following format:
 
 ```
-Yuchen Lin, Xun Zhang, Hao Yuan. (2024-2025). FZU-Lingxi: An intelligent Q&A system for Fuzhou University based on LangGraph and Streamlit.
+Yuchen Lin, Xun Zhang, Hao Yuan. (2024-2025). FZU-Chat: An intelligent Q&A system for Fuzhou University based on LangGraph and Streamlit.
 GitHub: https://github.com/lyc280705/fzu-chat
 ```
 
