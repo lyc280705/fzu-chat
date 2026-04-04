@@ -23,6 +23,14 @@ from datetime import datetime
 import requests
 import os
 import json
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+FAISS_DIR = BASE_DIR / "faiss" / "fzu_chat"
+DATA_DIR = BASE_DIR / "data"
+CHECKPOINT_PATH = Path(
+    os.getenv("FZU_CHAT_CHECKPOINT_PATH", str(BASE_DIR / "conversation_history.sqlite"))
+)
 
 def get_langsmith_api_key():
     """从Docker Secret或环境变量获取API密钥"""
@@ -86,13 +94,13 @@ if not BOCHA_API_KEY:
     raise ValueError("Bocha API密钥未设置")
 
 vector_store = FAISS.load_local(
-    "./app/faiss/fzu_chat",
+    str(FAISS_DIR),
     DashScopeEmbeddings(model="text-embedding-v3",dashscope_api_key=dashscope_api_key),
     allow_dangerous_deserialization=True,
 )
 retriever = MultiVectorRetriever(
     vectorstore=vector_store,
-    byte_store=LocalFileStore("./app/data"),
+    byte_store=LocalFileStore(str(DATA_DIR)),
     id_key="doc_id",
     search_kwargs={"k": 3},
 )
@@ -418,8 +426,8 @@ graph_builder.add_edge("tools", "query_or_respond")
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 import sqlite3
-# 修改数据库连接路径到正确的容器内位置
-conn = sqlite3.connect("/app/app/conversation_history.sqlite", check_same_thread=False)
+CHECKPOINT_PATH.parent.mkdir(parents=True, exist_ok=True)
+conn = sqlite3.connect(str(CHECKPOINT_PATH), check_same_thread=False)
 memory = SqliteSaver(conn)
 graph = graph_builder.compile(checkpointer=memory)
 
