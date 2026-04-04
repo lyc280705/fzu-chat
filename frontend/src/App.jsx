@@ -335,10 +335,11 @@ function App() {
     setSending(true)
     setError('')
     const prompt = input.trim()
+    let conversationId = activeConversationId
     setInput('')
 
     try {
-      const conversationId = activeConversationId ?? (await createConversation())
+      conversationId ??= await createConversation()
       const userMessage = {
         id: `user-${crypto.randomUUID()}`,
         role: 'user',
@@ -378,7 +379,7 @@ function App() {
       await readSseStream(response, conversationId)
     } catch (submitError) {
       setError(submitError.message)
-      updateDraftMessage(activeConversationId, (message) => ({
+      updateDraftMessage(conversationId, (message) => ({
         ...message,
         isDraft: false,
         content: '暂时无法生成回复，请稍后再试。',
