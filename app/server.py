@@ -23,6 +23,7 @@ ASSETS_DIR = BASE_DIR / "png"
 STORAGE_DIR = BASE_DIR / "storage"
 STORAGE_DIR.mkdir(exist_ok=True)
 STORE_PATH = Path(os.getenv("FZU_CHAT_STORAGE_PATH", STORAGE_DIR / "conversations.json"))
+MAX_TITLE_LENGTH = int(os.getenv("FZU_CHAT_MAX_TITLE_LENGTH", "20"))
 
 MODEL_OPTIONS = {
     "qwen-max-latest": "通义千问 Max",
@@ -122,7 +123,12 @@ def save_store(payload: Dict[str, Any]) -> None:
     STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
     temp_path = STORE_PATH.with_suffix(".tmp")
     temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    temp_path.replace(STORE_PATH)
+    try:
+        temp_path.replace(STORE_PATH)
+    except OSError as exc:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise RuntimeError("Failed to persist conversation store") from exc
 
 
 
@@ -206,8 +212,15 @@ def combine_tool_calls(message_chunk: Any) -> Any:
         args = tool_call.get("args")
         if isinstance(args, dict):
             continue
-        if isinstance(args, str) and args.startswith('{"query":"'):
-            tool_call["args"] = {"query": args.replace('{"query":"', "").rstrip('"}')}
+        if isinstance(args, str):
+            try:
+                parsed_args = json.loads(args)
+                if isinstance(parsed_args, dict):
+                    tool_call["args"] = parsed_args
+                    continue
+            except json.JSONDecodeError:
+                if args.startswith('{"query":"'):
+                    tool_call["args"] = {"query": args.replace('{"query":"', "").rstrip('"}')}
     return message_chunk
 
 
@@ -246,6 +259,16 @@ def extract_urls(content: str, artifact: Any) -> List[str]:
 
 
 
+def truncate_title(title: str) -> str:
+    cleaned = title.strip()
+    if not cleaned:
+        return "新对话"
+    if len(cleaned) <= MAX_TITLE_LENGTH:
+        return cleaned
+    truncated = cleaned[:MAX_TITLE_LENGTH].rstrip(" ,，。；;")
+    return truncated or "新对话"
+
+
 def summarize_title(messages: List[Dict[str, Any]]) -> str:
     transcript = "\n".join(
         f"{message['role']}: {(message.get('content') or '').strip()}"
@@ -256,7 +279,7 @@ def summarize_title(messages: List[Dict[str, Any]]) -> str:
         return "新对话"
     try:
         summary = summary_chain.invoke({"input": transcript}).strip()
-        return summary[:20] or "新对话"
+        return truncate_title(summary)
     except Exception:
         return "新对话"
 
@@ -437,7 +460,7 @@ def create_message(conversation_id: str, request: MessageCreateRequest) -> Strea
                 },
             )
         except Exception as exc:
-            yield serialize_event("error", {"message": str(exc)})
+            yield serialize_event("error", {"message": "生成回复失败，请稍后重试。"})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -450,8 +473,9 @@ if (FRONTEND_DIST / "ui").exists():
 
 @app.get("/{full_path:path}")
 def serve_frontend(full_path: str) -> Any:
-    requested_path = FRONTEND_DIST / full_path
-    if full_path and requested_path.exists() and requested_path.is_file():
+    requested_path = (FRONTEND_DIST / full_path).resolve()
+    frontend_root = FRONTEND_DIST.resolve()
+    if full_path and requested_path.is_file() and requested_path.is_relative_to(frontend_root):
         return FileResponse(requested_path)
     index_file = FRONTEND_DIST / "index.html"
     if index_file.exists():
