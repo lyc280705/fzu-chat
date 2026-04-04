@@ -9,3 +9,6 @@ qianfan_api_key.txt
 langsmith_api_key.txt
 bocha_api_key.txt
 conversation_history.sqlite
+frontend/node_modules/
+frontend/dist/
+app/storage/conversations.json
