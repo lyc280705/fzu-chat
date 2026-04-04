@@ -26,9 +26,25 @@ const createDraftAssistant = () => ({
   isDraft: true,
 })
 
+const createLocalErrorAssistant = (content = '暂时无法生成回复，请稍后再试。') => ({
+  id: `local-error-${crypto.randomUUID()}`,
+  role: 'assistant',
+  content,
+  parts: [{ type: 'text', content }],
+  feedback: null,
+  timestamp: new Date().toISOString(),
+  isLocalOnly: true,
+})
+
+const toConversationPreview = (content) => content.trim().slice(0, 80)
+
+const canReceiveFeedback = (message) =>
+  message.role === 'assistant' && !message.isDraft && !message.isLocalOnly
+
 const normalizeMessages = (messages = []) =>
   messages.map((message) => ({
     ...message,
+    isLocalOnly: message.isLocalOnly ?? false,
     parts:
       message.parts && message.parts.length > 0
         ? message.parts
@@ -47,6 +63,7 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
+  const [feedbackPendingIds, setFeedbackPendingIds] = useState([])
   const messagesEndRef = useRef(null)
 
   const activeConversation = useMemo(
@@ -125,6 +142,19 @@ function App() {
     loadConversation()
   }, [activeConversationId, messagesByConversation])
 
+  useEffect(() => {
+    if (!activeConversationId) {
+      return
+    }
+
+    const conversationModel =
+      messagesByConversation[activeConversationId]?.model ?? activeConversation?.model
+
+    if (conversationModel) {
+      setSelectedModel(conversationModel)
+    }
+  }, [activeConversation, activeConversationId, messagesByConversation])
+
   const createConversation = async () => {
     const response = await fetch('/api/conversations', {
       method: 'POST',
@@ -193,6 +223,24 @@ function App() {
     setConversations((current) => {
       const filtered = current.filter((conversation) => conversation.id !== summary.id)
       return [summary, ...filtered]
+    })
+  }
+
+  const updateConversationSummaryAfterFailure = (conversationId, prompt) => {
+    setConversations((current) => {
+      const conversation = current.find((item) => item.id === conversationId)
+      if (!conversation) {
+        return current
+      }
+
+      const nextSummary = {
+        ...conversation,
+        preview: toConversationPreview(prompt),
+        updated_at: new Date().toISOString(),
+        message_count: conversation.message_count + 1,
+      }
+
+      return [nextSummary, ...current.filter((item) => item.id !== conversationId)]
     })
   }
 
@@ -379,37 +427,76 @@ function App() {
       await readSseStream(response, conversationId)
     } catch (submitError) {
       setError(submitError.message)
+      const fallbackMessage = createLocalErrorAssistant()
       updateDraftMessage(conversationId, (message) => ({
-        ...message,
-        isDraft: false,
-        content: '暂时无法生成回复，请稍后再试。',
-        parts: [{ type: 'text', content: '暂时无法生成回复，请稍后再试。' }],
+        ...fallbackMessage,
+        id: message.id,
+        timestamp: message.timestamp,
       }))
+      if (conversationId) {
+        updateConversationSummaryAfterFailure(conversationId, prompt)
+      }
     } finally {
       setSending(false)
     }
   }
 
   const handleFeedback = async (messageId, feedback) => {
-    if (!activeConversationId) {
+    const conversationId = activeConversationId
+    if (!conversationId || feedbackPendingIds.includes(messageId)) {
       return
     }
 
+    const currentConversation = messagesByConversation[conversationId]
+    const targetMessage = currentConversation?.messages.find((message) => message.id === messageId)
+    if (!targetMessage || !canReceiveFeedback(targetMessage)) {
+      return
+    }
+
+    const previousFeedback = targetMessage.feedback ?? null
+    setError('')
+    setFeedbackPendingIds((current) => [...current, messageId])
     setMessagesByConversation((current) => ({
       ...current,
-      [activeConversationId]: {
-        ...current[activeConversationId],
-        messages: current[activeConversationId].messages.map((message) =>
+      [conversationId]: {
+        ...current[conversationId],
+        messages: current[conversationId].messages.map((message) =>
           message.id === messageId ? { ...message, feedback } : message,
         ),
       },
     }))
 
-    await fetch(`/api/conversations/${activeConversationId}/feedback`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message_id: messageId, feedback }),
-    })
+    try {
+      const response = await fetch(`/api/conversations/${conversationId}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message_id: messageId, feedback }),
+      })
+
+      if (!response.ok) {
+        throw new Error('反馈提交失败')
+      }
+    } catch (feedbackError) {
+      setMessagesByConversation((current) => {
+        const conversation = current[conversationId]
+        if (!conversation) {
+          return current
+        }
+
+        return {
+          ...current,
+          [conversationId]: {
+            ...conversation,
+            messages: conversation.messages.map((message) =>
+              message.id === messageId ? { ...message, feedback: previousFeedback } : message,
+            ),
+          },
+        }
+      })
+      setError(feedbackError.message)
+    } finally {
+      setFeedbackPendingIds((current) => current.filter((id) => id !== messageId))
+    }
   }
 
   if (loading) {
@@ -536,11 +623,12 @@ function App() {
                         </div>
                       ))}
                   </div>
-                  {message.role === 'assistant' && !message.isDraft && (
+                  {canReceiveFeedback(message) && (
                     <div className="feedback-row">
                       <button
                         type="button"
                         className={message.feedback === 'up' ? 'feedback-button feedback-button--active' : 'feedback-button'}
+                          disabled={feedbackPendingIds.includes(message.id)}
                         onClick={() => void handleFeedback(message.id, 'up')}
                       >
                         👍
@@ -548,6 +636,7 @@ function App() {
                       <button
                         type="button"
                         className={message.feedback === 'down' ? 'feedback-button feedback-button--active' : 'feedback-button'}
+                          disabled={feedbackPendingIds.includes(message.id)}
                         onClick={() => void handleFeedback(message.id, 'down')}
                       >
                         👎
