@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
+import logging
 import os
 from pathlib import Path
 from threading import Lock
@@ -33,7 +35,16 @@ MODEL_OPTIONS = {
 }
 
 store_lock = Lock()
-app = FastAPI(title="FZU Chat API", version="2.0.0")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    ensure_store()
+    yield
+
+
+logger = logging.getLogger(__name__)
+app = FastAPI(title="FZU Chat API", version="2.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
@@ -101,11 +112,6 @@ def ensure_store() -> None:
         return
     STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STORE_PATH.write_text(json.dumps({"conversations": {}}, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-@app.on_event("startup")
-def startup() -> None:
-    ensure_store()
 
 
 @app.get("/api/health")
@@ -270,11 +276,12 @@ def truncate_title(title: str) -> str:
 
 
 def summarize_title(messages: List[Dict[str, Any]]) -> str:
-    transcript = "\n".join(
-        f"{message['role']}: {(message.get('content') or '').strip()}"
-        for message in messages
-        if (message.get("content") or "").strip()
-    )
+    lines = []
+    for message in messages:
+        content = (message.get("content") or "").strip()
+        if content:
+            lines.append(f"{message['role']}: {content}")
+    transcript = "\n".join(lines)
     if not transcript:
         return "新对话"
     try:
@@ -459,7 +466,8 @@ def create_message(conversation_id: str, request: MessageCreateRequest) -> Strea
                     "conversation": summary,
                 },
             )
-        except Exception as exc:
+        except Exception:
+            logger.exception("Failed to stream assistant response for conversation %s", conversation_id)
             yield serialize_event("error", {"message": "生成回复失败，请稍后重试。"})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -473,10 +481,6 @@ if (FRONTEND_DIST / "ui").exists():
 
 @app.get("/{full_path:path}")
 def serve_frontend(full_path: str) -> Any:
-    requested_path = (FRONTEND_DIST / full_path).resolve()
-    frontend_root = FRONTEND_DIST.resolve()
-    if full_path and requested_path.is_file() and requested_path.is_relative_to(frontend_root):
-        return FileResponse(requested_path)
     index_file = FRONTEND_DIST / "index.html"
     if index_file.exists():
         return FileResponse(index_file)
