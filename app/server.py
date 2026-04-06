@@ -10,21 +10,27 @@ from threading import Lock
 from typing import Any, Dict, Iterable, List, Literal
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .auth import (
+    create_session,
+    get_session,
+    invalidate_session,
+    update_session,
+    user_store_path,
+)
+from .edu_tools import set_current_edu_session
 from .graph import graph, summary_chain
+from .jwch_client import JwchClient, JwchLoginError
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
 ASSETS_DIR = BASE_DIR / "png"
-STORAGE_DIR = BASE_DIR / "storage"
-STORAGE_DIR.mkdir(exist_ok=True)
-STORE_PATH = Path(os.getenv("FZU_CHAT_STORAGE_PATH", STORAGE_DIR / "conversations.json"))
 MAX_TITLE_LENGTH = int(os.getenv("FZU_CHAT_MAX_TITLE_LENGTH", "20"))
 
 MODEL_OPTIONS = {
@@ -34,25 +40,81 @@ MODEL_OPTIONS = {
     "Moonshot-Kimi-K2-Instruct": "Kimi K2",
 }
 
-store_lock = Lock()
+TOOL_LABELS: Dict[str, Dict[str, str]] = {
+    "retrieve": {"running": "正在查询知识库", "complete": "知识库查询完成"},
+    "bocha_websearch_tool": {"running": "正在搜索网络", "complete": "网络搜索完成"},
+    "query_grades": {"running": "正在查询成绩", "complete": "成绩查询完成"},
+    "query_courses": {"running": "正在查询课表", "complete": "课表查询完成"},
+    "query_student_info": {"running": "正在查询学生信息", "complete": "学生信息查询完成"},
+    "query_exam_scores": {"running": "正在查询考试成绩", "complete": "考试成绩查询完成"},
+}
+
+store_locks: Dict[str, Lock] = {}
+_global_lock = Lock()
+logger = logging.getLogger(__name__)
+
+
+def _get_user_lock(user_id: str) -> Lock:
+    with _global_lock:
+        if user_id not in store_locks:
+            store_locks[user_id] = Lock()
+        return store_locks[user_id]
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    ensure_store()
     yield
 
 
-logger = logging.getLogger(__name__)
-app = FastAPI(title="FZU Chat API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="FZU Chat API", version="3.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
     allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Auth dependency
+# ---------------------------------------------------------------------------
+
+class AuthUser(BaseModel):
+    user_id: str
+    student_type: str
+    display_name: str
+    edu_authenticated: bool
+    token: str
+
+
+def require_auth(authorization: str | None = Header(default=None)) -> AuthUser:
+    token: str | None = None
+    if authorization:
+        token = authorization[7:] if authorization.startswith("Bearer ") else authorization
+    if not token:
+        raise HTTPException(status_code=401, detail="未登录")
+    session = get_session(token)
+    if not session:
+        raise HTTPException(status_code=401, detail="会话已过期，请重新登录")
+    return AuthUser(
+        user_id=session["user_id"],
+        student_type=session["student_type"],
+        display_name=session["display_name"],
+        edu_authenticated=session.get("edu_authenticated", False),
+        token=token,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models
+# ---------------------------------------------------------------------------
+
+class LoginRequest(BaseModel):
+    student_id: str = Field(min_length=1, max_length=30)
+    password: str = Field(min_length=1, max_length=100)
+    student_type: str = "undergraduate"
 
 
 class ConversationCreateRequest(BaseModel):
@@ -103,166 +165,144 @@ class ConversationSummary(BaseModel):
     message_count: int
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def ensure_store() -> None:
-    if STORE_PATH.exists():
+def _ensure_store(path: Path) -> None:
+    if path.exists():
         return
-    STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    STORE_PATH.write_text(json.dumps({"conversations": {}}, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"conversations": {}}, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-@app.get("/api/health")
-def healthcheck() -> Dict[str, str]:
-    return {"status": "ok"}
+def _load_store(path: Path) -> Dict[str, Any]:
+    _ensure_store(path)
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
-def load_store() -> Dict[str, Any]:
-    ensure_store()
-    return json.loads(STORE_PATH.read_text(encoding="utf-8"))
-
-
-
-def save_store(payload: Dict[str, Any]) -> None:
-    STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = STORE_PATH.with_suffix(".tmp")
-    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+def _save_store(path: Path, payload: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     try:
-        temp_path.replace(STORE_PATH)
+        tmp.replace(path)
     except OSError as exc:
-        if temp_path.exists():
-            temp_path.unlink()
+        if tmp.exists():
+            tmp.unlink()
         raise RuntimeError("Failed to persist conversation store") from exc
 
 
-
-def make_conversation_summary(record: Dict[str, Any]) -> Dict[str, Any]:
+def make_conversation_summary(rec: Dict[str, Any]) -> Dict[str, Any]:
     preview = ""
-    for message in reversed(record.get("messages", [])):
-        preview = (message.get("content") or "").strip()
+    for msg in reversed(rec.get("messages", [])):
+        preview = (msg.get("content") or "").strip()
         if preview:
             break
     return {
-        "id": record["id"],
-        "title": record["title"],
-        "model": record["model"],
-        "created_at": record["created_at"],
-        "updated_at": record["updated_at"],
-        "preview": preview[:80],
-        "message_count": len(record.get("messages", [])),
+        "id": rec["id"], "title": rec["title"], "model": rec["model"],
+        "created_at": rec["created_at"], "updated_at": rec["updated_at"],
+        "preview": preview[:80], "message_count": len(rec.get("messages", [])),
     }
-
 
 
 def sorted_summaries(store: Dict[str, Any]) -> List[Dict[str, Any]]:
-    conversations = store.get("conversations", {}).values()
     return sorted(
-        (make_conversation_summary(conversation) for conversation in conversations),
-        key=lambda item: item["updated_at"],
-        reverse=True,
+        (make_conversation_summary(c) for c in store.get("conversations", {}).values()),
+        key=lambda x: x["updated_at"], reverse=True,
     )
 
 
-
-def get_conversation_or_404(store: Dict[str, Any], conversation_id: str) -> Dict[str, Any]:
-    conversation = store.get("conversations", {}).get(conversation_id)
-    if not conversation:
+def get_conversation_or_404(store: Dict[str, Any], cid: str) -> Dict[str, Any]:
+    c = store.get("conversations", {}).get(cid)
+    if not c:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return conversation
-
+    return c
 
 
 def create_conversation_record(model: str) -> Dict[str, Any]:
-    timestamp = now_iso()
+    ts = now_iso()
     return {
-        "id": str(uuid4()),
-        "title": "新对话",
+        "id": str(uuid4()), "title": "新对话",
         "model": model if model in MODEL_OPTIONS else "qwen-max-latest",
-        "thread_id": str(uuid4()),
-        "created_at": timestamp,
-        "updated_at": timestamp,
-        "messages": [],
+        "thread_id": str(uuid4()), "created_at": ts, "updated_at": ts, "messages": [],
     }
 
 
-
 def serialize_event(event: str, data: Dict[str, Any]) -> bytes:
-    payload = json.dumps(data, ensure_ascii=False)
-    return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
-
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode("utf-8")
 
 
 def extract_urls_from_tool_message(content: str) -> List[str]:
     urls: List[str] = []
     for line in content.splitlines():
-        if line.startswith("Article url:"):
-            url = line.replace("Article url:", "").strip()
-            if url and url not in urls:
-                urls.append(url)
-        if line.startswith("URL:"):
-            url = line.replace("URL:", "").strip()
-            if url and url not in urls:
-                urls.append(url)
+        for prefix in ("Article url:", "URL:"):
+            if line.startswith(prefix):
+                url = line[len(prefix):].strip()
+                if url and url not in urls:
+                    urls.append(url)
     return urls
 
 
-
-def combine_tool_calls(message_chunk: Any) -> Any:
-    if not hasattr(message_chunk, "tool_calls") or not message_chunk.tool_calls:
-        return message_chunk
-    for tool_call in message_chunk.tool_calls:
-        if not isinstance(tool_call, dict):
+def combine_tool_calls(mc: Any) -> Any:
+    if not hasattr(mc, "tool_calls") or not mc.tool_calls:
+        return mc
+    for tc in mc.tool_calls:
+        if not isinstance(tc, dict):
             continue
-        args = tool_call.get("args")
+        args = tc.get("args")
         if isinstance(args, dict):
             continue
         if isinstance(args, str):
             try:
-                parsed_args = json.loads(args)
-                if isinstance(parsed_args, dict):
-                    tool_call["args"] = parsed_args
+                parsed = json.loads(args)
+                if isinstance(parsed, dict):
+                    tc["args"] = parsed
                     continue
             except json.JSONDecodeError:
                 if args.startswith('{"query":"'):
-                    tool_call["args"] = {"query": args.replace('{"query":"', "").rstrip('"}')}
-    return message_chunk
+                    tc["args"] = {"query": args.replace('{"query":"', "").rstrip('"}')}
+    return mc
 
 
-
-def clean_tool_call_id(tool_call_id: str | None) -> str:
-    if not tool_call_id:
+def clean_tool_call_id(tid: str | None) -> str:
+    if not tid:
         return ""
-    return tool_call_id[:22] if tool_call_id.startswith("call_") else tool_call_id
-
+    return tid[:22] if tid.startswith("call_") else tid
 
 
 def matching_tool_call_id(candidates: Iterable[str], target: str) -> str | None:
-    for candidate in candidates:
-        if candidate == target:
-            return candidate
-        if candidate.startswith(target) or target.startswith(candidate):
-            return candidate
+    for c in candidates:
+        if c == target or c.startswith(target) or target.startswith(c):
+            return c
     return None
-
 
 
 def extract_urls(content: str, artifact: Any) -> List[str]:
     urls = extract_urls_from_tool_message(content)
     if isinstance(artifact, list):
         for item in artifact:
-            source = None
+            src = None
             if isinstance(item, dict):
-                source = item.get("url") or item.get("source")
+                src = item.get("url") or item.get("source")
             else:
-                metadata = getattr(item, "metadata", None)
-                if isinstance(metadata, dict):
-                    source = metadata.get("source")
-            if source and source not in urls:
-                urls.append(source)
+                md = getattr(item, "metadata", None)
+                if isinstance(md, dict):
+                    src = md.get("source")
+            if src and src not in urls:
+                urls.append(src)
     return urls
 
+
+def extract_structured_data(tool_name: str, artifact: Any) -> Any:
+    if tool_name in ("query_grades", "query_courses", "query_student_info", "query_exam_scores"):
+        if isinstance(artifact, (list, dict)):
+            return artifact
+    return None
 
 
 def truncate_title(title: str) -> str:
@@ -271,207 +311,283 @@ def truncate_title(title: str) -> str:
         return "新对话"
     if len(cleaned) <= MAX_TITLE_LENGTH:
         return cleaned
-    truncated = cleaned[:MAX_TITLE_LENGTH].rstrip(" ,，。；;")
-    return truncated or "新对话"
+    return cleaned[:MAX_TITLE_LENGTH].rstrip(" ,，。；;") or "新对话"
 
 
 def summarize_title(messages: List[Dict[str, Any]]) -> str:
     lines = []
-    for message in messages:
-        content = (message.get("content") or "").strip()
-        if content:
-            lines.append(f"{message['role']}: {content}")
+    for m in messages:
+        c = (m.get("content") or "").strip()
+        if c:
+            lines.append(f"{m['role']}: {c}")
     transcript = "\n".join(lines)
     if not transcript:
         return "新对话"
     try:
-        summary = summary_chain.invoke({"input": transcript}).strip()
-        return truncate_title(summary)
+        return truncate_title(summary_chain.invoke({"input": transcript}).strip())
     except Exception:
         return "新对话"
 
 
-@app.get("/api/models")
-def list_models() -> List[Dict[str, str]]:
-    return [{"id": model_id, "label": label} for model_id, label in MODEL_OPTIONS.items()]
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/health")
+def healthcheck() -> Dict[str, str]:
+    return {"status": "ok"}
 
 
-@app.get("/api/conversations", response_model=List[ConversationSummary])
-def list_conversations() -> List[Dict[str, Any]]:
-    with store_lock:
-        return sorted_summaries(load_store())
+@app.post("/api/auth/login")
+def login(req: LoginRequest) -> Dict[str, Any]:
+    edu_authenticated = False
+    edu_cookies: Any = None
+    edu_identifier = ""
+    edu_error = ""
+
+    if req.student_type == "undergraduate":
+        try:
+            client = JwchClient(req.student_id, req.password)
+            client.login()
+            edu_authenticated = True
+            edu_cookies = [{"name": c.name, "value": c.value} for c in client.session.cookies]
+            edu_identifier = client.identifier
+        except JwchLoginError as exc:
+            edu_error = str(exc)
+        except Exception as exc:
+            logger.warning("Edu login error: %s", exc)
+            edu_error = "教务系统连接失败，已创建本地会话"
+
+    token = create_session(
+        user_id=req.student_id, student_type=req.student_type,
+        display_name=req.student_id, edu_authenticated=edu_authenticated,
+        edu_cookies=edu_cookies,
+    )
+    if edu_identifier:
+        update_session(token, {"edu_identifier": edu_identifier})
+
+    return {
+        "token": token,
+        "user": {
+            "user_id": req.student_id, "student_type": req.student_type,
+            "display_name": req.student_id, "edu_authenticated": edu_authenticated,
+        },
+        "edu_error": edu_error,
+    }
 
 
-@app.post("/api/conversations", response_model=ConversationRecord)
-def create_conversation(request: ConversationCreateRequest) -> Dict[str, Any]:
-    with store_lock:
-        store = load_store()
-        conversation = create_conversation_record(request.model)
-        store["conversations"][conversation["id"]] = conversation
-        save_store(store)
-        return conversation
-
-
-@app.get("/api/conversations/{conversation_id}", response_model=ConversationRecord)
-def get_conversation(conversation_id: str) -> Dict[str, Any]:
-    with store_lock:
-        store = load_store()
-        return get_conversation_or_404(store, conversation_id)
-
-
-@app.patch("/api/conversations/{conversation_id}", response_model=ConversationRecord)
-def update_conversation(conversation_id: str, request: ConversationUpdateRequest) -> Dict[str, Any]:
-    with store_lock:
-        store = load_store()
-        conversation = get_conversation_or_404(store, conversation_id)
-        if request.title is not None:
-            conversation["title"] = request.title.strip() or conversation["title"]
-        if request.model is not None and request.model in MODEL_OPTIONS:
-            conversation["model"] = request.model
-        conversation["updated_at"] = now_iso()
-        save_store(store)
-        return conversation
-
-
-@app.delete("/api/conversations/{conversation_id}")
-def delete_conversation(conversation_id: str) -> Dict[str, bool]:
-    with store_lock:
-        store = load_store()
-        if conversation_id not in store.get("conversations", {}):
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        del store["conversations"][conversation_id]
-        save_store(store)
+@app.post("/api/auth/logout")
+def logout(user: AuthUser = Depends(require_auth)) -> Dict[str, bool]:
+    invalidate_session(user.token)
     return {"ok": True}
 
 
-@app.post("/api/conversations/{conversation_id}/feedback")
-def update_feedback(conversation_id: str, request: FeedbackUpdateRequest) -> Dict[str, bool]:
-    with store_lock:
-        store = load_store()
-        conversation = get_conversation_or_404(store, conversation_id)
-        for message in conversation["messages"]:
-            if message["id"] == request.message_id:
-                message["feedback"] = request.feedback
-                conversation["updated_at"] = now_iso()
-                save_store(store)
+@app.get("/api/auth/me")
+def auth_me(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
+    return {
+        "user_id": user.user_id, "student_type": user.student_type,
+        "display_name": user.display_name, "edu_authenticated": user.edu_authenticated,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
+
+@app.get("/api/models")
+def list_models() -> List[Dict[str, str]]:
+    return [{"id": mid, "label": lbl} for mid, lbl in MODEL_OPTIONS.items()]
+
+
+# ---------------------------------------------------------------------------
+# Conversations (auth-protected, per-user)
+# ---------------------------------------------------------------------------
+
+def _user_store(user: AuthUser):
+    return user_store_path(user.user_id), _get_user_lock(user.user_id)
+
+
+@app.get("/api/conversations", response_model=List[ConversationSummary])
+def list_conversations(user: AuthUser = Depends(require_auth)):
+    p, lk = _user_store(user)
+    with lk:
+        return sorted_summaries(_load_store(p))
+
+
+@app.post("/api/conversations", response_model=ConversationRecord)
+def create_conversation(req: ConversationCreateRequest, user: AuthUser = Depends(require_auth)):
+    p, lk = _user_store(user)
+    with lk:
+        s = _load_store(p)
+        c = create_conversation_record(req.model)
+        s["conversations"][c["id"]] = c
+        _save_store(p, s)
+        return c
+
+
+@app.get("/api/conversations/{cid}", response_model=ConversationRecord)
+def get_conversation(cid: str, user: AuthUser = Depends(require_auth)):
+    p, lk = _user_store(user)
+    with lk:
+        return get_conversation_or_404(_load_store(p), cid)
+
+
+@app.patch("/api/conversations/{cid}", response_model=ConversationRecord)
+def update_conversation(cid: str, req: ConversationUpdateRequest, user: AuthUser = Depends(require_auth)):
+    p, lk = _user_store(user)
+    with lk:
+        s = _load_store(p)
+        c = get_conversation_or_404(s, cid)
+        if req.title is not None:
+            c["title"] = req.title.strip() or c["title"]
+        if req.model is not None and req.model in MODEL_OPTIONS:
+            c["model"] = req.model
+        c["updated_at"] = now_iso()
+        _save_store(p, s)
+        return c
+
+
+@app.delete("/api/conversations/{cid}")
+def delete_conversation(cid: str, user: AuthUser = Depends(require_auth)):
+    p, lk = _user_store(user)
+    with lk:
+        s = _load_store(p)
+        if cid not in s.get("conversations", {}):
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        del s["conversations"][cid]
+        _save_store(p, s)
+    return {"ok": True}
+
+
+@app.post("/api/conversations/{cid}/feedback")
+def update_feedback(cid: str, req: FeedbackUpdateRequest, user: AuthUser = Depends(require_auth)):
+    p, lk = _user_store(user)
+    with lk:
+        s = _load_store(p)
+        c = get_conversation_or_404(s, cid)
+        for msg in c["messages"]:
+            if msg["id"] == req.message_id:
+                msg["feedback"] = req.feedback
+                c["updated_at"] = now_iso()
+                _save_store(p, s)
                 return {"ok": True}
     raise HTTPException(status_code=404, detail="Message not found")
 
 
-@app.post("/api/conversations/{conversation_id}/messages")
-def create_message(conversation_id: str, request: MessageCreateRequest) -> StreamingResponse:
-    content = request.content.strip()
+# ---------------------------------------------------------------------------
+# Message streaming
+# ---------------------------------------------------------------------------
+
+@app.post("/api/conversations/{cid}/messages")
+def create_message(cid: str, req: MessageCreateRequest, user: AuthUser = Depends(require_auth)):
+    content = req.content.strip()
     if not content:
         raise HTTPException(status_code=400, detail="Message content cannot be empty")
 
-    with store_lock:
-        store = load_store()
-        conversation = get_conversation_or_404(store, conversation_id)
-        selected_model = request.model if request.model in MODEL_OPTIONS else conversation["model"]
-        conversation["model"] = selected_model
-        user_message = {
-            "id": str(uuid4()),
-            "role": "user",
-            "content": content,
-            "timestamp": now_iso(),
-            "parts": [{"type": "text", "content": content}],
+    p, lk = _user_store(user)
+    with lk:
+        s = _load_store(p)
+        conv = get_conversation_or_404(s, cid)
+        sel = req.model if req.model in MODEL_OPTIONS else conv["model"]
+        conv["model"] = sel
+        umsg = {
+            "id": str(uuid4()), "role": "user", "content": content,
+            "timestamp": now_iso(), "parts": [{"type": "text", "content": content}],
             "feedback": None,
         }
-        conversation["messages"].append(user_message)
-        conversation["updated_at"] = now_iso()
-        thread_id = conversation["thread_id"]
-        save_store(store)
+        conv["messages"].append(umsg)
+        conv["updated_at"] = now_iso()
+        tid = conv["thread_id"]
+        _save_store(p, s)
+
+    sess = get_session(user.token)
+    edu_ctx = {
+        "user_id": user.user_id,
+        "edu_authenticated": sess.get("edu_authenticated", False) if sess else False,
+        "edu_cookies": sess.get("edu_cookies") if sess else None,
+        "edu_identifier": sess.get("edu_identifier", "") if sess else "",
+    }
 
     def event_stream() -> Iterable[bytes]:
-        assistant_text = ""
-        pending_tools: Dict[str, Dict[str, Any]] = {}
-        tool_parts: List[Dict[str, Any]] = []
+        set_current_edu_session(edu_ctx)
+        atxt = ""
+        pending: Dict[str, Dict[str, Any]] = {}
+        tparts: List[Dict[str, Any]] = []
         try:
-            yield serialize_event("user", user_message)
+            yield serialize_event("user", umsg)
             for step in graph.stream(
                 {"messages": [{"role": "user", "content": content}]},
                 stream_mode="messages",
-                config={"configurable": {"thread_id": thread_id, "model": selected_model}},
+                config={"configurable": {"thread_id": tid, "model": sel}},
             ):
-                message_chunk, _ = step
-                if hasattr(message_chunk, "tool_calls") and message_chunk.tool_calls:
-                    message_chunk = combine_tool_calls(message_chunk)
-                    for tool_call in message_chunk.tool_calls:
-                        if not isinstance(tool_call, dict):
+                mc, _ = step
+                if hasattr(mc, "tool_calls") and mc.tool_calls:
+                    mc = combine_tool_calls(mc)
+                    for tc in mc.tool_calls:
+                        if not isinstance(tc, dict):
                             continue
-                        tool_name = tool_call.get("name")
-                        if tool_name not in {"retrieve", "bocha_websearch_tool"}:
-                            continue
-                        tool_id = clean_tool_call_id(tool_call.get("id", ""))
-                        args = tool_call.get("args") or {}
-                        query = args.get("query", "") if isinstance(args, dict) else ""
-                        tool_part = {
-                            "type": "tool",
-                            "tool_id": tool_id,
-                            "tool_name": tool_name,
-                            "query": query,
-                            "status": "running",
-                            "status_label": "正在搜索网络" if tool_name == "bocha_websearch_tool" else "正在查询数据库",
-                            "urls": [],
+                        tn = tc.get("name", "")
+                        ti = clean_tool_call_id(tc.get("id", ""))
+                        a = tc.get("args") or {}
+                        q = a.get("query", "") if isinstance(a, dict) else str(a)
+                        lb = TOOL_LABELS.get(tn, {"running": f"正在调用 {tn}", "complete": f"{tn} 完成"})
+                        tp = {
+                            "type": "tool", "tool_id": ti, "tool_name": tn,
+                            "query": q, "status": "running", "status_label": lb["running"],
+                            "urls": [], "data": None,
                         }
-                        pending_tools[tool_id] = tool_part
-                        tool_parts.append(tool_part)
-                        yield serialize_event("tool_call", tool_part)
-                elif type(message_chunk).__name__ == "ToolMessage":
-                    clean_id = clean_tool_call_id(getattr(message_chunk, "tool_call_id", ""))
-                    matched_id = matching_tool_call_id(pending_tools.keys(), clean_id)
-                    if not matched_id:
+                        pending[ti] = tp
+                        tparts.append(tp)
+                        yield serialize_event("tool_call", tp)
+                elif type(mc).__name__ == "ToolMessage":
+                    ci = clean_tool_call_id(getattr(mc, "tool_call_id", ""))
+                    mi = matching_tool_call_id(pending.keys(), ci)
+                    if not mi:
                         continue
-                    tool_part = pending_tools[matched_id]
-                    tool_part["status"] = "complete"
-                    tool_part["status_label"] = (
-                        "网络搜索完成"
-                        if tool_part["tool_name"] == "bocha_websearch_tool"
-                        else "数据库查询完成"
-                    )
-                    tool_part["urls"] = extract_urls(
-                        getattr(message_chunk, "content", ""),
-                        getattr(message_chunk, "artifact", None),
-                    )
-                    yield serialize_event("tool_result", tool_part)
-                elif getattr(message_chunk, "content", None):
-                    delta = message_chunk.content
-                    assistant_text += delta
-                    yield serialize_event("chunk", {"delta": delta})
+                    tp = pending[mi]
+                    tn = tp["tool_name"]
+                    lb = TOOL_LABELS.get(tn, {"running": "", "complete": f"{tn} 完成"})
+                    tp["status"] = "complete"
+                    tp["status_label"] = lb["complete"]
+                    rc = getattr(mc, "content", "")
+                    af = getattr(mc, "artifact", None)
+                    tp["urls"] = extract_urls(rc, af)
+                    tp["data"] = extract_structured_data(tn, af)
+                    yield serialize_event("tool_result", tp)
+                elif getattr(mc, "content", None):
+                    d = mc.content
+                    atxt += d
+                    yield serialize_event("chunk", {"delta": d})
 
-            assistant_message = {
-                "id": str(uuid4()),
-                "role": "assistant",
-                "content": assistant_text.strip(),
+            amsg = {
+                "id": str(uuid4()), "role": "assistant", "content": atxt.strip(),
                 "timestamp": now_iso(),
-                "parts": ([{"type": "text", "content": assistant_text.strip()}] if assistant_text.strip() else []) + tool_parts,
+                "parts": ([{"type": "text", "content": atxt.strip()}] if atxt.strip() else []) + tparts,
                 "feedback": None,
             }
-
-            with store_lock:
-                store = load_store()
-                conversation = get_conversation_or_404(store, conversation_id)
-                conversation["messages"].append(assistant_message)
-                if conversation["title"] == "新对话":
-                    conversation["title"] = summarize_title(conversation["messages"])
-                conversation["model"] = selected_model
-                conversation["updated_at"] = now_iso()
-                save_store(store)
-                summary = make_conversation_summary(conversation)
-
-            yield serialize_event(
-                "done",
-                {
-                    "message": assistant_message,
-                    "conversation": summary,
-                },
-            )
+            with lk:
+                s2 = _load_store(p)
+                c2 = get_conversation_or_404(s2, cid)
+                c2["messages"].append(amsg)
+                if c2["title"] == "新对话":
+                    c2["title"] = summarize_title(c2["messages"])
+                c2["model"] = sel
+                c2["updated_at"] = now_iso()
+                _save_store(p, s2)
+                sm = make_conversation_summary(c2)
+            yield serialize_event("done", {"message": amsg, "conversation": sm})
         except Exception:
-            logger.exception("Failed to stream assistant response for conversation %s", conversation_id)
+            logger.exception("Stream failed for %s", cid)
             yield serialize_event("error", {"message": "生成回复失败，请稍后重试。"})
+        finally:
+            set_current_edu_session(None)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
+
+# ---------------------------------------------------------------------------
+# Static files
+# ---------------------------------------------------------------------------
 
 if ASSETS_DIR.exists():
     app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
@@ -481,12 +597,10 @@ if (FRONTEND_DIST / "ui").exists():
 
 @app.get("/{full_path:path}")
 def serve_frontend(full_path: str) -> Any:
-    index_file = FRONTEND_DIST / "index.html"
-    if index_file.exists():
-        return FileResponse(index_file)
+    index = FRONTEND_DIST / "index.html"
+    if index.exists():
+        return FileResponse(index)
     return JSONResponse(
-        {
-            "message": "Frontend build not found. Run `npm run build` in /frontend or use the Vite dev server.",
-        },
+        {"message": "Frontend build not found. Run `npm run build` in /frontend or use the Vite dev server."},
         status_code=503,
     )
