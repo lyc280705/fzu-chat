@@ -3,7 +3,7 @@
   line-height: 1.5;
   font-weight: 400;
   color: #e5e7eb;
-  background: #111827;
+  background: #0a0f1a;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -23,7 +23,7 @@ body,
 }
 
 body {
-  background: #111827;
+  background: #0a0f1a;
 }
 
 a {
@@ -32,6 +32,7 @@ a {
 
 button,
 select,
-textarea {
+textarea,
+input {
   font: inherit;
 }
