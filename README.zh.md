@@ -1,136 +1,123 @@
-# 福大灵犀
+# 福大灵犀 (FZU-Chat)
 
-[简体中文](README.zh.md) | [English](README.md)
+[English](README.md)
 
-基于 LangGraph、FastAPI 和 React 的福州大学智能问答系统。
+基于 LangGraph、FastAPI 和 React 构建的福州大学智能问答系统，支持学生登录认证和教务系统集成。
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://python.org)
 [![React](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-## 项目简介
+## 概述
 
-福大灵犀现在采用 React + FastAPI 架构，界面与交互方式参考 ChatGPT，同时继续复用原有的 LangGraph、FAISS 和博查搜索能力，保持与现有后端检索和模型流程兼容。
+福大灵犀为福州大学学生提供类 ChatGPT 的对话体验。每个学生使用学号登录后，拥有独立的对话记录，并可通过 AI 助手查询成绩、课表等教务信息。
 
-## 核心特性
+## 功能特性
 
-- **ChatGPT 风格界面**：左侧历史会话，右侧主聊天区，底部固定输入框
-- **对话持久化**：后端保存会话列表、消息内容与反馈记录
-- **流式输出**：逐步显示回答内容，并同步展示工具调用状态
-- **多模型支持**：支持通义千问、DeepSeek、文心一言、Kimi
-- **知识库 + 联网搜索**：保留 FAISS 检索与博查搜索补充能力
-- **容器化部署**：Docker 多阶段构建前端与后端
+- **学生登录认证**：基于学号的登录系统，每个学生对话完全隔离
+- **教务系统工具**：查询成绩、课表、考试成绩、学生信息（基于 [west2-online/jwch](https://github.com/west2-online/jwch) 对接教务系统）
+- **ChatGPT 风格界面**：现代暗色主题，侧边栏历史记录、快捷操作、流式回复
+- **丰富的工具卡片**：可视化工具调用过程，结构化展示成绩表格和课表
+- **多模型支持**：通义千问、DeepSeek、文心一言、Kimi 可选
+- **知识库 + 网络搜索**：FAISS 本地检索 + 博查网络搜索兜底
+- **Docker 部署**：多阶段构建，React 前端 + Python 后端
 
 ## 项目结构
 
-```text
+```
 fzu-chat/
 ├── app/
-│   ├── __init__.py
-│   ├── graph.py                 # LangGraph 工作流与模型/工具配置
-│   ├── server.py                # FastAPI API 与静态资源服务
-│   ├── storage/                 # 持久化会话数据
-│   ├── data/                    # 知识库文档存储
-│   ├── faiss/                   # 向量数据库
-│   └── png/                     # 静态资源
+│   ├── server.py          # FastAPI 后端（认证 + 按用户隔离对话）
+│   ├── graph.py           # LangGraph 工作流（含教务工具）
+│   ├── auth.py            # Token 认证与会话管理
+│   ├── jwch_client.py     # 福大本科教务系统客户端（Python 实现）
+│   ├── edu_tools.py       # LangGraph 教务查询工具
+│   ├── data/              # 知识库文档
+│   ├── faiss/             # FAISS 向量数据库
+│   ├── png/               # 静态资源
+│   └── storage/           # 按用户存储对话数据
 ├── frontend/
-│   ├── src/                     # React 前端源码
-│   ├── package.json
-│   └── vite.config.js
+│   ├── src/App.jsx        # React 聊天界面（含登录）
+│   ├── src/App.css        # 现代暗色主题样式
+│   └── vite.config.js     # Vite 配置
 ├── Dockerfile
 ├── docker-compose.yml
-├── requirements.txt
-├── README.md
-└── README.zh.md
+└── requirements.txt
 ```
 
 ## 必需的 API 密钥
 
-可通过环境变量或 Docker Secret 提供以下密钥：
-
-- `DASHSCOPE_API_KEY`
-- `DEEPSEEK_API_KEY`
-- `QIANFAN_API_KEY`
-- `BOCHA_API_KEY`
-- `LANGSMITH_API_KEY`
+- `DASHSCOPE_API_KEY` – 阿里云 DashScope（通义千问）
+- `DEEPSEEK_API_KEY` – DeepSeek API
+- `QIANFAN_API_KEY` – 百度千帆（文心一言）
+- `BOCHA_API_KEY` – 博查网络搜索
+- `LANGSMITH_API_KEY` – LangSmith 追踪
 
 ## 本地开发
 
-### 1. 安装依赖
-
 ```bash
+# 1. 安装后端依赖
 pip install -r requirements.txt
-cd frontend && npm install
-```
 
-### 2. 配置环境变量
+# 2. 设置环境变量
+export DASHSCOPE_API_KEY=...
+export DEEPSEEK_API_KEY=...
+export QIANFAN_API_KEY=...
+export BOCHA_API_KEY=...
+export LANGSMITH_API_KEY=...
 
-```bash
-export DASHSCOPE_API_KEY="your_key"
-export BOCHA_API_KEY="your_key"
-export LANGSMITH_API_KEY="your_key"
-export DEEPSEEK_API_KEY="your_key"
-export QIANFAN_API_KEY="your_key"
-```
-
-### 3. 启动后端
-
-```bash
+# 3. 启动后端
 uvicorn app.server:app --host 0.0.0.0 --port 8000
+
+# 4. 启动前端开发服务器
+cd frontend && npm install && npm run dev
+
+# 5. 访问 http://localhost:5173
 ```
-
-### 4. 启动前端开发服务器
-
-```bash
-cd frontend
-npm run dev
-```
-
-随后访问 `http://localhost:5173`。
 
 ## Docker 部署
 
-1. 创建 API 密钥文件：
-
-   ```bash
-   echo "your_dashscope_key" > dashscope_api_key.txt
-   echo "your_bocha_key" > bocha_api_key.txt
-   echo "your_langsmith_key" > langsmith_api_key.txt
-   echo "your_deepseek_key" > deepseek_api_key.txt
-   echo "your_qianfan_key" > qianfan_api_key.txt
-   ```
-
-2. 启动服务：
-
-   ```bash
-   docker compose up -d --build
-   ```
-
-3. 访问 `http://localhost:100`。
-
-## API 概览
-
-- `GET /api/models`：可用模型列表
-- `GET /api/conversations`：会话列表
-- `POST /api/conversations`：创建新会话
-- `GET /api/conversations/{id}`：获取完整会话内容
-- `DELETE /api/conversations/{id}`：删除会话
-- `POST /api/conversations/{id}/messages`：流式生成回复
-- `POST /api/conversations/{id}/feedback`：保存点赞/点踩反馈
-
-## 验证命令
-
-前端校验：
-
 ```bash
-cd frontend
-npm run lint
-npm run build
+# 1. 创建 API 密钥文件
+echo "your-key" > dashscope_api_key.txt
+# ... 其他密钥同理
+
+# 2. 构建并运行
+docker compose up -d --build
+
+# 3. 访问 http://localhost:100
 ```
 
-后端语法校验：
+## API 接口
+
+### 认证
+- `POST /api/auth/login` – 学号 + 密码登录
+- `POST /api/auth/logout` – 退出登录
+- `GET /api/auth/me` – 当前用户信息
+
+### 聊天
+- `GET /api/models` – 可用模型列表
+- `GET /api/conversations` – 用户对话列表
+- `POST /api/conversations` – 创建新对话
+- `GET /api/conversations/{id}` – 对话详情
+- `DELETE /api/conversations/{id}` – 删除对话
+- `POST /api/conversations/{id}/messages` – 流式生成回复（SSE）
+- `POST /api/conversations/{id}/feedback` – 提交反馈
+
+### 教务工具（Agent 自动调用）
+AI 助手在学生询问教务数据时自动调用：
+- `query_grades` – 课程成绩和绩点
+- `query_courses` – 课程表
+- `query_student_info` – 学生个人信息
+- `query_exam_scores` – 四六级/等级考试成绩
+
+## 验证
 
 ```bash
+# 前端
+cd frontend && npm run lint && npm run build
+
+# 后端
 python -m compileall app
 ```
