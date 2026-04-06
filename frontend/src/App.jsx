@@ -426,9 +426,25 @@ function App() {
         }
         if (!payload) continue
         const d = JSON.parse(payload)
-        if (ev === 'chunk') updateDraft(cid, (m) => ({ ...m, content: m.content + d.delta, parts: [{ type: 'text', content: m.content + d.delta }, ...m.parts.filter((p) => p.type === 'tool')] }))
-        if (ev === 'tool_call') updateDraft(cid, (m) => ({ ...m, parts: [{ type: 'text', content: m.content }, ...m.parts.filter((p) => p.type === 'tool'), d].filter((p) => p.type !== 'text' || p.content) }))
-        if (ev === 'tool_result') updateDraft(cid, (m) => ({ ...m, parts: m.parts.map((p) => (p.type === 'tool' && p.tool_id === d.tool_id ? d : p)) }))
+        if (ev === 'chunk') {
+          updateDraft(cid, (m) => {
+            const text = m.content + d.delta
+            return { ...m, content: text, parts: [{ type: 'text', content: text }, ...m.parts.filter((p) => p.type === 'tool')] }
+          })
+        }
+        if (ev === 'tool_call') {
+          updateDraft(cid, (m) => ({
+            ...m,
+            parts: [{ type: 'text', content: m.content }, ...m.parts.filter((p) => p.type === 'tool'), d]
+              .filter((p) => p.type !== 'text' || p.content),
+          }))
+        }
+        if (ev === 'tool_result') {
+          updateDraft(cid, (m) => ({
+            ...m,
+            parts: m.parts.map((p) => (p.type === 'tool' && p.tool_id === d.tool_id ? d : p)),
+          }))
+        }
         if (ev === 'done') replaceDraft(cid, d.message, d.conversation)
         if (ev === 'error') throw new Error(d.message || '生成回复失败')
       }
