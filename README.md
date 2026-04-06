@@ -2,7 +2,7 @@
 
 [简体中文](README.zh.md)
 
-A Fuzhou University intelligent Q&A system built with LangGraph, FastAPI, and React.
+A Fuzhou University intelligent Q&A system with student authentication and educational system integration, built with LangGraph, FastAPI, and React.
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://python.org)
 [![React](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev)
@@ -11,126 +11,113 @@ A Fuzhou University intelligent Q&A system built with LangGraph, FastAPI, and Re
 
 ## Overview
 
-FZU-Chat provides a ChatGPT-style conversation experience for Fuzhou University knowledge retrieval. It keeps the existing LangGraph + FAISS + Bocha search backend logic, adds a FastAPI HTTP layer, and replaces the old Streamlit UI with a React application.
+FZU-Chat provides a ChatGPT-style conversation experience for Fuzhou University students. Each student logs in with their student ID to get isolated conversations and access to educational system tools (grade queries, course schedules, etc.).
 
 ## Features
 
-- **ChatGPT-style interface**: Sidebar history, focused chat panel, and sticky composer
-- **Saved conversations**: Persistent conversation list stored on the backend
-- **Streaming replies**: Incremental assistant responses with tool status updates
+- **Student authentication**: Per-student login with conversation isolation
+- **Educational system tools**: Query grades, courses, exam scores, and student info via the FZU academic affairs system (based on [west2-online/jwch](https://github.com/west2-online/jwch))
+- **ChatGPT-style interface**: Modern dark UI with sidebar history, quick actions, and streaming replies
+- **Rich tool cards**: Visual display of tool calls with structured data tables for grades and courses
 - **Multi-model support**: Qwen, DeepSeek, ERNIE, and Kimi model selection
 - **Knowledge + web search**: FAISS retrieval plus Bocha web search fallback
 - **Docker deployment**: Multi-stage build for React frontend + Python backend
 
 ## Project Structure
 
-```text
+```
 fzu-chat/
 ├── app/
-│   ├── __init__.py
-│   ├── graph.py                 # LangGraph workflow and model/tool setup
-│   ├── server.py                # FastAPI API and static file serving
-│   ├── storage/                 # Persistent conversation metadata/messages
-│   ├── data/                    # Knowledge base document storage
-│   ├── faiss/                   # Vector database
-│   └── png/                     # Static assets
+│   ├── server.py          # FastAPI backend with auth + per-user conversations
+│   ├── graph.py           # LangGraph workflow with edu tools
+│   ├── auth.py            # Token-based authentication & session management
+│   ├── jwch_client.py     # FZU undergraduate system client (Python port)
+│   ├── edu_tools.py       # LangGraph tools for educational queries
+│   ├── data/              # Knowledge base documents
+│   ├── faiss/             # FAISS vector database
+│   ├── png/               # Static assets
+│   └── storage/           # Per-user conversation storage
 ├── frontend/
-│   ├── src/                     # React application source
-│   ├── package.json
-│   └── vite.config.js
+│   ├── src/App.jsx        # React chat UI with login
+│   ├── src/App.css        # Modern dark theme styles
+│   └── vite.config.js     # Vite config with API proxy
 ├── Dockerfile
 ├── docker-compose.yml
-├── requirements.txt
-├── README.md
-└── README.zh.md
+└── requirements.txt
 ```
 
 ## Required API Keys
 
-Set the following keys through environment variables or Docker secrets:
-
-- `DASHSCOPE_API_KEY`
-- `DEEPSEEK_API_KEY`
-- `QIANFAN_API_KEY`
-- `BOCHA_API_KEY`
-- `LANGSMITH_API_KEY`
+- `DASHSCOPE_API_KEY` – Alibaba Cloud DashScope (Qwen models)
+- `DEEPSEEK_API_KEY` – DeepSeek API
+- `QIANFAN_API_KEY` – Baidu Qianfan (ERNIE models)
+- `BOCHA_API_KEY` – Bocha web search
+- `LANGSMITH_API_KEY` – LangSmith tracing
 
 ## Local Development
 
-### 1. Install dependencies
-
 ```bash
+# 1. Install backend dependencies
 pip install -r requirements.txt
-cd frontend && npm install
-```
 
-### 2. Configure environment variables
+# 2. Set environment variables
+export DASHSCOPE_API_KEY=...
+export DEEPSEEK_API_KEY=...
+export QIANFAN_API_KEY=...
+export BOCHA_API_KEY=...
+export LANGSMITH_API_KEY=...
 
-```bash
-export DASHSCOPE_API_KEY="your_key"
-export BOCHA_API_KEY="your_key"
-export LANGSMITH_API_KEY="your_key"
-export DEEPSEEK_API_KEY="your_key"
-export QIANFAN_API_KEY="your_key"
-```
-
-### 3. Start the backend
-
-```bash
+# 3. Start backend
 uvicorn app.server:app --host 0.0.0.0 --port 8000
+
+# 4. Start frontend dev server
+cd frontend && npm install && npm run dev
+
+# 5. Open http://localhost:5173
 ```
-
-### 4. Start the frontend dev server
-
-```bash
-cd frontend
-npm run dev
-```
-
-Then open `http://localhost:5173`.
 
 ## Docker Deployment
 
-1. Create the API key files:
+```bash
+# 1. Create API key files
+echo "your-key" > dashscope_api_key.txt
+# ... repeat for other keys
 
-   ```bash
-   echo "your_dashscope_key" > dashscope_api_key.txt
-   echo "your_bocha_key" > bocha_api_key.txt
-   echo "your_langsmith_key" > langsmith_api_key.txt
-   echo "your_deepseek_key" > deepseek_api_key.txt
-   echo "your_qianfan_key" > qianfan_api_key.txt
-   ```
+# 2. Build and run
+docker compose up -d --build
 
-2. Start the service:
+# 3. Visit http://localhost:100
+```
 
-   ```bash
-   docker compose up -d --build
-   ```
+## API Endpoints
 
-3. Visit `http://localhost:100`.
+### Authentication
+- `POST /api/auth/login` – Login with student ID + password
+- `POST /api/auth/logout` – Logout
+- `GET /api/auth/me` – Current user info
 
-## API Overview
+### Chat
+- `GET /api/models` – Available chat models
+- `GET /api/conversations` – User's conversation list
+- `POST /api/conversations` – Create new conversation
+- `GET /api/conversations/{id}` – Conversation detail
+- `DELETE /api/conversations/{id}` – Delete conversation
+- `POST /api/conversations/{id}/messages` – Stream assistant response (SSE)
+- `POST /api/conversations/{id}/feedback` – Save feedback
 
-- `GET /api/models` — available chat models
-- `GET /api/conversations` — conversation list
-- `POST /api/conversations` — create a new conversation
-- `GET /api/conversations/{id}` — full conversation detail
-- `DELETE /api/conversations/{id}` — delete a conversation
-- `POST /api/conversations/{id}/messages` — stream a new assistant response
-- `POST /api/conversations/{id}/feedback` — save thumbs up/down feedback
+### Educational Tools (via Agent)
+The LLM agent can automatically call these tools when students ask about their academic data:
+- `query_grades` – Course grades and GPA
+- `query_courses` – Course schedule
+- `query_student_info` – Student profile
+- `query_exam_scores` – CET and unified exam scores
 
 ## Validation
 
-Frontend validation commands:
-
 ```bash
-cd frontend
-npm run lint
-npm run build
-```
+# Frontend
+cd frontend && npm run lint && npm run build
 
-Backend syntax validation:
-
-```bash
+# Backend
 python -m compileall app
 ```
