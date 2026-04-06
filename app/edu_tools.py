@@ -39,7 +39,7 @@ def _build_client() -> JwchClient:
     """Build a :class:`JwchClient` from the thread-local session, or raise."""
     session = get_current_edu_session()
     if not session or not session.get("edu_authenticated"):
-        raise JwchError("当前用户尚未登录教务系统，无法查询教务信息。请提醒用户先在设置中登录教务系统。")
+        raise JwchError("当前用户尚未登录教务系统，无法查询教务信息。请先使用学号和密码登录。")
     cookies = session.get("edu_cookies") or []
     student_id = session.get("user_id", "")
     identifier = session.get("edu_identifier", "")

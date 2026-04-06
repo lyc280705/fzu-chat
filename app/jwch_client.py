@@ -74,8 +74,8 @@ class JwchClient:
             if not captcha_text:
                 raise JwchLoginError("验证码识别失败")
 
-            # 2 – Login
-            md5_pw = hashlib.md5(self.password.encode()).hexdigest()
+            # 2 – Login (MD5 is required by the upstream FZU JWCH protocol, not used for storage)
+            md5_pw = hashlib.md5(self.password.encode()).hexdigest()  # noqa: S324
             resp = self.session.post(
                 LOGIN_URL,
                 data={"muser": self.student_id, "passwd": md5_pw, "verifycode": captcha_text},

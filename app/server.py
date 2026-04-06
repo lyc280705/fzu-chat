@@ -353,7 +353,8 @@ def login(req: LoginRequest) -> Dict[str, Any]:
             edu_cookies = [{"name": c.name, "value": c.value} for c in client.session.cookies]
             edu_identifier = client.identifier
         except JwchLoginError as exc:
-            edu_error = str(exc)
+            logger.warning("Edu login error: %s", exc)
+            edu_error = "教务系统登录失败，请检查学号和密码"
         except Exception as exc:
             logger.warning("Edu login error: %s", exc)
             edu_error = "教务系统连接失败，已创建本地会话"
