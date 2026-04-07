@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 from threading import Lock
 from threading import Event
 from typing import Any, AsyncIterator, Dict, Iterable, List, Literal
@@ -26,7 +27,7 @@ from .auth import (
 )
 from .chat_store import chat_store
 from .edu_tools import set_current_edu_session
-from .graph import build_graph, summary_chain
+from .graph import CHAT_MODEL_OPTIONS, DEFAULT_CHAT_MODEL, build_graph, reset_search_citation_counter, summary_chain
 from .jwch_client import JwchClient, JwchLoginError, JwchSessionError
 from .memory_store import user_memory_store
 
@@ -36,11 +37,7 @@ FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
 ASSETS_DIR = BASE_DIR / "png"
 MAX_TITLE_LENGTH = int(os.getenv("FZU_CHAT_MAX_TITLE_LENGTH", "20"))
 
-MODEL_OPTIONS = {
-    "qwen-max-latest": "通义千问 Max",
-    "deepseek-chat": "DeepSeek V3.2",
-    "ERNIE-4.5-Turbo-32K": "文心一言 4.5 Turbo"
-}
+MODEL_OPTIONS = dict(CHAT_MODEL_OPTIONS)
 
 TOOL_LABELS: Dict[str, Dict[str, str]] = {
     "retrieve": {"running": "正在查询知识库", "complete": "知识库查询完成"},
@@ -123,7 +120,7 @@ class LoginRequest(BaseModel):
 
 
 class ConversationCreateRequest(BaseModel):
-    model: str = "qwen-max-latest"
+    model: str = DEFAULT_CHAT_MODEL
 
 
 class ConversationUpdateRequest(BaseModel):
@@ -207,9 +204,13 @@ def create_conversation_record(model: str) -> Dict[str, Any]:
     ts = now_iso()
     return {
         "id": str(uuid4()), "title": "新对话",
-        "model": model if model in MODEL_OPTIONS else "qwen-max-latest",
+        "model": model if model in MODEL_OPTIONS else DEFAULT_CHAT_MODEL,
         "thread_id": str(uuid4()), "created_at": ts, "updated_at": ts, "messages": [],
     }
+
+
+def normalize_model_id(model: str | None) -> str:
+    return model if model in MODEL_OPTIONS else DEFAULT_CHAT_MODEL
 
 
 def serialize_event(event: str, data: Dict[str, Any]) -> bytes:
@@ -277,7 +278,183 @@ def extract_urls(content: str, artifact: Any) -> List[str]:
     return urls
 
 
-def extract_structured_data(tool_name: str, artifact: Any) -> Any:
+SEARCH_RESULT_TOOL_NAMES = {"retrieve", "bocha_websearch_tool"}
+SEARCH_RESULT_CITATION_RE = re.compile(r"^\[(\d+)\]$")
+SEARCH_RESULT_INLINE_CITATION_RE = re.compile(r"\[(\d+)\](?!\()")
+
+
+def clone_tool_part(part: Dict[str, Any]) -> Dict[str, Any]:
+    cloned = dict(part)
+    urls = part.get("urls")
+    if isinstance(urls, list):
+        cloned["urls"] = list(urls)
+
+    data = part.get("data")
+    if isinstance(data, dict):
+        cloned_data = dict(data)
+        items = data.get("items")
+        if isinstance(items, list):
+            cloned_data["items"] = [dict(item) if isinstance(item, dict) else item for item in items]
+        cloned["data"] = cloned_data
+
+    return cloned
+
+
+def prepare_search_result_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    prepared: List[Dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        prepared_item = dict(item)
+        original_citation_id = str(
+            prepared_item.get("original_citation_id") or prepared_item.get("citation_id") or ""
+        ).strip()
+        if original_citation_id:
+            prepared_item["original_citation_id"] = original_citation_id
+        prepared.append(prepared_item)
+    return prepared
+
+
+def renumber_search_tool_parts(parts: List[Dict[str, Any]]) -> tuple[Dict[str, str], List[Dict[str, Any]]]:
+    next_citation_id = 1
+    citation_id_map: Dict[str, str] = {}
+    changed_parts: List[Dict[str, Any]] = []
+
+    for part in parts:
+        if part.get("type") != "tool" or part.get("tool_name") not in SEARCH_RESULT_TOOL_NAMES:
+            continue
+
+        data = part.get("data")
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list) or not items:
+            continue
+
+        normalized_items: List[Dict[str, Any]] = []
+        part_changed = False
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            normalized_item = dict(item)
+            original_citation_id = str(
+                normalized_item.get("original_citation_id") or normalized_item.get("citation_id") or ""
+            ).strip()
+            expected_label = f"[{next_citation_id}]"
+
+            if original_citation_id:
+                citation_id_map[original_citation_id] = str(next_citation_id)
+                if normalized_item.get("original_citation_id") != original_citation_id:
+                    part_changed = True
+                normalized_item["original_citation_id"] = original_citation_id
+
+            if normalized_item.get("citation_id") != next_citation_id:
+                part_changed = True
+            if normalized_item.get("label") != expected_label:
+                part_changed = True
+
+            normalized_item["citation_id"] = next_citation_id
+            normalized_item["label"] = expected_label
+            normalized_items.append(normalized_item)
+            next_citation_id += 1
+
+        if normalized_items != items:
+            part_changed = True
+
+        if part_changed:
+            next_data = dict(data)
+            next_data["items"] = normalized_items
+            part["data"] = next_data
+            changed_parts.append(clone_tool_part(part))
+
+    return citation_id_map, changed_parts
+
+
+def remap_search_citation_references(content: str, citation_id_map: Dict[str, str]) -> str:
+    if not content or not citation_id_map:
+        return content
+
+    def replace_match(match: re.Match[str]) -> str:
+        citation_id = match.group(1)
+        return f"[{citation_id_map.get(citation_id, citation_id)}]"
+
+    return SEARCH_RESULT_INLINE_CITATION_RE.sub(replace_match, content)
+
+
+def parse_labeled_search_results(content: str) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    current: Dict[str, Any] | None = None
+    snippet_lines: List[str] = []
+    active_multiline_field: str | None = None
+    field_map = {
+        "标题": "title",
+        "URL": "url",
+        "内容摘录": "snippet",
+        "摘要": "snippet",
+        "网站名称": "source_name",
+        "发布时间": "published_at",
+    }
+
+    def flush_current() -> None:
+        nonlocal current, snippet_lines, active_multiline_field
+        if current is None:
+            return
+        if snippet_lines:
+            current["snippet"] = "\n".join(snippet_lines).strip()
+        current["label"] = f"[{current['citation_id']}]"
+        items.append(current)
+        current = None
+        snippet_lines = []
+        active_multiline_field = None
+
+    for raw_line in content.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        match = SEARCH_RESULT_CITATION_RE.match(stripped)
+        if match:
+            flush_current()
+            current = {"citation_id": int(match.group(1))}
+            continue
+        if current is None:
+            continue
+        if not stripped:
+            if active_multiline_field == "snippet" and snippet_lines:
+                snippet_lines.append("")
+            continue
+
+        matched_field = False
+        for prefix, field_name in field_map.items():
+            marker = f"{prefix}:"
+            if not line.startswith(marker):
+                continue
+            value = line[len(marker):].strip()
+            matched_field = True
+            if field_name == "snippet":
+                snippet_lines = [value] if value else []
+                active_multiline_field = "snippet"
+            else:
+                current[field_name] = value
+                active_multiline_field = None
+            break
+
+        if matched_field:
+            continue
+        if active_multiline_field == "snippet":
+            snippet_lines.append(line)
+
+    flush_current()
+    return items
+
+
+def extract_structured_data(tool_name: str, artifact: Any, content: str = "") -> Any:
+    if tool_name in SEARCH_RESULT_TOOL_NAMES:
+        if isinstance(artifact, list):
+            items = prepare_search_result_items([item for item in artifact if isinstance(item, dict)])
+            if items:
+                return {"items": items}
+        parsed_items = prepare_search_result_items(parse_labeled_search_results(content))
+        if parsed_items:
+            return {"items": parsed_items}
     if tool_name in (
         "query_user_memory",
         "save_user_memory",
@@ -707,8 +884,9 @@ def list_conversations(user: AuthUser = Depends(require_auth)):
 def create_conversation(req: ConversationCreateRequest, user: AuthUser = Depends(require_auth)):
     reusable = chat_store.find_reusable_conversation(user.user_id)
     if reusable is not None:
-        requested_model = req.model if req.model in MODEL_OPTIONS else reusable["model"]
-        if requested_model != reusable["model"]:
+        requested_model = normalize_model_id(req.model)
+        current_model = normalize_model_id(reusable.get("model"))
+        if requested_model != reusable.get("model") or current_model != reusable.get("model"):
             updated = chat_store.update_conversation(
                 user.user_id,
                 reusable["id"],
@@ -727,6 +905,16 @@ def get_conversation(cid: str, user: AuthUser = Depends(require_auth)):
     conversation = chat_store.get_conversation(user.user_id, cid)
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    normalized_model = normalize_model_id(conversation.get("model"))
+    if normalized_model != conversation.get("model"):
+        updated = chat_store.update_conversation(
+            user.user_id,
+            cid,
+            model=normalized_model,
+            updated_at=now_iso(),
+        )
+        if updated is not None:
+            conversation = updated
     return conversation
 
 
@@ -885,7 +1073,7 @@ async def create_message(
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    sel = req.model if req.model in MODEL_OPTIONS else conv["model"]
+    sel = normalize_model_id(req.model if req.model is not None else conv.get("model"))
     umsg = {
         "id": str(uuid4()), "role": "user", "content": content,
         "timestamp": now_iso(), "parts": [{"type": "text", "content": content}],
@@ -910,6 +1098,7 @@ async def create_message(
 
     async def event_stream() -> AsyncIterator[bytes]:
         set_current_edu_session(edu_ctx)
+        reset_search_citation_counter()
         atxt = ""
         final_ai_text = ""
         pending: Dict[str, Dict[str, Any]] = {}
@@ -1001,7 +1190,7 @@ async def create_message(
                         rc = extract_text_content(getattr(mc, "content", ""))
                         af = getattr(mc, "artifact", None)
                         tp["urls"] = extract_urls(rc, af)
-                        tp["data"] = extract_structured_data(tn, af)
+                        tp["data"] = extract_structured_data(tn, af, rc)
                         yield serialize_event("tool_result", tp)
                         continue
 
@@ -1057,6 +1246,7 @@ async def create_message(
             )
         finally:
             clear_active_stream_stop(user.user_id, cid, stop_event)
+            reset_search_citation_counter()
             set_current_edu_session(None)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

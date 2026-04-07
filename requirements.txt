@@ -1,5 +1,6 @@
 langchain
 langgraph
+langchain-classic
 langchain-community
 langchain-openai
 dashscope
@@ -8,7 +9,6 @@ faiss-cpu
 sse_starlette
 langgraph-checkpoint-sqlite
 requests
-langchain-deepseek
 fastapi
 uvicorn
 beautifulsoup4
