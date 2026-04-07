@@ -30,6 +30,21 @@ const TOOL_ICONS = {
 }
 
 const SEARCH_RESULT_TOOL_NAMES = new Set(['retrieve', 'bocha_websearch_tool'])
+const EDUCATIONAL_TOOL_NAMES = new Set([
+  'query_grades',
+  'query_gpa_ranking',
+  'query_credit_statistics',
+  'query_courses',
+  'query_course_selection',
+  'select_course',
+  'query_exam_rooms',
+  'query_student_info',
+  'query_exam_scores',
+  'query_academic_calendar',
+  'query_cultivate_plan',
+])
+
+const FALLBACK_HEX = Array.from({ length: 256 }, (_, index) => index.toString(16).padStart(2, '0'))
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -41,6 +56,21 @@ const fmt = (v) =>
         new Date(v),
       )
     : ''
+
+const createUuid = () => {
+  const cryptoApi = globalThis.crypto
+  if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID()
+
+  if (typeof cryptoApi?.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16)
+    cryptoApi.getRandomValues(bytes)
+    bytes[6] = (bytes[6] & 0x0f) | 0x40
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    return `${FALLBACK_HEX[bytes[0]]}${FALLBACK_HEX[bytes[1]]}${FALLBACK_HEX[bytes[2]]}${FALLBACK_HEX[bytes[3]]}-${FALLBACK_HEX[bytes[4]]}${FALLBACK_HEX[bytes[5]]}-${FALLBACK_HEX[bytes[6]]}${FALLBACK_HEX[bytes[7]]}-${FALLBACK_HEX[bytes[8]]}${FALLBACK_HEX[bytes[9]]}-${FALLBACK_HEX[bytes[10]]}${FALLBACK_HEX[bytes[11]]}${FALLBACK_HEX[bytes[12]]}${FALLBACK_HEX[bytes[13]]}${FALLBACK_HEX[bytes[14]]}${FALLBACK_HEX[bytes[15]]}`
+  }
+
+  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`
+}
 
 const stripMarkdown = (value = '') =>
   String(value)
@@ -231,7 +261,7 @@ const groupGradesBySemester = (rows = []) => {
 }
 
 const draftAssistant = () => ({
-  id: `draft-${crypto.randomUUID()}`,
+  id: `draft-${createUuid()}`,
   role: 'assistant',
   content: '',
   parts: [],
@@ -280,7 +310,7 @@ const conversationMessageCount = (conversation) => {
 const isReusableDraftConversation = (conversation) => Boolean(conversation) && conversation.title === '新对话' && conversationMessageCount(conversation) === 0
 
 const localError = (c = '暂时无法生成回复，请稍后再试。') => ({
-  id: `err-${crypto.randomUUID()}`,
+  id: `err-${createUuid()}`,
   role: 'assistant',
   content: c,
   parts: [{ type: 'text', content: c }],
@@ -1191,7 +1221,7 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
   const icon = TOOL_ICONS[part.tool_name] || '🔧'
   const isRunning = part.status === 'running'
   const showRawUrls = !['query_cultivate_plan', 'retrieve', 'bocha_websearch_tool'].includes(part.tool_name)
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(() => !EDUCATIONAL_TOOL_NAMES.has(part.tool_name))
 
   const renderData = () => {
     if (!part.data) return null
@@ -1626,7 +1656,7 @@ function App() {
         cid = conv.id
       }
       const timestamp = new Date().toISOString()
-      const um = { id: `u-${crypto.randomUUID()}`, role: 'user', content: prompt, timestamp, parts: [{ type: 'text', content: prompt }] }
+      const um = { id: `u-${createUuid()}`, role: 'user', content: prompt, timestamp, parts: [{ type: 'text', content: prompt }] }
       const pendingConversation = {
         ...conv,
         model: selModel,

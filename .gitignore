@@ -14,4 +14,7 @@ conversation_history.sqlite
 frontend/node_modules/
 frontend/dist/
 app/storage/conversations.json
+app/storage/*.sqlite
+app/storage/*.sqlite-shm
+app/storage/*.sqlite-wal
 app/storage/users/

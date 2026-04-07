@@ -4,15 +4,14 @@ services:
     build: .
     container_name: fzu-chat
     restart: always
+    environment:
+      FZU_CHAT_CHECKPOINT_PATH: /app/app/storage/conversation_history.sqlite
     ports:
       - "80:8000"
     volumes:
       - ./app/data:/app/app/data:ro
       - ./app/faiss:/app/app/faiss:ro
       - ./app/png:/app/app/png:ro
-      - ./app/conversation_history.sqlite:/app/app/conversation_history.sqlite
-      - ./app/conversation_history.sqlite-shm:/app/app/conversation_history.sqlite-shm
-      - ./app/conversation_history.sqlite-wal:/app/app/conversation_history.sqlite-wal
       - ./app/storage:/app/app/storage
     security_opt:
       - no-new-privileges:true
