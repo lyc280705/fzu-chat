@@ -19,7 +19,7 @@ FZU-Chat provides a ChatGPT-style conversation experience for Fuzhou University 
 - **Educational system tools**: Query grades, courses, exam scores, and student info via the FZU academic affairs system (based on [west2-online/jwch](https://github.com/west2-online/jwch))
 - **ChatGPT-style interface**: Modern dark UI with sidebar history, quick actions, and streaming replies
 - **Rich tool cards**: Visual display of tool calls with structured data tables for grades and courses
-- **Multi-model support**: Qwen, DeepSeek and ERNIE model selection
+- **Multi-model support**: Huawei Cloud MaaS GLM-5 and DeepSeek-V3.2 selection, with Qwen3-32B for title summarization
 - **Knowledge + web search**: FAISS retrieval plus Bocha web search fallback
 - **Docker deployment**: Multi-stage build for React frontend + Python backend
 
@@ -48,9 +48,8 @@ fzu-chat/
 
 ## Required API Keys
 
-- `DASHSCOPE_API_KEY` – Alibaba Cloud DashScope (Qwen models)
-- `DEEPSEEK_API_KEY` – DeepSeek API
-- `QIANFAN_API_KEY` – Baidu Qianfan (ERNIE models)
+- `HUAWEICLOUD_MAAS_API_KEY` – Huawei Cloud MaaS OpenAI-compatible API for GLM-5, DeepSeek-V3.2, and Qwen3-32B title summarization
+- `DASHSCOPE_API_KEY` – Alibaba Cloud DashScope embeddings for the local knowledge base
 - `BOCHA_API_KEY` – Bocha web search
 - `LANGSMITH_API_KEY` – LangSmith tracing
 
@@ -61,9 +60,8 @@ fzu-chat/
 pip install -r requirements.txt
 
 # 2. Set environment variables
+export HUAWEICLOUD_MAAS_API_KEY=...
 export DASHSCOPE_API_KEY=...
-export DEEPSEEK_API_KEY=...
-export QIANFAN_API_KEY=...
 export BOCHA_API_KEY=...
 export LANGSMITH_API_KEY=...
 
@@ -80,13 +78,15 @@ cd frontend && npm install && npm run dev
 
 ```bash
 # 1. Create API key files
+echo "your-key" > huaweicloud_maas_api_key.txt
 echo "your-key" > dashscope_api_key.txt
-# ... repeat for other keys
+echo "your-key" > bocha_api_key.txt
+echo "your-key" > langsmith_api_key.txt
 
 # 2. Build and run
 docker compose up -d --build
 
-# 3. Visit http://localhost:100
+# 3. Visit http://localhost:80
 ```
 
 ## API Endpoints

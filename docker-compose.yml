@@ -5,7 +5,7 @@ services:
     container_name: fzu-chat
     restart: always
     ports:
-      - "100:8000"
+      - "80:8000"
     volumes:
       - ./app/data:/app/app/data:ro
       - ./app/faiss:/app/app/faiss:ro
@@ -20,8 +20,7 @@ services:
       - dashscope_api_key
       - bocha_api_key
       - langsmith_api_key
-      - deepseek_api_key
-      - qianfan_api_key
+      - huaweicloud_maas_api_key
     read_only: true
     tmpfs:
       - /tmp
@@ -32,7 +31,5 @@ secrets:
     file: ./bocha_api_key.txt
   langsmith_api_key:
     file: ./langsmith_api_key.txt
-  deepseek_api_key:
-    file: ./deepseek_api_key.txt
-  qianfan_api_key:
-    file: ./qianfan_api_key.txt
+  huaweicloud_maas_api_key:
+    file: ./huaweicloud_maas_api_key.txt
