@@ -9,21 +9,27 @@
 # 提示词: 章勋
 # 电子邮箱: 3134429813@qq.com
 # 最后修改: 2025年6月7日
+from contextvars import ContextVar
+from datetime import datetime
+import os
+from pathlib import Path
+import re
+import requests
+from typing import Any, Dict, List
+from urllib.parse import urlparse
+
 from langchain_classic.retrievers.multi_vector import MultiVectorRetriever
-from langchain_community.vectorstores import FAISS
 from langchain_classic.storage import LocalFileStore
 from langchain_community.embeddings import DashScopeEmbeddings
-from langchain_core.messages import trim_messages
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import FAISS
+from langchain_core.messages import SystemMessage, ToolMessage, trim_messages
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
-from langchain_deepseek import ChatDeepSeek
+from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
-from datetime import datetime
-import requests
-import os
-import json
-from pathlib import Path
+from langgraph.graph import END, MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode, tools_condition
 
 BASE_DIR = Path(__file__).resolve().parent
 FAISS_DIR = BASE_DIR / "faiss" / "fzu_chat"
@@ -31,67 +37,312 @@ DATA_DIR = BASE_DIR / "data"
 CHECKPOINT_PATH = Path(
     os.getenv("FZU_CHAT_CHECKPOINT_PATH", str(BASE_DIR / "conversation_history.sqlite"))
 )
+HUAWEICLOUD_OPENAI_BASE_URL = os.getenv(
+    "HUAWEICLOUD_OPENAI_BASE_URL",
+    "https://api.modelarts-maas.com/openai/v1",
+)
+DEFAULT_CHAT_MODEL = "glm-5"
+SECONDARY_CHAT_MODEL = "deepseek-v3.2"
+TITLE_SUMMARY_MODEL = "qwen3-32b"
+CHAT_MODEL_OPTIONS = {
+    DEFAULT_CHAT_MODEL: "华为云 GLM-5",
+    SECONDARY_CHAT_MODEL: "华为云 DeepSeek V3.2",
+}
+SEARCH_RESULT_TOOL_NAMES = {"retrieve", "bocha_websearch_tool"}
+SEARCH_RESULT_CITATION_RE = re.compile(r"^\[(\d+)\]$")
+SEARCH_RESULT_INLINE_CITATION_RE = re.compile(r"\[(\d+)\](?!\()")
+SEARCH_CITATION_COUNTER: ContextVar[int] = ContextVar("search_citation_counter", default=0)
 
-def get_langsmith_api_key():
-    """从Docker Secret或环境变量获取API密钥"""
-    secret_path = "/run/secrets/langsmith_api_key"
+
+def reset_search_citation_counter() -> None:
+    SEARCH_CITATION_COUNTER.set(0)
+
+
+def next_search_citation_id() -> int:
+    citation_id = SEARCH_CITATION_COUNTER.get() + 1
+    SEARCH_CITATION_COUNTER.set(citation_id)
+    return citation_id
+
+
+def get_result_source_label(url: str) -> str:
+    cleaned = url.strip()
+    if not cleaned:
+        return ""
+    parsed = urlparse(cleaned)
+    return parsed.netloc or cleaned
+
+
+def build_retrieve_citation_items(retrieved_docs) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for citation_id, doc in enumerate(retrieved_docs, start=1):
+        metadata = getattr(doc, "metadata", {}) or {}
+        source = str(metadata.get("source") or "").strip() if isinstance(metadata, dict) else ""
+        items.append(
+            {
+                "citation_id": citation_id,
+                "label": f"[{citation_id}]",
+                "title": (
+                    str(metadata.get("title") or "").strip() if isinstance(metadata, dict) else ""
+                )
+                or get_result_source_label(source)
+                or f"知识库片段 {citation_id}",
+                "url": source,
+                "snippet": str(getattr(doc, "page_content", "") or "").strip(),
+                "source_name": (
+                    str(metadata.get("source_name") or "知识库").strip() if isinstance(metadata, dict) else "知识库"
+                ),
+            }
+        )
+    return items
+
+
+def build_web_search_citation_items(webpages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for citation_id, page in enumerate(webpages, start=1):
+        source = str(page.get("url") or "").strip()
+        items.append(
+            {
+                "citation_id": citation_id,
+                "label": f"[{citation_id}]",
+                "title": str(page.get("name") or "").strip() or get_result_source_label(source) or f"网络结果 {citation_id}",
+                "url": source,
+                "snippet": str(page.get("summary") or "").strip(),
+                "source_name": str(page.get("siteName") or "网络搜索").strip(),
+                "published_at": str(page.get("dateLastCrawled") or "").strip(),
+            }
+        )
+    return items
+
+
+def format_retrieve_citation_item(item: Dict[str, Any]) -> str:
+    lines = [str(item.get("label") or "")]
+    if item.get("title"):
+        lines.append(f"标题: {item['title']}")
+    if item.get("url"):
+        lines.append(f"URL: {item['url']}")
+    if item.get("snippet"):
+        lines.append(f"内容摘录: {item['snippet']}")
+    return "\n".join(lines)
+
+
+def format_web_search_citation_item(item: Dict[str, Any]) -> str:
+    lines = [str(item.get("label") or "")]
+    if item.get("title"):
+        lines.append(f"标题: {item['title']}")
+    if item.get("url"):
+        lines.append(f"URL: {item['url']}")
+    if item.get("snippet"):
+        lines.append(f"摘要: {item['snippet']}")
+    if item.get("source_name"):
+        lines.append(f"网站名称: {item['source_name']}")
+    if item.get("published_at"):
+        lines.append(f"发布时间: {item['published_at']}")
+    return "\n".join(lines)
+
+
+def extract_text_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+                continue
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text") or block.get("content")
+                if text:
+                    parts.append(str(text))
+        return "".join(parts)
+    return ""
+
+
+def parse_labeled_search_results(content: str) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    current: Dict[str, Any] | None = None
+    snippet_lines: List[str] = []
+    active_multiline_field: str | None = None
+    field_map = {
+        "标题": "title",
+        "URL": "url",
+        "内容摘录": "snippet",
+        "摘要": "snippet",
+        "网站名称": "source_name",
+        "发布时间": "published_at",
+    }
+
+    def flush_current() -> None:
+        nonlocal current, snippet_lines, active_multiline_field
+        if current is None:
+            return
+        if snippet_lines:
+            current["snippet"] = "\n".join(snippet_lines).strip()
+        current["label"] = f"[{current['citation_id']}]"
+        items.append(current)
+        current = None
+        snippet_lines = []
+        active_multiline_field = None
+
+    for raw_line in content.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        match = SEARCH_RESULT_CITATION_RE.match(stripped)
+        if match:
+            flush_current()
+            current = {"citation_id": int(match.group(1))}
+            continue
+        if current is None:
+            continue
+        if not stripped:
+            if active_multiline_field == "snippet" and snippet_lines:
+                snippet_lines.append("")
+            continue
+
+        matched_field = False
+        for prefix, field_name in field_map.items():
+            marker = f"{prefix}:"
+            if not line.startswith(marker):
+                continue
+            value = line[len(marker):].strip()
+            matched_field = True
+            if field_name == "snippet":
+                snippet_lines = [value] if value else []
+                active_multiline_field = "snippet"
+            else:
+                current[field_name] = value
+                active_multiline_field = None
+            break
+
+        if matched_field:
+            continue
+        if active_multiline_field == "snippet":
+            snippet_lines.append(line)
+
+    flush_current()
+    return items
+
+
+def remap_search_citation_references(content: str, citation_id_map: Dict[str, str]) -> str:
+    if not content or not citation_id_map:
+        return content
+
+    def replace_match(match: re.Match[str]) -> str:
+        citation_id = match.group(1)
+        return f"[{citation_id_map.get(citation_id, citation_id)}]"
+
+    return SEARCH_RESULT_INLINE_CITATION_RE.sub(replace_match, content)
+
+
+def renumber_search_citation_items(items: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], Dict[str, str]]:
+    normalized_items: List[Dict[str, Any]] = []
+    citation_id_map: Dict[str, str] = {}
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        normalized_item = dict(item)
+        original_citation_id = str(normalized_item.get("citation_id") or "").strip()
+        next_citation = next_search_citation_id()
+        if original_citation_id:
+            citation_id_map[original_citation_id] = str(next_citation)
+        normalized_item["citation_id"] = next_citation
+        normalized_item["label"] = f"[{next_citation}]"
+        normalized_items.append(normalized_item)
+
+    return normalized_items, citation_id_map
+
+
+def normalize_search_tool_message(message: ToolMessage) -> ToolMessage:
+    tool_name = str(getattr(message, "name", "") or "")
+    if tool_name not in SEARCH_RESULT_TOOL_NAMES:
+        return message
+
+    artifact = getattr(message, "artifact", None)
+    items = [dict(item) for item in artifact if isinstance(item, dict)] if isinstance(artifact, list) else []
+    if not items:
+        items = parse_labeled_search_results(extract_text_content(getattr(message, "content", "")))
+    if not items:
+        return message
+
+    normalized_items, citation_id_map = renumber_search_citation_items(items)
+    updated_content = getattr(message, "content", "")
+    if isinstance(updated_content, str):
+        updated_content = remap_search_citation_references(updated_content, citation_id_map)
+
+    return message.model_copy(
+        update={
+            "content": updated_content,
+            "artifact": normalized_items,
+        }
+    )
+
+
+def normalize_search_tool_messages(messages: List[Any]) -> List[Any]:
+    normalized_messages: List[Any] = []
+    for message in messages:
+        if isinstance(message, ToolMessage):
+            normalized_messages.append(normalize_search_tool_message(message))
+        else:
+            normalized_messages.append(message)
+    return normalized_messages
+
+def read_secret_or_env(secret_path: str, *env_names: str) -> str | None:
     if os.path.exists(secret_path):
-        with open(secret_path, "r") as f:
-            return f.read().strip()
-    return os.getenv("LANGSMITH_API_KEY")
-LANGSMITH_API_KEY = get_langsmith_api_key()
+        with open(secret_path, "r") as secret_file:
+            secret_value = secret_file.read().strip()
+            if secret_value:
+                return secret_value
+    for env_name in env_names:
+        env_value = os.getenv(env_name)
+        if env_value:
+            return env_value.strip()
+    return None
+
+
+LANGSMITH_API_KEY = read_secret_or_env("/run/secrets/langsmith_api_key", "LANGSMITH_API_KEY")
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_API_KEY"] = LANGSMITH_API_KEY
-LANGCHAIN_ENDPOINT="https://api.smith.langchain.com"
 if not LANGSMITH_API_KEY:
     raise ValueError("Langsmith API密钥未设置")
+os.environ["LANGCHAIN_API_KEY"] = LANGSMITH_API_KEY
+os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
 
-def get_dashscope_api_key():
-    """从Docker Secret或环境变量获取API密钥"""
-    secret_path = "/run/secrets/dashscope_api_key"
-    if os.path.exists(secret_path):
-        with open(secret_path, "r") as f:
-            return f.read().strip()
-    return os.getenv("DASHSCOPE_API_KEY")
-dashscope_api_key = get_dashscope_api_key()
+dashscope_api_key = read_secret_or_env("/run/secrets/dashscope_api_key", "DASHSCOPE_API_KEY")
 
 if not dashscope_api_key:
     raise ValueError("DashScope API密钥未设置")
 
-def get_deepseek_api_key():
-    """从Docker Secret或环境变量获取API密钥"""
-    secret_path = "/run/secrets/deepseek_api_key"
-    if os.path.exists(secret_path):
-        with open(secret_path, "r") as f:
-            return f.read().strip()
-    return os.getenv("DEEPSEEK_API_KEY")
-deepseek_api_key = get_deepseek_api_key()
+huawei_maas_api_key = read_secret_or_env(
+    "/run/secrets/huaweicloud_maas_api_key",
+    "HUAWEICLOUD_MAAS_API_KEY",
+    "MAAS_API_KEY",
+)
+if not huawei_maas_api_key:
+    raise ValueError("华为云 MaaS API密钥未设置")
 
-if not deepseek_api_key:
-    raise ValueError("DeepSeek API密钥未设置")
-
-def get_qianfan_api_key():
-    """从Docker Secret或环境变量获取API密钥"""
-    secret_path = "/run/secrets/qianfan_api_key"
-    if os.path.exists(secret_path):
-        with open(secret_path, "r") as f:
-            return f.read().strip()
-    return os.getenv("QIANFAN_API_KEY")
-qianfan_api_key = get_qianfan_api_key()
-if not qianfan_api_key:
-    raise ValueError("Qianfan API密钥未设置")
-
-def get_bocha_api_key():
-    """从Docker Secret或环境变量获取API密钥"""
-    secret_path = "/run/secrets/bocha_api_key"
-    if os.path.exists(secret_path):
-        with open(secret_path, "r") as f:
-            return f.read().strip()
-    return os.getenv("BOCHA_API_KEY")
-BOCHA_API_KEY= get_bocha_api_key()
+BOCHA_API_KEY = read_secret_or_env("/run/secrets/bocha_api_key", "BOCHA_API_KEY")
 
 if not BOCHA_API_KEY:
     raise ValueError("Bocha API密钥未设置")
+
+
+def build_chat_llm(
+    model_name: str,
+    *,
+    temperature: float,
+    streaming: bool,
+    stop: List[str] | None = None,
+) -> ChatOpenAI:
+    normalized_model = model_name if model_name in CHAT_MODEL_OPTIONS or model_name == TITLE_SUMMARY_MODEL else DEFAULT_CHAT_MODEL
+    init_kwargs: Dict[str, Any] = {
+        "model": normalized_model,
+        "temperature": temperature,
+        "streaming": streaming,
+        "api_key": huawei_maas_api_key,
+        "base_url": HUAWEICLOUD_OPENAI_BASE_URL,
+    }
+    if stop:
+        init_kwargs["model_kwargs"] = {"stop": stop}
+    return ChatOpenAI(**init_kwargs)
 
 vector_store = FAISS.load_local(
     str(FAISS_DIR),
@@ -104,11 +355,9 @@ retriever = MultiVectorRetriever(
     id_key="doc_id",
     search_kwargs={"k": 3},
 )
-from langgraph.graph import MessagesState, StateGraph
-from langchain_core.tools import tool
 
 @tool(response_format="content_and_artifact")
-def bocha_websearch_tool(query: str,freshness: str) -> tuple[str, any]:
+def bocha_websearch_tool(query: str,freshness: str) -> tuple[str, Any]:
     """在retrieve工具无法找到相关信息时调用，使用Bocha Web Search API 进行搜索互联网网页，输入应为搜索查询字符串，输出将返回搜索结果的详细信息，包括网页标题、网页URL、网页摘要、网站名称、网页发布时间等。
     参数:
     - query: 搜索关键词
@@ -137,17 +386,9 @@ def bocha_websearch_tool(query: str,freshness: str) -> tuple[str, any]:
             webpages = json_response["data"]["webPages"]["value"]
             if not webpages:
                 return "未找到相关结果。", []
-            formatted_results = ""
-            for idx, page in enumerate(webpages, start=1):
-                formatted_results += (
-                    f"引用: {idx}\n"
-                    f"标题: {page['name']}\n"
-                    f"URL: {page['url']}\n"
-                    f"摘要: {page['summary']}\n"
-                    f"网站名称: {page['siteName']}\n"
-                    f"发布时间: {page['dateLastCrawled']}\n\n"
-                )
-            return formatted_results.strip(), webpages
+            citation_items = build_web_search_citation_items(webpages)
+            formatted_results = "\n\n".join(format_web_search_citation_item(item) for item in citation_items)
+            return formatted_results.strip(), citation_items
         except Exception as e:
             return f"搜索API请求失败，原因是：搜索结果解析失败 {str(e)}", None
     else:
@@ -158,160 +399,22 @@ def bocha_websearch_tool(query: str,freshness: str) -> tuple[str, any]:
 def retrieve(query: str):
     """从校内知识库返回**可能**和查询语句(query)相关的有关福州大学信息的文档片段，查询语句需要包含福州大学，并且查询中只能包含一个问题，注意：检索到的信息可能不完整、被截断或和query不相关，必须判断返回的信息是否和query相关后再使用。"""
     retrieved_docs = retriever.invoke(query)
-    serialized = "\n\n".join(
-        (f"Source ID: {i+1}\nArticle url: {doc.metadata['source']}\nArticle Snippet:\n{doc.page_content}")
-        for i ,doc in enumerate(retrieved_docs)
-    )
-    return serialized, retrieved_docs
-
-from langchain_core.messages import SystemMessage
-from langgraph.prebuilt import ToolNode
-from langchain_community.chat_models import ChatTongyi
-
-from typing import (
-    Any,
-    Dict,
-    Iterator,
-    List,
-    Optional,
-
-)
-
-from langchain_core.callbacks import (
-    CallbackManagerForLLMRun,
-)
-
-from langchain_core.messages import (
-    BaseMessage,
-    SystemMessage,
-
-)
-
-from langchain_core.outputs import (
-    ChatGenerationChunk,
-)
-
-
-from langchain_community.llms.tongyi import (
-    generate_with_last_element_mark,
-)
-
-
-class CustomChatTongyi(ChatTongyi):
-    def _stream(
-        self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
-        run_manager: Optional[CallbackManagerForLLMRun] = None,
-        **kwargs: Any,
-    ) -> Iterator[ChatGenerationChunk]:
-        params: Dict[str, Any] = self._invocation_params(
-            messages=messages, stop=stop, stream=True, **kwargs
-        )
-
-        for stream_resp, is_last_chunk in generate_with_last_element_mark(
-            self.stream_completion_with_retry(**params)
-        ):
-            choice = stream_resp["output"]["choices"][0]
-            message = choice["message"]
-            if (
-                choice["finish_reason"] == "null"
-                and message["content"] == ""
-                and message.get("reasoning_content", "") == "" #修改
-                and "tool_calls" not in message
-            ):
-                continue
-
-            chunk = ChatGenerationChunk(
-                **self._chat_generation_from_qwen_resp(
-                    stream_resp, is_chunk=True, is_last_chunk=is_last_chunk
-                )
-            )
-            if run_manager:
-                run_manager.on_llm_new_token(chunk.text, chunk=chunk)
-            yield chunk
-
-    def subtract_client_response(self, resp: Any, prev_resp: Any) -> Any:
-        """Subtract prev response from curr response with safer handling of function fields"""
-        resp_copy = json.loads(json.dumps(resp))
-        choice = resp_copy["output"]["choices"][0]
-        message = choice["message"]
-
-        prev_resp_copy = json.loads(json.dumps(prev_resp))
-        prev_choice = prev_resp_copy["output"]["choices"][0]
-        prev_message = prev_choice["message"]
-
-        message["content"] = message["content"].replace(prev_message["content"], "")
-
-        if message.get("tool_calls"):
-            for index, tool_call in enumerate(message["tool_calls"]):
-                if "function" in tool_call:
-                    function = tool_call["function"]
-                    
-                    # 确保function字典中有name字段
-                    if "name" not in function:
-                        function["name"] = ""
-                    
-                    if prev_message.get("tool_calls") and index < len(prev_message["tool_calls"]):
-                        prev_tool_call = prev_message["tool_calls"][index]
-                        if "function" in prev_tool_call:
-                            prev_function = prev_tool_call["function"]
-                            
-                            # 安全获取prev_function中的name
-                            prev_name = prev_function.get("name", "")
-                            function["name"] = function["name"].replace(prev_name, "")
-                            
-                            # 同样安全处理arguments
-                            if "arguments" in function and "arguments" in prev_function:
-                                function["arguments"] = function["arguments"].replace(
-                                    prev_function["arguments"], ""
-                                )
-
-        return resp_copy
-    
-# llm = CustomChatTongyi(model="qwen-max-latest", temperature=0.4, streaming=True,dashscope_api_key=dashscope_api_key,    model_kwargs={
-#         "enable_thinking": False,
-#         "stop": "请用以下风格与用户交流"
-#     })
+    citation_items = build_retrieve_citation_items(retrieved_docs)
+    serialized = "\n\n".join(format_retrieve_citation_item(item) for item in citation_items)
+    return serialized, citation_items
 
 def _build_query_or_respond(edu_tools, user_memory_tools):
     def query_or_respond(state: MessagesState, config: RunnableConfig | None = None):
         """Generate tool call for retrieval or respond."""
         config = config or {}
         configurable = config.get("configurable", {})
-        model_name = configurable.get("model", "qwen-max-latest")
-        if model_name == "deepseek-chat":
-            llm = ChatDeepSeek(
-                model="deepseek-chat",
-                temperature=0.4,
-                streaming=True,
-                api_key=deepseek_api_key,
-                model_kwargs={
-                    "stop": "请用以下风格与用户交流"
-                }
-            )
-        elif model_name == "ERNIE-4.5-Turbo-32K":
-            llm = ChatOpenAI(
-                model="ernie-4.5-turbo-32k",
-                temperature=0.4,
-                streaming=True,
-                api_key=qianfan_api_key,
-                model_kwargs={
-                    "stop": ["请用以下风格与用户交流"]
-                },
-                base_url="https://qianfan.baidubce.com/v2"
-            )
-        else:
-            llm = CustomChatTongyi(
-                model=model_name,
-                temperature=0.4,
-                streaming=True,
-                dashscope_api_key=dashscope_api_key,
-                model_kwargs={
-                    "enable_thinking": False,
-                    "stop": "请用以下风格与用户交流"
-                }
-            )
+        model_name = configurable.get("model", DEFAULT_CHAT_MODEL)
+        llm = build_chat_llm(
+            model_name,
+            temperature=0.4,
+            streaming=True,
+            stop=["请用以下风格与用户交流"],
+        )
         all_tools = [retrieve, bocha_websearch_tool] + edu_tools + user_memory_tools
         llm_with_tools = llm.bind_tools(all_tools)
         current_time = datetime.now().strftime("%Y年%m月%d日")
@@ -392,6 +495,8 @@ def _build_query_or_respond(edu_tools, user_memory_tools):
    - 从搜索结果中提取与用户问题最相关的信息
    - 整合多个来源的信息，确保一致性
    - 明确标注信息来源
+    - 对 retrieve 和 bocha_websearch_tool 返回结果里的 [数字] 引用标号，必须在最终回答中沿用原编号
+    - 每条关键事实后尽量补上对应的 [数字]，不要自创、改写、合并或省略这些编号
    - 如果搜索结果有冲突，诚实说明不同来源的观点
    - 将专业信息转化为友好、易懂的语言
    - 如文本中有图片链接，以markdown格式输出
@@ -419,10 +524,6 @@ def _build_query_or_respond(edu_tools, user_memory_tools):
 
     return query_or_respond
 
-
-from langgraph.graph import END
-from langgraph.prebuilt import ToolNode, tools_condition
-
 from langgraph.checkpoint.sqlite import SqliteSaver
 import sqlite3
 CHECKPOINT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -437,7 +538,15 @@ def build_graph(edu_session: Dict[str, Any] | None = None, use_checkpointer: boo
     edu_tools = build_edu_tools(edu_session)
     user_memory_tools = build_user_memory_tools(edu_session)
     query_or_respond = _build_query_or_respond(edu_tools, user_memory_tools)
-    tools = ToolNode([retrieve, bocha_websearch_tool] + edu_tools + user_memory_tools)
+    raw_tools = ToolNode([retrieve, bocha_websearch_tool] + edu_tools + user_memory_tools)
+
+    def tools(state: MessagesState, config: RunnableConfig | None = None):
+        result = raw_tools.invoke(state, config=config)
+        messages = result.get("messages") if isinstance(result, dict) else None
+        if not isinstance(messages, list):
+            return result
+        return {**result, "messages": normalize_search_tool_messages(messages)}
+
     graph_builder = StateGraph(MessagesState)
     graph_builder.add_node("query_or_respond", query_or_respond)
     graph_builder.add_node("tools", tools)
@@ -464,6 +573,6 @@ summary_prompt = ChatPromptTemplate.from_messages(
 )
 summary_chain = (
     summary_prompt
-    | ChatTongyi(model="qwen-turbo-latest", temperature=0.3, dashscope_api_key=dashscope_api_key)
+    | build_chat_llm(TITLE_SUMMARY_MODEL, temperature=0.3, streaming=False)
     | StrOutputParser()
 )

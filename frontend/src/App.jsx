@@ -29,6 +29,8 @@ const TOOL_ICONS = {
   query_cultivate_plan: '🧭',
 }
 
+const SEARCH_RESULT_TOOL_NAMES = new Set(['retrieve', 'bocha_websearch_tool'])
+
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
@@ -144,6 +146,46 @@ const normalizeMarkdownTables = (content = '') => {
   return normalized.join('\n')
 }
 
+const toDomIdFragment = (value = '') => String(value).trim().replace(/[^a-zA-Z0-9_-]+/g, '-')
+
+const getCitationAnchorId = (messageId, toolKey, citationId) =>
+  `citation-${toDomIdFragment(messageId)}-${toDomIdFragment(toolKey)}-${toDomIdFragment(citationId)}`
+
+const buildCitationLinkMap = (messageId, parts = []) => {
+  const citationMap = {}
+
+  for (const part of parts) {
+    if (part?.type !== 'tool' || !SEARCH_RESULT_TOOL_NAMES.has(part.tool_name)) continue
+    const items = Array.isArray(part?.data?.items) ? part.data.items : []
+    const toolKey = part.tool_id ?? part.tool_name
+
+    for (const item of items) {
+      const citationId = String(item?.citation_id ?? '').trim()
+      if (!citationId || citationMap[citationId]) continue
+      citationMap[citationId] = `#${getCitationAnchorId(messageId, toolKey, citationId)}`
+    }
+  }
+
+  return citationMap
+}
+
+const linkifyCitationReferences = (content = '', citationMap = {}) =>
+  String(content).replace(/\[(\d+)\](?!\()/g, (match, citationId) => {
+    const href = citationMap[citationId]
+    return href ? `[[${citationId}]](${href})` : match
+  })
+
+const scrollToCitation = (href = '') => {
+  if (!href.startsWith('#') || typeof document === 'undefined') return
+  const target = document.getElementById(href.slice(1))
+  if (!target) return
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  target.classList.add('tool-citation-item--targeted')
+  if (typeof window !== 'undefined') {
+    window.setTimeout(() => target.classList.remove('tool-citation-item--targeted'), 1800)
+  }
+}
+
 const compactParts = (parts = []) => {
   const normalized = []
   for (const part of parts) {
@@ -168,31 +210,6 @@ const appendTextPart = (parts = [], delta = '') => {
 
 const replaceToolPart = (parts = [], nextPart) =>
   compactParts(parts.map((part) => (part.type === 'tool' && part.tool_id === nextPart.tool_id ? nextPart : part)))
-
-const getToolPayloadSize = (part) => {
-  if (Array.isArray(part?.data)) return part.data.length
-  if (part?.data && typeof part.data === 'object') {
-    if (part.tool_name === 'query_cultivate_plan') {
-      if (Array.isArray(part.data.matched_results) && part.data.matched_results.length > 0) return part.data.matched_results.length
-      if (Array.isArray(part.data.matched_chapter_ids) && part.data.matched_chapter_ids.length > 0) return part.data.matched_chapter_ids.length
-      if (Array.isArray(part.data.outline) && part.data.outline.length > 0) return Math.min(part.data.outline.length, 6)
-    }
-    if (Array.isArray(part.data.items)) return part.data.items.length
-    if (Array.isArray(part.data.exams)) return part.data.exams.length
-    if (Array.isArray(part.data.events)) return part.data.events.length
-    if (Array.isArray(part.data.sections)) {
-      return part.data.sections.reduce((total, section) => total + (Array.isArray(section?.rows) ? section.rows.length : 0), 0)
-    }
-    if (Array.isArray(part.data.text_blocks)) return part.data.text_blocks.length
-    const groupedSize = ['major', 'minor'].reduce(
-      (total, key) => total + (Array.isArray(part.data[key]) ? part.data[key].length : 0),
-      0,
-    )
-    if (groupedSize) return groupedSize
-    return Object.keys(part.data).length
-  }
-  return part?.urls?.length ?? 0
-}
 
 const creditProgress = (gain, total) => {
   const gainValue = Number.parseFloat(String(gain ?? '').replace(/[^\d.]+/g, ''))
@@ -1080,8 +1097,42 @@ function StudentInfoCard({ data }) {
   )
 }
 
-function MessageMarkdown({ content }) {
-  const normalizedContent = content ? normalizeMarkdownTables(content) : ''
+function SearchResultsCard({ part, data, messageId }) {
+  const items = Array.isArray(data?.items) ? data.items : []
+  if (items.length === 0) return null
+
+  const toolKey = part.tool_id ?? part.tool_name
+
+  return (
+    <div className="tool-sections">
+      {items.map((item, index) => {
+        const citationId = String(item?.citation_id ?? index + 1)
+        const anchorId = getCitationAnchorId(messageId, toolKey, citationId)
+        const title = item?.title || item?.source_name || item?.url || `结果 ${citationId}`
+        const linkLabel = item?.url ? title : `${title}`
+
+        return (
+          <section key={anchorId} id={anchorId} className="tool-section tool-citation-item" tabIndex={-1}>
+            <div className="tool-citation-row">
+              <span className="tool-citation-badge">[{citationId}]</span>
+              {item?.url ? (
+                <a className="tool-citation-link tool-citation-link--inline" href={item.url} target="_blank" rel="noreferrer">
+                  {linkLabel}
+                </a>
+              ) : (
+                <div className="tool-section-title">{linkLabel}</div>
+              )}
+            </div>
+          </section>
+        )
+      })}
+    </div>
+  )
+}
+
+function MessageMarkdown({ content, citationMap = {} }) {
+  const linkedContent = content ? linkifyCitationReferences(content, citationMap) : ''
+  const normalizedContent = linkedContent ? normalizeMarkdownTables(linkedContent) : ''
   if (!content) return null
 
   return (
@@ -1089,7 +1140,28 @@ function MessageMarkdown({ content }) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          a: (props) => <a {...props} target="_blank" rel="noreferrer" />,
+          a: ({ href = '', children, ...props }) => {
+            if (href.startsWith('#')) {
+              return (
+                <a
+                  {...props}
+                  href={href}
+                  className="citation-ref"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    scrollToCitation(href)
+                  }}
+                >
+                  {children}
+                </a>
+              )
+            }
+            return (
+              <a {...props} href={href} target="_blank" rel="noreferrer">
+                {children}
+              </a>
+            )
+          },
           table: ({ children }) => (
             <div className="markdown-table-wrap">
               <table>{children}</table>
@@ -1118,19 +1190,15 @@ function MessageMarkdown({ content }) {
 function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
   const icon = TOOL_ICONS[part.tool_name] || '🔧'
   const isRunning = part.status === 'running'
-  const isLargePayload = !isRunning && getToolPayloadSize(part) > 8
-  const showRawUrls = part.tool_name !== 'query_cultivate_plan'
-  const [expanded, setExpanded] = useState(() => !isLargePayload || isRunning)
-  const [manualToggle, setManualToggle] = useState(false)
-
-  useEffect(() => {
-    if (manualToggle) return
-    setExpanded(!isLargePayload || isRunning)
-  }, [isLargePayload, isRunning, manualToggle])
+  const showRawUrls = !['query_cultivate_plan', 'retrieve', 'bocha_websearch_tool'].includes(part.tool_name)
+  const [expanded, setExpanded] = useState(true)
 
   const renderData = () => {
     if (!part.data) return null
     switch (part.tool_name) {
+      case 'retrieve':
+      case 'bocha_websearch_tool':
+        return <SearchResultsCard part={part} data={part.data} messageId={messageId} />
       case 'query_grades':
         return <GradeTable data={part.data} />
       case 'query_gpa_ranking':
@@ -1190,10 +1258,7 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
           <button
             type="button"
             className="tool-card-toggle"
-            onClick={() => {
-              setManualToggle(true)
-              setExpanded((value) => !value)
-            }}
+            onClick={() => setExpanded((value) => !value)}
             aria-expanded={expanded}
           >
             {expanded ? '收起' : '展开'}
@@ -1233,7 +1298,7 @@ function App() {
   const [activeId, setActiveId] = useState(null)
   const [msgStore, setMsgStore] = useState({})
   const [input, setInput] = useState('')
-  const [selModel, setSelModel] = useState('qwen-max-latest')
+  const [selModel, setSelModel] = useState('glm-5')
   const [sending, setSending] = useState(false)
   const [stopPending, setStopPending] = useState(false)
   const [error, setError] = useState('')
@@ -1349,8 +1414,14 @@ function App() {
   useEffect(() => {
     if (!activeId) return
     const m = msgStore[activeId]?.model ?? activeConv?.model
-    if (m) setSelModel(m)
-  }, [activeConv, activeId, msgStore])
+    if (m && models.some((model) => model.id === m)) {
+      setSelModel(m)
+      return
+    }
+    if (models.length > 0) {
+      setSelModel(models[0].id)
+    }
+  }, [activeConv, activeId, models, msgStore])
 
   // --- Handlers ---
   const handleLogin = useCallback((u, eduErr) => { setUser(u); setEduError(eduErr) }, [])
@@ -1708,6 +1779,7 @@ function App() {
           ) : (
             activeMsgs.map((m) => {
               const parts = compactParts(m.parts)
+              const citationMap = buildCitationLinkMap(m.id, parts)
               const showBubble = parts.length > 0 || m.isDraft
 
               return (
@@ -1733,7 +1805,7 @@ function App() {
                                 onMemoryProposalAction={handleMemoryProposalAction}
                               />
                             ) : (
-                              <MessageMarkdown key={`${m.id}-text-${i}`} content={p.content} />
+                              <MessageMarkdown key={`${m.id}-text-${i}`} content={p.content} citationMap={citationMap} />
                             ),
                           )}
                           {m.isDraft && parts.length === 0 && (
