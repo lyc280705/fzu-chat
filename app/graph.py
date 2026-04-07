@@ -52,6 +52,7 @@ SEARCH_RESULT_TOOL_NAMES = {"retrieve", "bocha_websearch_tool"}
 SEARCH_RESULT_CITATION_RE = re.compile(r"^\[(\d+)\]$")
 SEARCH_RESULT_INLINE_CITATION_RE = re.compile(r"\[(\d+)\](?!\()")
 SEARCH_CITATION_COUNTER: ContextVar[int] = ContextVar("search_citation_counter", default=0)
+MAX_HISTORY_MESSAGES = 32
 
 
 def reset_search_citation_counter() -> None:
@@ -286,6 +287,7 @@ def normalize_search_tool_messages(messages: List[Any]) -> List[Any]:
             normalized_messages.append(message)
     return normalized_messages
 
+
 def read_secret_or_env(secret_path: str, *env_names: str) -> str | None:
     if os.path.exists(secret_path):
         with open(secret_path, "r") as secret_file:
@@ -517,8 +519,16 @@ def _build_query_or_respond(edu_tools, user_memory_tools):
 - 若你已声明将执行某项操作，便应直接调用工具完成，无需再征求用户许可
 - 使用工具前不要主观猜测问题的答案，而是直接使用工具获取信息
 - **不要自己编造信息或用基础知识回答**"""
-        trimmer = trim_messages(strategy="last", token_counter=len,max_tokens=8,allow_partial=False)
-        prompt = [SystemMessage(sys_prompt)] + trimmer.invoke(state["messages"])
+        prompt = trim_messages(
+            [SystemMessage(sys_prompt), *state["messages"]],
+            max_tokens=MAX_HISTORY_MESSAGES,
+            token_counter=len,
+            strategy="last",
+            allow_partial=False,
+            start_on="human",
+            end_on=("human", "tool"),
+            include_system=True,
+        )
         response = llm_with_tools.invoke(prompt)
         return {"messages": [response]}
 
