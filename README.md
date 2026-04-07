@@ -2,211 +2,122 @@
 
 [简体中文](README.zh.md)
 
-An intelligent Q&A system for Fuzhou University based on LangGraph and Streamlit.
+A Fuzhou University intelligent Q&A system with student authentication and educational system integration, built with LangGraph, FastAPI, and React.
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://python.org)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.44.0-red.svg)](https://streamlit.io)
-[![LangGraph](https://img.shields.io/badge/LangGraph-Latest-green.svg)](https://langchain-ai.github.io/langgraph/)
+[![React](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-## Project Introduction
+## Overview
 
-FZU-Chat is an intelligent Q&A system designed for the teachers and students of Fuzhou University. It uses RAG technology, combined with the LangGraph workflow and various large language models, to provide users with accurate and timely campus information query services.
+FZU-Chat provides a ChatGPT-style conversation experience for Fuzhou University students. Each student logs in with their student ID to get isolated conversations and access to educational system tools (grade queries, course schedules, etc.).
 
-### Core Features
+## Features
 
-- **Multi-model Support**: Integrates mainstream large language models such as Qwen, DeepSeek, and ERNIE Bot.
-- **Intelligent Retrieval**: Efficient semantic retrieval based on the FAISS vector database.
-- **Real-time Search**: Integrated with the Bocha search engine to obtain the latest information.
-- **Friendly Interface**: Modern web interface based on Streamlit.
-- **Containerized Deployment**: Supports one-click deployment with Docker.
-
-## Quick Start
-
-### Prerequisites
-
-- Python 3.12+
-- Docker & Docker Compose
-- API keys for various AI services
-
-### Docker Deployment (Recommended)
-
-1.  **Clone the project**
-    ```bash
-    git clone https://github.com/lyc280705/fzu-chat.git
-    cd fzu-chat
-    ```
-
-2.  **Configure API keys**
-    ```bash
-    # Create API key files
-    echo "your_dashscope_key" > dashscope_api_key.txt
-    echo "your_bocha_key" > bocha_api_key.txt
-    echo "your_langsmith_key" > langsmith_api_key.txt
-    echo "your_deepseek_key" > deepseek_api_key.txt
-    echo "your_qianfan_key" > qianfan_api_key.txt
-    ```
-
-3.  **Start the service**
-    ```bash
-    docker compose up -d
-    ```
-
-4.  **Access the application**
-    ```
-    http://localhost:100
-    ```
-
-### Local Development
-
-1.  **Install dependencies**
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-2.  **Set environment variables**
-    ```bash
-    export DASHSCOPE_API_KEY="your_key"
-    export BOCHA_API_KEY="your_key"
-    export LANGSMITH_API_KEY="your_key"
-    export DEEPSEEK_API_KEY="your_key"
-    export QIANFAN_API_KEY="your_key"
-    ```
-
-3.  **Start the application**
-    ```bash
-    streamlit run app/app.py
-    ```
-
-## Technology Stack
-
-### Backend Framework
-- **LangGraph**: Workflow orchestration
-- **LangChain**: Large language model integration
-- **FAISS**: Vector database
-- **SQLite**: Session storage
-
-### Frontend Interface
-- **Streamlit**: Web application framework
-- **CSS**: Custom styles
-
-### Large Language Models
-- **Qwen (Tongyi Qianwen)**: Alibaba Cloud's large model
-- **DeepSeek**: DeepSeek model
-- **ERNIE Bot (Wenxin Yiyan)**: Baidu's large model
-
-### Deployment Tools
-- **Docker**: Containerized deployment
-- **Docker Compose**: Service orchestration
+- **Student authentication**: Per-student login with conversation isolation
+- **Educational system tools**: Query grades, courses, exam scores, and student info via the FZU academic affairs system (based on [west2-online/jwch](https://github.com/west2-online/jwch))
+- **ChatGPT-style interface**: Modern dark UI with sidebar history, quick actions, and streaming replies
+- **Rich tool cards**: Visual display of tool calls with structured data tables for grades and courses
+- **Multi-model support**: Qwen, DeepSeek and ERNIE model selection
+- **Knowledge + web search**: FAISS retrieval plus Bocha web search fallback
+- **Docker deployment**: Multi-stage build for React frontend + Python backend
 
 ## Project Structure
 
 ```
 fzu-chat/
 ├── app/
-│   ├── app.py              # Main application
-│   ├── graph.py            # LangGraph workflow definition
-│   ├── data/               # Knowledge base document storage
-│   ├── faiss/              # Vector database
-│   └── png/                # Static assets
-├── docker-compose.yml      # Docker orchestration file
-├── Dockerfile             # Docker build file
-├── requirements.txt       # Python dependencies
-└── README.md             # Project documentation
+│   ├── server.py          # FastAPI backend with auth + per-user conversations
+│   ├── graph.py           # LangGraph workflow with edu tools
+│   ├── auth.py            # Token-based authentication & session management
+│   ├── jwch_client.py     # FZU undergraduate system client (Python port)
+│   ├── edu_tools.py       # LangGraph tools for educational queries
+│   ├── data/              # Knowledge base documents
+│   ├── faiss/             # FAISS vector database
+│   ├── png/               # Static assets
+│   └── storage/           # Per-user conversation storage
+├── frontend/
+│   ├── src/App.jsx        # React chat UI with login
+│   ├── src/App.css        # Modern dark theme styles
+│   └── vite.config.js     # Vite config with API proxy
+├── Dockerfile
+├── docker-compose.yml
+└── requirements.txt
 ```
 
-## Configuration
+## Required API Keys
 
-### API Key Configuration
+- `DASHSCOPE_API_KEY` – Alibaba Cloud DashScope (Qwen models)
+- `DEEPSEEK_API_KEY` – DeepSeek API
+- `QIANFAN_API_KEY` – Baidu Qianfan (ERNIE models)
+- `BOCHA_API_KEY` – Bocha web search
+- `LANGSMITH_API_KEY` – LangSmith tracing
 
-The system requires the following API keys, which can be adjusted as needed:
+## Local Development
 
-| Service   | Purpose          | Get it from                                             |
-|-----------|------------------|---------------------------------------------------------|
-| DashScope | Qwen model       | [Alibaba Cloud Console](https://dashscope.console.aliyun.com/) |
-| DeepSeek  | DeepSeek model   | [DeepSeek Platform](https://platform.deepseek.com/)     |
-| Qianfan   | ERNIE Bot model  | [Baidu AI Cloud](https://cloud.baidu.com/product/wenxinworkshop) |
-| Bocha     | Web search       | [Bocha API](https://bocha.ai/)                          |
-| LangSmith | Traceability     | [LangSmith](https://smith.langchain.com/)               |
+```bash
+# 1. Install backend dependencies
+pip install -r requirements.txt
 
-### Port Configuration
+# 2. Set environment variables
+export DASHSCOPE_API_KEY=...
+export DEEPSEEK_API_KEY=...
+export QIANFAN_API_KEY=...
+export BOCHA_API_KEY=...
+export LANGSMITH_API_KEY=...
 
-- **Application Port**: 8501 (container) -> 100 (host)
-- **Data Volumes**: Persistent storage for knowledge base and session data
+# 3. Start backend
+uvicorn app.server:app --host 0.0.0.0 --port 8000
 
-## Usage Guide
+# 4. Start frontend dev server
+cd frontend && npm install && npm run dev
 
-1.  Enter your question in the input box.
-2.  Select a suitable model (Qwen is recommended).
-3.  Wait for the system to retrieve relevant information and generate an answer.
-
-## Development Guide
-
-### Adding a New Model
-
-Add the model configuration in `graph.py`. For specific usage, please refer to the LangChain documentation:
-
-```python
-# Add a new model client
-new_model = ChatNewModel(
-    api_key=get_new_model_api_key(),
-    model="new-model-name"
-)
-
-# Register it in the models dictionary
-models = {
-    "new-model": new_model,
-    # ... other models
-}
+# 5. Open http://localhost:5173
 ```
 
-### Expanding the Knowledge Base
+## Docker Deployment
 
-1.  Prepare the document data.
-2.  Use an embedding model to generate vectors.
-3.  Store them in the FAISS vector database.
-4.  Update the retriever configuration.
+```bash
+# 1. Create API key files
+echo "your-key" > dashscope_api_key.txt
+# ... repeat for other keys
 
-### Custom Tools
+# 2. Build and run
+docker compose up -d --build
 
-Define new tools in `graph.py`:
-
-```python
-@tool
-def custom_tool(query: str) -> str:
-    """Custom tool function"""
-    # Implement tool logic
-    return result
+# 3. Visit http://localhost:100
 ```
 
-## Open Source License
+## API Endpoints
 
-This project uses a custom license. For details, please refer to the [LICENSE](LICENSE) file.
-- **Allowed**: Use for educational and learning purposes.
-- **Restricted**: Commercial use, copying, modification, and distribution require mentioning the original authors and retaining the copyright notice.
-- **Third-party Components**: Follow their respective original licenses.
-- **Special Note**: The copyright of the text segments and school badge icon in the project belongs to Fuzhou University.
+### Authentication
+- `POST /api/auth/login` – Login with student ID + password
+- `POST /api/auth/logout` – Logout
+- `GET /api/auth/me` – Current user info
 
-## Copyright Information
+### Chat
+- `GET /api/models` – Available chat models
+- `GET /api/conversations` – User's conversation list
+- `POST /api/conversations` – Create new conversation
+- `GET /api/conversations/{id}` – Conversation detail
+- `DELETE /api/conversations/{id}` – Delete conversation
+- `POST /api/conversations/{id}/messages` – Stream assistant response (SSE)
+- `POST /api/conversations/{id}/feedback` – Save feedback
 
-**© 2024-2025 Lin Yuchen, Zhang Xun, Yuan Hao. All rights reserved.**
+### Educational Tools (via Agent)
+The LLM agent can automatically call these tools when students ask about their academic data:
+- `query_grades` – Course grades and GPA
+- `query_courses` – Course schedule
+- `query_student_info` – Student profile
+- `query_exam_scores` – CET and unified exam scores
 
-### Copyright Ownership
+## Validation
 
-- **Source Code**: Copyright belongs to the project authors.
-- **Document Content**: Copyright for content related to Fuzhou University belongs to Fuzhou University.
-- **School Badge Logo**: Copyright belongs to Fuzhou University, for educational use only.
-- **Third-party Components**: Follow their respective original licenses.
+```bash
+# Frontend
+cd frontend && npm run lint && npm run build
 
-### Citation Format
-
-If you need to cite this project, please use the following format:
-
+# Backend
+python -m compileall app
 ```
-Yuchen Lin, Xun Zhang, Hao Yuan. (2024-2025). FZU-Chat: An intelligent Q&A system for Fuzhou University based on LangGraph and Streamlit.
-GitHub: https://github.com/lyc280705/fzu-chat
-```
-
-### Disclaimer
-
-This project is provided "as is" without any express or implied warranty. The authors are not liable for any direct or indirect damages arising from the use of this project. Users assume all risks associated with its use.
