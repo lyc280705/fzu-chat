@@ -236,55 +236,96 @@ def remap_search_citation_references(content: str, citation_id_map: Dict[str, st
     return SEARCH_RESULT_INLINE_CITATION_RE.sub(replace_match, content)
 
 
-def renumber_search_citation_items(items: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], Dict[str, str]]:
+def extract_search_result_items_from_message(message: Any) -> List[Dict[str, Any]]:
+    if not isinstance(message, ToolMessage):
+        return []
+
+    tool_name = str(getattr(message, "name", "") or "")
+    if tool_name not in SEARCH_RESULT_TOOL_NAMES:
+        return []
+
+    artifact = getattr(message, "artifact", None)
+    if isinstance(artifact, list):
+        items = [dict(item) for item in artifact if isinstance(item, dict)]
+        if items:
+            return items
+
+    return parse_labeled_search_results(extract_text_content(getattr(message, "content", "")))
+
+
+def get_next_search_citation_start(messages: List[Any]) -> int:
+    max_citation_id = 0
+
+    for message in messages:
+        for item in extract_search_result_items_from_message(message):
+            try:
+                citation_id = int(item.get("citation_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            max_citation_id = max(max_citation_id, citation_id)
+
+    return max_citation_id + 1
+
+
+def renumber_search_citation_items(
+    items: List[Dict[str, Any]],
+    start_citation_id: int,
+) -> tuple[List[Dict[str, Any]], Dict[str, str], int]:
     normalized_items: List[Dict[str, Any]] = []
     citation_id_map: Dict[str, str] = {}
+    next_citation = start_citation_id
 
     for item in items:
         if not isinstance(item, dict):
             continue
         normalized_item = dict(item)
         original_citation_id = str(normalized_item.get("citation_id") or "").strip()
-        next_citation = next_search_citation_id()
         if original_citation_id:
             citation_id_map[original_citation_id] = str(next_citation)
         normalized_item["citation_id"] = next_citation
         normalized_item["label"] = f"[{next_citation}]"
         normalized_items.append(normalized_item)
+        next_citation += 1
 
-    return normalized_items, citation_id_map
+    return normalized_items, citation_id_map, next_citation
 
 
-def normalize_search_tool_message(message: ToolMessage) -> ToolMessage:
+def normalize_search_tool_message(
+    message: ToolMessage,
+    start_citation_id: int,
+) -> tuple[ToolMessage, int]:
     tool_name = str(getattr(message, "name", "") or "")
     if tool_name not in SEARCH_RESULT_TOOL_NAMES:
-        return message
+        return message, start_citation_id
 
-    artifact = getattr(message, "artifact", None)
-    items = [dict(item) for item in artifact if isinstance(item, dict)] if isinstance(artifact, list) else []
+    items = extract_search_result_items_from_message(message)
     if not items:
-        items = parse_labeled_search_results(extract_text_content(getattr(message, "content", "")))
-    if not items:
-        return message
+        return message, start_citation_id
 
-    normalized_items, citation_id_map = renumber_search_citation_items(items)
+    normalized_items, citation_id_map, next_citation_id = renumber_search_citation_items(items, start_citation_id)
     updated_content = getattr(message, "content", "")
     if isinstance(updated_content, str):
         updated_content = remap_search_citation_references(updated_content, citation_id_map)
 
-    return message.model_copy(
-        update={
-            "content": updated_content,
-            "artifact": normalized_items,
-        }
+    return (
+        message.model_copy(
+            update={
+                "content": updated_content,
+                "artifact": normalized_items,
+            }
+        ),
+        next_citation_id,
     )
 
 
-def normalize_search_tool_messages(messages: List[Any]) -> List[Any]:
+def normalize_search_tool_messages(messages: List[Any], prior_messages: List[Any] | None = None) -> List[Any]:
     normalized_messages: List[Any] = []
+    next_citation_id = get_next_search_citation_start(prior_messages or [])
+
     for message in messages:
         if isinstance(message, ToolMessage):
-            normalized_messages.append(normalize_search_tool_message(message))
+            normalized_message, next_citation_id = normalize_search_tool_message(message, next_citation_id)
+            normalized_messages.append(normalized_message)
         else:
             normalized_messages.append(message)
     return normalized_messages
@@ -567,7 +608,8 @@ def build_graph(edu_session: Dict[str, Any] | None = None, use_checkpointer: boo
         messages = result.get("messages") if isinstance(result, dict) else None
         if not isinstance(messages, list):
             return result
-        return {**result, "messages": normalize_search_tool_messages(messages)}
+        previous_messages = state.get("messages", []) if isinstance(state, dict) else []
+        return {**result, "messages": normalize_search_tool_messages(messages, previous_messages)}
 
     graph_builder = StateGraph(MessagesState)
     graph_builder.add_node("query_or_respond", query_or_respond)
