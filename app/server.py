@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
@@ -7,10 +8,11 @@ import logging
 import os
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, Iterable, List, Literal
+from threading import Event
+from typing import Any, AsyncIterator, Dict, Iterable, List, Literal
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,11 +23,12 @@ from .auth import (
     get_session,
     invalidate_session,
     update_session,
-    user_store_path,
 )
+from .chat_store import chat_store
 from .edu_tools import set_current_edu_session
-from .graph import graph, summary_chain
-from .jwch_client import JwchClient, JwchLoginError
+from .graph import build_graph, summary_chain
+from .jwch_client import JwchClient, JwchLoginError, JwchSessionError
+from .memory_store import user_memory_store
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
@@ -35,30 +38,32 @@ MAX_TITLE_LENGTH = int(os.getenv("FZU_CHAT_MAX_TITLE_LENGTH", "20"))
 
 MODEL_OPTIONS = {
     "qwen-max-latest": "通义千问 Max",
-    "deepseek-chat": "DeepSeek V3",
-    "ERNIE-4.5-Turbo-32K": "文心一言 4.5 Turbo",
-    "Moonshot-Kimi-K2-Instruct": "Kimi K2",
+    "deepseek-chat": "DeepSeek V3.2",
+    "ERNIE-4.5-Turbo-32K": "文心一言 4.5 Turbo"
 }
 
 TOOL_LABELS: Dict[str, Dict[str, str]] = {
     "retrieve": {"running": "正在查询知识库", "complete": "知识库查询完成"},
     "bocha_websearch_tool": {"running": "正在搜索网络", "complete": "网络搜索完成"},
+    "query_user_memory": {"running": "正在查询个性化记忆", "complete": "个性化记忆查询完成"},
+    "save_user_memory": {"running": "正在生成记忆建议", "complete": "记忆建议已生成"},
+    "delete_user_memory": {"running": "正在生成删除建议", "complete": "记忆删除建议已生成"},
     "query_grades": {"running": "正在查询成绩", "complete": "成绩查询完成"},
+    "query_gpa_ranking": {"running": "正在查询绩点排名", "complete": "绩点排名查询完成"},
+    "query_credit_statistics": {"running": "正在查询学分统计", "complete": "学分统计查询完成"},
     "query_courses": {"running": "正在查询课表", "complete": "课表查询完成"},
+    "query_course_selection": {"running": "正在查询选课情况", "complete": "选课情况查询完成"},
+    "select_course": {"running": "正在提交选课", "complete": "选课提交完成"},
+    "query_exam_rooms": {"running": "正在查询考场安排", "complete": "考场安排查询完成"},
     "query_student_info": {"running": "正在查询学生信息", "complete": "学生信息查询完成"},
     "query_exam_scores": {"running": "正在查询考试成绩", "complete": "考试成绩查询完成"},
+    "query_academic_calendar": {"running": "正在查询校历", "complete": "校历查询完成"},
+    "query_cultivate_plan": {"running": "正在查询培养方案", "complete": "培养方案查询完成"},
 }
-
-store_locks: Dict[str, Lock] = {}
-_global_lock = Lock()
 logger = logging.getLogger(__name__)
 
-
-def _get_user_lock(user_id: str) -> Lock:
-    with _global_lock:
-        if user_id not in store_locks:
-            store_locks[user_id] = Lock()
-        return store_locks[user_id]
+active_stream_stops: Dict[tuple[str, str], Event] = {}
+active_stream_stops_lock = Lock()
 
 
 @asynccontextmanager
@@ -136,6 +141,11 @@ class FeedbackUpdateRequest(BaseModel):
     feedback: Literal["up", "down"]
 
 
+class MemoryProposalActionRequest(BaseModel):
+    message_id: str
+    action: Literal["confirm", "dismiss"]
+
+
 class MessageRecord(BaseModel):
     id: str
     role: Literal["user", "assistant"]
@@ -143,6 +153,7 @@ class MessageRecord(BaseModel):
     timestamp: str
     parts: List[Dict[str, Any]] = Field(default_factory=list)
     feedback: Literal["up", "down"] | None = None
+    is_error_fallback: bool = False
 
 
 class ConversationRecord(BaseModel):
@@ -173,34 +184,16 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _ensure_store(path: Path) -> None:
-    if path.exists():
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"conversations": {}}, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _load_store(path: Path) -> Dict[str, Any]:
-    _ensure_store(path)
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _save_store(path: Path, payload: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    try:
-        tmp.replace(path)
-    except OSError as exc:
-        if tmp.exists():
-            tmp.unlink()
-        raise RuntimeError("Failed to persist conversation store") from exc
-
-
 def make_conversation_summary(rec: Dict[str, Any]) -> Dict[str, Any]:
     preview = ""
-    for msg in reversed(rec.get("messages", [])):
-        preview = (msg.get("content") or "").strip()
+    messages = rec.get("messages", [])
+    for skip_error_fallback in (True, False):
+        for msg in reversed(messages):
+            if skip_error_fallback and msg.get("is_error_fallback"):
+                continue
+            preview = (msg.get("content") or "").strip()
+            if preview:
+                break
         if preview:
             break
     return {
@@ -208,20 +201,6 @@ def make_conversation_summary(rec: Dict[str, Any]) -> Dict[str, Any]:
         "created_at": rec["created_at"], "updated_at": rec["updated_at"],
         "preview": preview[:80], "message_count": len(rec.get("messages", [])),
     }
-
-
-def sorted_summaries(store: Dict[str, Any]) -> List[Dict[str, Any]]:
-    return sorted(
-        (make_conversation_summary(c) for c in store.get("conversations", {}).values()),
-        key=lambda x: x["updated_at"], reverse=True,
-    )
-
-
-def get_conversation_or_404(store: Dict[str, Any], cid: str) -> Dict[str, Any]:
-    c = store.get("conversations", {}).get(cid)
-    if not c:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    return c
 
 
 def create_conversation_record(model: str) -> Dict[str, Any]:
@@ -299,10 +278,162 @@ def extract_urls(content: str, artifact: Any) -> List[str]:
 
 
 def extract_structured_data(tool_name: str, artifact: Any) -> Any:
-    if tool_name in ("query_grades", "query_courses", "query_student_info", "query_exam_scores"):
+    if tool_name in (
+        "query_user_memory",
+        "save_user_memory",
+        "delete_user_memory",
+        "query_grades",
+        "query_gpa_ranking",
+        "query_credit_statistics",
+        "query_courses",
+        "query_course_selection",
+        "select_course",
+        "query_exam_rooms",
+        "query_student_info",
+        "query_exam_scores",
+        "query_academic_calendar",
+        "query_cultivate_plan",
+    ):
         if isinstance(artifact, (list, dict)):
             return artifact
     return None
+
+
+def extract_text_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+                continue
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text") or block.get("content")
+                if text:
+                    parts.append(str(text))
+        return "".join(parts)
+    return ""
+
+
+def summarize_tool_args(args: Any) -> str:
+    if isinstance(args, str):
+        return args
+    if not isinstance(args, dict):
+        return str(args or "")
+    if args.get("memory_ids"):
+        raw_memory_ids = args.get("memory_ids", [])
+        if isinstance(raw_memory_ids, str):
+            memory_ids = [token.strip() for token in raw_memory_ids.replace("，", ",").replace(" ", ",").split(",") if token.strip()]
+        else:
+            memory_ids = [str(memory_id).strip() for memory_id in raw_memory_ids if str(memory_id).strip()]
+        parts: List[str] = []
+        if memory_ids:
+            parts.append(f"记忆数：{len(memory_ids)}")
+        content = str(args.get("content", "") or "").strip()
+        if content:
+            preview = content[:36] + ("…" if len(content) > 36 else "")
+            parts.append(f"内容：{preview}")
+        category = str(args.get("category", "") or "").strip()
+        if category:
+            parts.append(f"分类：{category}")
+        reason = str(args.get("reason", "") or "").strip()
+        if reason:
+            preview = reason[:24] + ("…" if len(reason) > 24 else "")
+            parts.append(f"原因：{preview}")
+        if parts:
+            return "；".join(parts)
+    if args.get("query"):
+        return str(args.get("query"))
+    if args.get("content"):
+        parts: List[str] = []
+        category = str(args.get("category", "") or "").strip()
+        content = str(args.get("content", "") or "").strip()
+        reason = str(args.get("reason", "") or "").strip()
+        if category:
+            parts.append(f"分类：{category}")
+        if content:
+            preview = content[:36] + ("…" if len(content) > 36 else "")
+            parts.append(f"内容：{preview}")
+        if reason:
+            preview = reason[:24] + ("…" if len(reason) > 24 else "")
+            parts.append(f"原因：{preview}")
+        if parts:
+            return "；".join(parts)
+
+    label_map = {
+        "category": "类别",
+        "course_name": "课程",
+        "teacher": "教师",
+        "points": "积分",
+    }
+    parts: List[str] = []
+    for key in ("category", "course_name", "teacher", "points"):
+        value = str(args.get(key, "") or "").strip()
+        if value:
+            parts.append(f"{label_map.get(key, key)}：{value}")
+    if parts:
+        return "；".join(parts)
+    return json.dumps(args, ensure_ascii=False) if args else ""
+
+
+def append_text_part(parts: List[Dict[str, Any]], delta: str) -> None:
+    if not delta:
+        return
+    if parts and parts[-1].get("type") == "text":
+        parts[-1]["content"] = f"{parts[-1].get('content', '')}{delta}"
+        return
+    parts.append({"type": "text", "content": delta})
+
+
+def unseen_text(existing: str, incoming: str) -> str:
+    if not incoming:
+        return ""
+    if not existing:
+        return incoming
+    if incoming == existing or existing.endswith(incoming):
+        return ""
+    if incoming.startswith(existing):
+        return incoming[len(existing):]
+    overlap = min(len(existing), len(incoming))
+    for size in range(overlap, 0, -1):
+        if existing.endswith(incoming[:size]):
+            return incoming[size:]
+    return incoming
+
+
+def split_stream_step(step: Any) -> tuple[str, Any]:
+    if isinstance(step, dict):
+        mode = step.get("type")
+        if isinstance(mode, str) and "data" in step:
+            return mode, step.get("data")
+    if isinstance(step, tuple) and len(step) >= 2 and isinstance(step[0], str):
+        return step[0], step[1]
+    return "updates", step
+
+
+def iter_update_messages(update: Any) -> List[Any]:
+    messages: List[Any] = []
+    if not isinstance(update, dict):
+        return messages
+    for value in update.values():
+        payload = value.get("messages") if isinstance(value, dict) else value
+        if isinstance(payload, list):
+            messages.extend(payload)
+        elif payload is not None:
+            messages.append(payload)
+    return messages
+
+
+def build_graph_input_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    history: List[Dict[str, str]] = []
+    for msg in messages:
+        role = msg.get("role")
+        content = (msg.get("content") or "").strip()
+        if role not in ("user", "assistant") or not content or msg.get("is_error_fallback"):
+            continue
+        history.append({"role": role, "content": content})
+    return history
 
 
 def truncate_title(title: str) -> str:
@@ -327,6 +458,164 @@ def summarize_title(messages: List[Dict[str, Any]]) -> str:
         return truncate_title(summary_chain.invoke({"input": transcript}).strip())
     except Exception:
         return "新对话"
+
+
+def register_active_stream_stop(user_id: str, conversation_id: str) -> Event:
+    stop_event = Event()
+    stream_key = (user_id, conversation_id)
+    with active_stream_stops_lock:
+        previous = active_stream_stops.get(stream_key)
+        if previous is not None:
+            previous.set()
+        active_stream_stops[stream_key] = stop_event
+    return stop_event
+
+
+def request_active_stream_stop(user_id: str, conversation_id: str) -> bool:
+    with active_stream_stops_lock:
+        stop_event = active_stream_stops.get((user_id, conversation_id))
+    if stop_event is None:
+        return False
+    stop_event.set()
+    return True
+
+
+def clear_active_stream_stop(user_id: str, conversation_id: str, stop_event: Event) -> None:
+    stream_key = (user_id, conversation_id)
+    with active_stream_stops_lock:
+        current = active_stream_stops.get(stream_key)
+        if current is stop_event:
+            active_stream_stops.pop(stream_key, None)
+
+
+def finalize_stream_text(atxt: str, final_ai_text: str, parts: List[Dict[str, Any]]) -> str:
+    if final_ai_text:
+        if not atxt:
+            atxt = final_ai_text
+            append_text_part(parts, final_ai_text)
+        elif final_ai_text.startswith(atxt):
+            suffix = final_ai_text[len(atxt):]
+            if suffix:
+                atxt += suffix
+                append_text_part(parts, suffix)
+    return atxt
+
+
+def mark_running_tool_parts_stopped(parts: List[Dict[str, Any]]) -> None:
+    for part in parts:
+        if part.get("type") != "tool" or part.get("status") != "running":
+            continue
+        part["status"] = "stopped"
+        label = str(part.get("status_label") or part.get("tool_name") or "工具调用")
+        part["status_label"] = f"{label}（已停止）"
+
+
+def persist_assistant_message(
+    user_id: str,
+    conversation_id: str,
+    model: str,
+    content: str,
+    parts: List[Dict[str, Any]],
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    normalized_parts = [dict(part) for part in parts]
+    normalized_content = content.strip()
+    if not normalized_content and not normalized_parts:
+        normalized_content = "已停止响应。"
+        normalized_parts = [{"type": "text", "content": normalized_content}]
+
+    amsg = {
+        "id": str(uuid4()), "role": "assistant", "content": normalized_content,
+        "timestamp": now_iso(),
+        "parts": normalized_parts,
+        "feedback": None,
+    }
+    c2 = chat_store.append_message(user_id, conversation_id, amsg, model=model)
+    if c2 is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if c2["title"] == "新对话":
+        c2 = chat_store.update_conversation(
+            user_id,
+            conversation_id,
+            title=summarize_title(c2["messages"]),
+            model=model,
+            updated_at=now_iso(),
+        )
+        if c2 is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+    return amsg, make_conversation_summary(c2)
+
+
+def refresh_edu_session_status(token: str) -> Dict[str, Any] | None:
+    session = get_session(token)
+    if not session:
+        return None
+    if session.get("student_type") != "undergraduate":
+        return session
+    if not session.get("edu_authenticated"):
+        return session
+
+    cookies = session.get("edu_cookies") or []
+    if not cookies:
+        update_session(
+            token,
+            {
+                "edu_authenticated": False,
+                "edu_cookies": None,
+                "edu_identifier": "",
+                "edu_status_message": "教务登录已过期，请重新登录。",
+            },
+        )
+        return get_session(token)
+
+    try:
+        client = JwchClient.from_cookies(
+            session.get("user_id", ""),
+            cookies,
+            session.get("edu_identifier", ""),
+        )
+        client.validate_session()
+        if session.get("edu_status_message"):
+            update_session(token, {"edu_status_message": ""})
+            return get_session(token)
+        return session
+    except JwchSessionError:
+        logger.info("Edu session expired for %s", session.get("user_id", ""))
+        update_session(
+            token,
+            {
+                "edu_authenticated": False,
+                "edu_cookies": None,
+                "edu_identifier": "",
+                "edu_status_message": "教务登录已过期，请重新登录。",
+            },
+        )
+        return get_session(token)
+    except Exception as exc:
+        logger.warning("Edu session validation failed: %s", exc)
+        return session
+
+
+def _resolve_memory_proposal(
+    conversation: Dict[str, Any],
+    message_id: str,
+    tool_id: str,
+) -> tuple[List[Dict[str, Any]], int, Dict[str, Any], Dict[str, Any]] | None:
+    for message in conversation.get("messages", []):
+        if message.get("id") != message_id:
+            continue
+        parts = list(message.get("parts") or [])
+        for index, part in enumerate(parts):
+            if part.get("type") != "tool":
+                continue
+            if part.get("tool_id") != tool_id:
+                continue
+            if part.get("tool_name") not in {"save_user_memory", "delete_user_memory"}:
+                continue
+            data = part.get("data")
+            if isinstance(data, dict) and data.get("mode") in {"save_request", "delete_request"}:
+                return parts, index, part, data
+        return None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -364,8 +653,8 @@ def login(req: LoginRequest) -> Dict[str, Any]:
         display_name=req.student_id, edu_authenticated=edu_authenticated,
         edu_cookies=edu_cookies,
     )
-    if edu_identifier:
-        update_session(token, {"edu_identifier": edu_identifier})
+    if edu_identifier or edu_error:
+        update_session(token, {"edu_identifier": edu_identifier, "edu_status_message": edu_error})
 
     return {
         "token": token,
@@ -385,9 +674,13 @@ def logout(user: AuthUser = Depends(require_auth)) -> Dict[str, bool]:
 
 @app.get("/api/auth/me")
 def auth_me(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
+    session = refresh_edu_session_status(user.token) or get_session(user.token) or {}
     return {
-        "user_id": user.user_id, "student_type": user.student_type,
-        "display_name": user.display_name, "edu_authenticated": user.edu_authenticated,
+        "user_id": session.get("user_id", user.user_id),
+        "student_type": session.get("student_type", user.student_type),
+        "display_name": session.get("display_name", user.display_name),
+        "edu_authenticated": session.get("edu_authenticated", user.edu_authenticated),
+        "edu_error": session.get("edu_status_message", ""),
     }
 
 
@@ -404,183 +697,366 @@ def list_models() -> List[Dict[str, str]]:
 # Conversations (auth-protected, per-user)
 # ---------------------------------------------------------------------------
 
-def _user_store(user: AuthUser):
-    return user_store_path(user.user_id), _get_user_lock(user.user_id)
-
 
 @app.get("/api/conversations", response_model=List[ConversationSummary])
 def list_conversations(user: AuthUser = Depends(require_auth)):
-    p, lk = _user_store(user)
-    with lk:
-        return sorted_summaries(_load_store(p))
+    return chat_store.list_conversations(user.user_id)
 
 
 @app.post("/api/conversations", response_model=ConversationRecord)
 def create_conversation(req: ConversationCreateRequest, user: AuthUser = Depends(require_auth)):
-    p, lk = _user_store(user)
-    with lk:
-        s = _load_store(p)
-        c = create_conversation_record(req.model)
-        s["conversations"][c["id"]] = c
-        _save_store(p, s)
-        return c
+    reusable = chat_store.find_reusable_conversation(user.user_id)
+    if reusable is not None:
+        requested_model = req.model if req.model in MODEL_OPTIONS else reusable["model"]
+        if requested_model != reusable["model"]:
+            updated = chat_store.update_conversation(
+                user.user_id,
+                reusable["id"],
+                model=requested_model,
+                updated_at=now_iso(),
+            )
+            if updated is not None:
+                reusable = updated
+        return reusable
+    c = create_conversation_record(req.model)
+    return chat_store.create_conversation(user.user_id, c)
 
 
 @app.get("/api/conversations/{cid}", response_model=ConversationRecord)
 def get_conversation(cid: str, user: AuthUser = Depends(require_auth)):
-    p, lk = _user_store(user)
-    with lk:
-        return get_conversation_or_404(_load_store(p), cid)
+    conversation = chat_store.get_conversation(user.user_id, cid)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conversation
 
 
 @app.patch("/api/conversations/{cid}", response_model=ConversationRecord)
 def update_conversation(cid: str, req: ConversationUpdateRequest, user: AuthUser = Depends(require_auth)):
-    p, lk = _user_store(user)
-    with lk:
-        s = _load_store(p)
-        c = get_conversation_or_404(s, cid)
-        if req.title is not None:
-            c["title"] = req.title.strip() or c["title"]
-        if req.model is not None and req.model in MODEL_OPTIONS:
-            c["model"] = req.model
-        c["updated_at"] = now_iso()
-        _save_store(p, s)
-        return c
+    conversation = chat_store.update_conversation(
+        user.user_id,
+        cid,
+        title=req.title.strip() if req.title is not None else None,
+        model=req.model if req.model in MODEL_OPTIONS else None,
+        updated_at=now_iso(),
+    )
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conversation
 
 
 @app.delete("/api/conversations/{cid}")
 def delete_conversation(cid: str, user: AuthUser = Depends(require_auth)):
-    p, lk = _user_store(user)
-    with lk:
-        s = _load_store(p)
-        if cid not in s.get("conversations", {}):
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        del s["conversations"][cid]
-        _save_store(p, s)
+    deleted = chat_store.delete_conversation(user.user_id, cid)
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
     return {"ok": True}
 
 
 @app.post("/api/conversations/{cid}/feedback")
 def update_feedback(cid: str, req: FeedbackUpdateRequest, user: AuthUser = Depends(require_auth)):
-    p, lk = _user_store(user)
-    with lk:
-        s = _load_store(p)
-        c = get_conversation_or_404(s, cid)
-        for msg in c["messages"]:
-            if msg["id"] == req.message_id:
-                msg["feedback"] = req.feedback
-                c["updated_at"] = now_iso()
-                _save_store(p, s)
-                return {"ok": True}
+    if chat_store.update_feedback(user.user_id, cid, req.message_id, req.feedback):
+        return {"ok": True}
     raise HTTPException(status_code=404, detail="Message not found")
+
+
+@app.post("/api/conversations/{cid}/memory-proposals/{tool_id}")
+def update_memory_proposal(
+    cid: str,
+    tool_id: str,
+    req: MemoryProposalActionRequest,
+    user: AuthUser = Depends(require_auth),
+):
+    conversation = chat_store.get_conversation(user.user_id, cid)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    resolved = _resolve_memory_proposal(conversation, req.message_id, tool_id)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="Memory proposal not found")
+
+    parts, part_index, part, data = resolved
+    current_status = str(data.get("status") or "")
+    timestamp = now_iso()
+    tool_name = str(part.get("tool_name") or "")
+
+    if req.action == "confirm":
+        if current_status in {"saved", "deleted"}:
+            return {"ok": True, "part": part}
+        if current_status != "pending_confirmation":
+            raise HTTPException(status_code=409, detail="当前记忆建议无法确认执行")
+
+        if tool_name == "save_user_memory":
+            saved_memory = user_memory_store.save_memory(
+                user_id=user.user_id,
+                content=str(data.get("content") or "").strip(),
+                category=str(data.get("category") or "").strip(),
+                reason=str(data.get("reason") or "").strip(),
+                source="assistant",
+            )
+            updated_part = {
+                **part,
+                "status_label": "记忆已保存",
+                "data": {
+                    **data,
+                    "status": "saved",
+                    "confirmed_at": timestamp,
+                    "memory_id": saved_memory.get("id"),
+                    "saved_memory": saved_memory,
+                },
+            }
+        elif tool_name == "delete_user_memory":
+            memory_ids = [str(memory_id).strip() for memory_id in data.get("memory_ids", []) if str(memory_id).strip()]
+            deleted_items = user_memory_store.delete_memories(user.user_id, memory_ids)
+            if deleted_items:
+                updated_part = {
+                    **part,
+                    "status_label": "记忆已删除",
+                    "data": {
+                        **data,
+                        "status": "deleted",
+                        "deleted_at": timestamp,
+                        "deleted_count": len(deleted_items),
+                        "deleted_items": deleted_items,
+                    },
+                }
+            else:
+                existing_items = user_memory_store.get_memories_by_ids(user.user_id, memory_ids, include_inactive=True)
+                next_status = "already_deleted" if existing_items else "not_found"
+                next_label = "记忆已不存在" if next_status == "already_deleted" else "未找到待删除记忆"
+                updated_part = {
+                    **part,
+                    "status_label": next_label,
+                    "data": {
+                        **data,
+                        "status": next_status,
+                        "deleted_at": timestamp,
+                        "deleted_count": 0,
+                        "deleted_items": [],
+                    },
+                }
+        else:
+            raise HTTPException(status_code=400, detail="未知的记忆操作类型")
+    else:
+        if current_status == "dismissed":
+            return {"ok": True, "part": part}
+        if current_status != "pending_confirmation":
+            raise HTTPException(status_code=409, detail="当前记忆建议无法忽略")
+        dismissed_label = "已忽略保存建议" if tool_name == "save_user_memory" else "已忽略删除建议"
+        updated_part = {
+            **part,
+            "status_label": dismissed_label,
+            "data": {
+                **data,
+                "status": "dismissed",
+                "dismissed_at": timestamp,
+            },
+        }
+
+    parts[part_index] = updated_part
+    updated = chat_store.update_message_parts(user.user_id, cid, req.message_id, parts)
+    if not updated:
+        raise HTTPException(status_code=500, detail="更新记忆建议状态失败")
+    return {"ok": True, "part": updated_part}
 
 
 # ---------------------------------------------------------------------------
 # Message streaming
 # ---------------------------------------------------------------------------
 
+@app.post("/api/conversations/{cid}/stop")
+def stop_message_stream(cid: str, user: AuthUser = Depends(require_auth)):
+    conversation = chat_store.get_conversation(user.user_id, cid)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"ok": request_active_stream_stop(user.user_id, cid)}
+
 @app.post("/api/conversations/{cid}/messages")
-def create_message(cid: str, req: MessageCreateRequest, user: AuthUser = Depends(require_auth)):
+async def create_message(
+    cid: str,
+    req: MessageCreateRequest,
+    request: Request,
+    user: AuthUser = Depends(require_auth),
+):
     content = req.content.strip()
     if not content:
         raise HTTPException(status_code=400, detail="Message content cannot be empty")
 
-    p, lk = _user_store(user)
-    with lk:
-        s = _load_store(p)
-        conv = get_conversation_or_404(s, cid)
-        sel = req.model if req.model in MODEL_OPTIONS else conv["model"]
-        conv["model"] = sel
-        umsg = {
-            "id": str(uuid4()), "role": "user", "content": content,
-            "timestamp": now_iso(), "parts": [{"type": "text", "content": content}],
-            "feedback": None,
-        }
-        conv["messages"].append(umsg)
-        conv["updated_at"] = now_iso()
-        tid = conv["thread_id"]
-        _save_store(p, s)
+    conv = chat_store.get_conversation(user.user_id, cid)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
-    sess = get_session(user.token)
+    sel = req.model if req.model in MODEL_OPTIONS else conv["model"]
+    umsg = {
+        "id": str(uuid4()), "role": "user", "content": content,
+        "timestamp": now_iso(), "parts": [{"type": "text", "content": content}],
+        "feedback": None,
+    }
+    conv = chat_store.append_message(user.user_id, cid, umsg, model=sel)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    graph_messages = build_graph_input_messages(conv["messages"])
+
+    sess = refresh_edu_session_status(user.token) or get_session(user.token)
     edu_ctx = {
         "user_id": user.user_id,
         "edu_authenticated": sess.get("edu_authenticated", False) if sess else False,
         "edu_cookies": sess.get("edu_cookies") if sess else None,
         "edu_identifier": sess.get("edu_identifier", "") if sess else "",
+        "edu_status_message": sess.get("edu_status_message", "") if sess else "",
     }
+    runtime_graph = build_graph(edu_ctx, use_checkpointer=False)
+    stop_event = register_active_stream_stop(user.user_id, cid)
+    graph_config = {"configurable": {"model": sel, "thread_id": conv["thread_id"]}}
 
-    def event_stream() -> Iterable[bytes]:
+    async def event_stream() -> AsyncIterator[bytes]:
         set_current_edu_session(edu_ctx)
         atxt = ""
+        final_ai_text = ""
         pending: Dict[str, Dict[str, Any]] = {}
-        tparts: List[Dict[str, Any]] = []
+        parts: List[Dict[str, Any]] = []
+        final_payload: Dict[str, Any] | None = None
+        stream_stopped = False
+        client_disconnected = False
+
+        def build_done_payload(stopped: bool) -> Dict[str, Any]:
+            nonlocal atxt, final_payload
+            if final_payload is not None:
+                return final_payload
+            atxt = finalize_stream_text(atxt, final_ai_text, parts)
+            if stopped:
+                mark_running_tool_parts_stopped(parts)
+            amsg, summary = persist_assistant_message(user.user_id, cid, sel, atxt, parts)
+            final_payload = {"message": amsg, "conversation": summary, "stopped": stopped}
+            return final_payload
+
         try:
             yield serialize_event("user", umsg)
-            for step in graph.stream(
-                {"messages": [{"role": "user", "content": content}]},
-                stream_mode="messages",
-                config={"configurable": {"thread_id": tid, "model": sel}},
+            async for step in runtime_graph.astream(
+                {"messages": graph_messages},
+                stream_mode=["messages", "updates"],
+                config=graph_config,
+                version="v2",
             ):
-                mc, _ = step
-                if hasattr(mc, "tool_calls") and mc.tool_calls:
-                    mc = combine_tool_calls(mc)
-                    for tc in mc.tool_calls:
-                        if not isinstance(tc, dict):
-                            continue
-                        tn = tc.get("name", "")
-                        ti = clean_tool_call_id(tc.get("id", ""))
-                        a = tc.get("args") or {}
-                        q = a.get("query", "") if isinstance(a, dict) else str(a)
-                        lb = TOOL_LABELS.get(tn, {"running": f"正在调用 {tn}", "complete": f"{tn} 完成"})
-                        tp = {
-                            "type": "tool", "tool_id": ti, "tool_name": tn,
-                            "query": q, "status": "running", "status_label": lb["running"],
-                            "urls": [], "data": None,
-                        }
-                        pending[ti] = tp
-                        tparts.append(tp)
-                        yield serialize_event("tool_call", tp)
-                elif type(mc).__name__ == "ToolMessage":
-                    ci = clean_tool_call_id(getattr(mc, "tool_call_id", ""))
-                    mi = matching_tool_call_id(pending.keys(), ci)
-                    if not mi:
-                        continue
-                    tp = pending[mi]
-                    tn = tp["tool_name"]
-                    lb = TOOL_LABELS.get(tn, {"running": "", "complete": f"{tn} 完成"})
-                    tp["status"] = "complete"
-                    tp["status_label"] = lb["complete"]
-                    rc = getattr(mc, "content", "")
-                    af = getattr(mc, "artifact", None)
-                    tp["urls"] = extract_urls(rc, af)
-                    tp["data"] = extract_structured_data(tn, af)
-                    yield serialize_event("tool_result", tp)
-                elif getattr(mc, "content", None):
-                    d = mc.content
-                    atxt += d
-                    yield serialize_event("chunk", {"delta": d})
+                if stop_event.is_set():
+                    stream_stopped = True
+                    break
+                if await request.is_disconnected():
+                    stream_stopped = True
+                    client_disconnected = True
+                    break
 
-            amsg = {
-                "id": str(uuid4()), "role": "assistant", "content": atxt.strip(),
-                "timestamp": now_iso(),
-                "parts": ([{"type": "text", "content": atxt.strip()}] if atxt.strip() else []) + tparts,
-                "feedback": None,
-            }
-            with lk:
-                s2 = _load_store(p)
-                c2 = get_conversation_or_404(s2, cid)
-                c2["messages"].append(amsg)
-                if c2["title"] == "新对话":
-                    c2["title"] = summarize_title(c2["messages"])
-                c2["model"] = sel
-                c2["updated_at"] = now_iso()
-                _save_store(p, s2)
-                sm = make_conversation_summary(c2)
-            yield serialize_event("done", {"message": amsg, "conversation": sm})
+                mode, payload = split_stream_step(step)
+
+                if mode == "messages":
+                    if not isinstance(payload, tuple) or not payload:
+                        continue
+                    mc = payload[0]
+                    mc_type = type(mc).__name__
+                    if mc_type == "ToolMessage" or not mc_type.startswith("AIMessage"):
+                        continue
+                    delta = unseen_text(atxt, extract_text_content(getattr(mc, "content", "")))
+                    if delta:
+                        atxt += delta
+                        append_text_part(parts, delta)
+                        yield serialize_event("chunk", {"delta": delta})
+                    continue
+
+                if mode != "updates":
+                    continue
+
+                for mc in iter_update_messages(payload):
+                    mc_type = type(mc).__name__
+                    if hasattr(mc, "tool_calls") and mc.tool_calls:
+                        mc = combine_tool_calls(mc)
+                        for tc in mc.tool_calls:
+                            if not isinstance(tc, dict):
+                                continue
+                            tn = tc.get("name", "")
+                            ti = clean_tool_call_id(tc.get("id", ""))
+                            if ti in pending:
+                                continue
+                            a = tc.get("args") or {}
+                            q = summarize_tool_args(a)
+                            lb = TOOL_LABELS.get(tn, {"running": f"正在调用 {tn}", "complete": f"{tn} 完成"})
+                            tp = {
+                                "type": "tool", "tool_id": ti, "tool_name": tn,
+                                "query": q, "status": "running", "status_label": lb["running"],
+                                "urls": [], "data": None,
+                            }
+                            pending[ti] = tp
+                            parts.append(tp)
+                            yield serialize_event("tool_call", tp)
+                        continue
+
+                    if mc_type == "ToolMessage":
+                        ci = clean_tool_call_id(getattr(mc, "tool_call_id", ""))
+                        mi = matching_tool_call_id(pending.keys(), ci)
+                        if not mi:
+                            continue
+                        tp = pending[mi]
+                        tn = tp["tool_name"]
+                        lb = TOOL_LABELS.get(tn, {"running": "", "complete": f"{tn} 完成"})
+                        tp["status"] = "complete"
+                        tp["status_label"] = lb["complete"]
+                        rc = extract_text_content(getattr(mc, "content", ""))
+                        af = getattr(mc, "artifact", None)
+                        tp["urls"] = extract_urls(rc, af)
+                        tp["data"] = extract_structured_data(tn, af)
+                        yield serialize_event("tool_result", tp)
+                        continue
+
+                    if not mc_type.startswith("AIMessage"):
+                        continue
+
+                    candidate = extract_text_content(getattr(mc, "content", ""))
+                    if len(candidate) > len(final_ai_text):
+                        final_ai_text = candidate
+
+                if stop_event.is_set():
+                    stream_stopped = True
+                    break
+                if await request.is_disconnected():
+                    stream_stopped = True
+                    client_disconnected = True
+                    break
+
+            payload = build_done_payload(stream_stopped)
+            if not client_disconnected:
+                yield serialize_event("done", payload)
+        except asyncio.CancelledError:
+            logger.info("Stream cancelled for %s", cid)
+            build_done_payload(True)
+            return
         except Exception:
+            if final_payload is not None:
+                logger.exception("Stream failed after completion for %s", cid)
+                return
             logger.exception("Stream failed for %s", cid)
-            yield serialize_event("error", {"message": "生成回复失败，请稍后重试。"})
+            fallback_text = "暂时无法生成回复，请稍后再试。"
+            fallback_msg = {
+                "id": str(uuid4()), "role": "assistant", "content": fallback_text,
+                "timestamp": now_iso(),
+                "parts": [{"type": "text", "content": fallback_text}],
+                "feedback": None,
+                "is_error_fallback": True,
+            }
+            fallback_summary: Dict[str, Any] | None = None
+            try:
+                c2 = chat_store.append_message(user.user_id, cid, fallback_msg, model=sel)
+                if c2 is not None:
+                    fallback_summary = make_conversation_summary(c2)
+            except Exception:
+                logger.exception("Persisting fallback message failed for %s", cid)
+            yield serialize_event(
+                "error",
+                {
+                    "message": "生成回复失败，请稍后重试。",
+                    "fallback": fallback_msg,
+                    "conversation": fallback_summary,
+                },
+            )
         finally:
+            clear_active_stream_stop(user.user_id, cid, stop_event)
             set_current_edu_session(None)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

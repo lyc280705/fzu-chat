@@ -19,7 +19,7 @@ FZU-Chat provides a ChatGPT-style conversation experience for Fuzhou University 
 - **Educational system tools**: Query grades, courses, exam scores, and student info via the FZU academic affairs system (based on [west2-online/jwch](https://github.com/west2-online/jwch))
 - **ChatGPT-style interface**: Modern dark UI with sidebar history, quick actions, and streaming replies
 - **Rich tool cards**: Visual display of tool calls with structured data tables for grades and courses
-- **Multi-model support**: Qwen, DeepSeek, ERNIE, and Kimi model selection
+- **Multi-model support**: Qwen, DeepSeek and ERNIE model selection
 - **Knowledge + web search**: FAISS retrieval plus Bocha web search fallback
 - **Docker deployment**: Multi-stage build for React frontend + Python backend
 
