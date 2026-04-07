@@ -8,6 +8,8 @@ from threading import RLock
 from typing import Any, Dict, Iterator, List
 from uuid import uuid4
 
+from .security_utils import ensure_private_dir, ensure_private_file
+
 BASE_DIR = Path(__file__).resolve().parent
 STORAGE_DIR = BASE_DIR / "storage"
 MEMORY_DB_PATH = STORAGE_DIR / "user_memory.sqlite"
@@ -20,17 +22,24 @@ def now_iso() -> str:
 class UserMemoryStore:
     def __init__(self, db_path: Path):
         self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(self.db_path.parent)
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.lock = RLock()
         self._setup()
+        self._harden_storage_files()
+
+    def _harden_storage_files(self) -> None:
+        ensure_private_file(self.db_path)
+        ensure_private_file(self.db_path.with_name(f"{self.db_path.name}-wal"))
+        ensure_private_file(self.db_path.with_name(f"{self.db_path.name}-shm"))
 
     def _setup(self) -> None:
         with self.lock:
             self.conn.executescript(
                 """
                 PRAGMA journal_mode=WAL;
+                PRAGMA secure_delete=ON;
 
                 CREATE TABLE IF NOT EXISTS user_memories (
                     id TEXT PRIMARY KEY,
@@ -52,6 +61,7 @@ class UserMemoryStore:
                 """
             )
             self.conn.commit()
+            self._harden_storage_files()
 
     @contextmanager
     def _cursor(self) -> Iterator[sqlite3.Cursor]:
@@ -64,6 +74,7 @@ class UserMemoryStore:
                 self.conn.rollback()
                 raise
             finally:
+                self._harden_storage_files()
                 cur.close()
 
     def _row_to_memory(self, row: sqlite3.Row | None) -> Dict[str, Any] | None:

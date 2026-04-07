@@ -5,6 +5,7 @@ services:
     container_name: fzu-chat
     restart: always
     environment:
+      FZU_CHAT_ENABLE_LANGSMITH_TRACING: "true"
       FZU_CHAT_CHECKPOINT_PATH: /app/app/storage/conversation_history.sqlite
     ports:
       - "80:8000"

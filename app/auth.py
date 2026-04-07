@@ -17,10 +17,12 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Optional
 
+from .security_utils import ensure_private_dir
+
 logger = logging.getLogger(__name__)
 
-STORAGE_DIR = Path(__file__).resolve().parent / "storage"
-USERS_DIR = STORAGE_DIR / "users"
+STORAGE_DIR = ensure_private_dir(Path(__file__).resolve().parent / "storage")
+USERS_DIR = ensure_private_dir(STORAGE_DIR / "users")
 
 # In-memory session store  –  token → session dict
 _sessions: Dict[str, Dict[str, Any]] = {}
@@ -41,8 +43,7 @@ def _safe_user_dir_name(user_id: str) -> str:
 def user_dir(user_id: str) -> Path:
     """Return (and ensure existence of) the per-user storage directory."""
     d = USERS_DIR / _safe_user_dir_name(user_id)
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    return ensure_private_dir(d)
 
 
 def user_store_path(user_id: str) -> Path:

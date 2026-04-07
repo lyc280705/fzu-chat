@@ -13,13 +13,14 @@ from threading import Event
 from typing import Any, AsyncIterator, Dict, Iterable, List, Literal
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .auth import (
+    SESSION_TTL,
     create_session,
     get_session,
     invalidate_session,
@@ -30,12 +31,20 @@ from .edu_tools import set_current_edu_session
 from .graph import CHAT_MODEL_OPTIONS, DEFAULT_CHAT_MODEL, build_graph, reset_search_citation_counter, summary_chain
 from .jwch_client import JwchClient, JwchLoginError, JwchSessionError
 from .memory_store import user_memory_store
+from .security_utils import mask_user_id
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
 ASSETS_DIR = BASE_DIR / "png"
 MAX_TITLE_LENGTH = int(os.getenv("FZU_CHAT_MAX_TITLE_LENGTH", "20"))
+AUTH_COOKIE_NAME = os.getenv("FZU_CHAT_AUTH_COOKIE_NAME", "fzu_session")
+AUTH_COOKIE_SECURE_MODE = os.getenv("FZU_CHAT_AUTH_COOKIE_SECURE", "auto").strip().lower()
+AUTH_COOKIE_SAMESITE = os.getenv("FZU_CHAT_AUTH_COOKIE_SAMESITE", "lax").strip().lower()
+API_NO_STORE = "no-store, no-cache, must-revalidate, max-age=0, private"
+
+if AUTH_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
+    AUTH_COOKIE_SAMESITE = "lax"
 
 MODEL_OPTIONS = dict(CHAT_MODEL_OPTIONS)
 
@@ -63,6 +72,43 @@ active_stream_stops: Dict[tuple[str, str], Event] = {}
 active_stream_stops_lock = Lock()
 
 
+def _request_is_secure(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    if forwarded_proto:
+        return forwarded_proto.split(",", 1)[0].strip().lower() == "https"
+    return request.url.scheme == "https"
+
+
+def _use_secure_cookie(request: Request) -> bool:
+    if AUTH_COOKIE_SECURE_MODE in {"1", "true", "yes", "on"}:
+        return True
+    if AUTH_COOKIE_SECURE_MODE in {"0", "false", "no", "off"}:
+        return False
+    return _request_is_secure(request)
+
+
+def _set_auth_cookie(response: Response, token: str, request: Request) -> None:
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        max_age=SESSION_TTL,
+        httponly=True,
+        secure=_use_secure_cookie(request),
+        samesite=AUTH_COOKIE_SAMESITE,
+        path="/",
+    )
+
+
+def _clear_auth_cookie(response: Response, request: Request) -> None:
+    response.delete_cookie(
+        key=AUTH_COOKIE_NAME,
+        httponly=True,
+        secure=_use_secure_cookie(request),
+        samesite=AUTH_COOKIE_SAMESITE,
+        path="/",
+    )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     yield
@@ -79,6 +125,20 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = API_NO_STORE
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Auth dependency
 # ---------------------------------------------------------------------------
@@ -91,10 +151,15 @@ class AuthUser(BaseModel):
     token: str
 
 
-def require_auth(authorization: str | None = Header(default=None)) -> AuthUser:
+def require_auth(
+    authorization: str | None = Header(default=None),
+    session_cookie: str | None = Cookie(default=None, alias=AUTH_COOKIE_NAME),
+) -> AuthUser:
     token: str | None = None
     if authorization:
         token = authorization[7:] if authorization.startswith("Bearer ") else authorization
+    elif session_cookie:
+        token = session_cookie
     if not token:
         raise HTTPException(status_code=401, detail="未登录")
     session = get_session(token)
@@ -756,7 +821,7 @@ def refresh_edu_session_status(token: str) -> Dict[str, Any] | None:
             return get_session(token)
         return session
     except JwchSessionError:
-        logger.info("Edu session expired for %s", session.get("user_id", ""))
+        logger.info("Edu session expired for %s", mask_user_id(session.get("user_id", "")))
         update_session(
             token,
             {
@@ -768,7 +833,7 @@ def refresh_edu_session_status(token: str) -> Dict[str, Any] | None:
         )
         return get_session(token)
     except Exception as exc:
-        logger.warning("Edu session validation failed: %s", exc)
+        logger.warning("Edu session validation failed: %s", type(exc).__name__)
         return session
 
 
@@ -805,48 +870,55 @@ def healthcheck() -> Dict[str, str]:
 
 
 @app.post("/api/auth/login")
-def login(req: LoginRequest) -> Dict[str, Any]:
-    edu_authenticated = False
-    edu_cookies: Any = None
-    edu_identifier = ""
-    edu_error = ""
+def login(req: LoginRequest, request: Request) -> JSONResponse:
+    if req.student_type != "undergraduate":
+        raise HTTPException(status_code=403, detail="当前仅支持本科生通过教务系统登录，研究生登录暂未开放。")
 
-    if req.student_type == "undergraduate":
-        try:
-            client = JwchClient(req.student_id, req.password)
-            client.login()
-            edu_authenticated = True
-            edu_cookies = [{"name": c.name, "value": c.value} for c in client.session.cookies]
-            edu_identifier = client.identifier
-        except JwchLoginError as exc:
-            logger.warning("Edu login error: %s", exc)
-            edu_error = "教务系统登录失败，请检查学号和密码"
-        except Exception as exc:
-            logger.warning("Edu login error: %s", exc)
-            edu_error = "教务系统连接失败，已创建本地会话"
+    try:
+        client = JwchClient(req.student_id, req.password)
+        client.login()
+    except JwchLoginError as exc:
+        logger.warning("Edu login rejected for %s: %s", mask_user_id(req.student_id), type(exc).__name__)
+        raise HTTPException(status_code=401, detail="教务系统登录失败，请检查学号和密码。") from exc
+    except Exception as exc:
+        logger.warning("Edu login unavailable for %s: %s", mask_user_id(req.student_id), type(exc).__name__)
+        raise HTTPException(status_code=503, detail="教务系统连接失败，请稍后重试。") from exc
+
+    existing_token = request.cookies.get(AUTH_COOKIE_NAME)
+    if existing_token:
+        invalidate_session(existing_token)
 
     token = create_session(
-        user_id=req.student_id, student_type=req.student_type,
-        display_name=req.student_id, edu_authenticated=edu_authenticated,
-        edu_cookies=edu_cookies,
+        user_id=req.student_id,
+        student_type=req.student_type,
+        display_name=req.student_id,
+        edu_authenticated=True,
+        edu_cookies=[{"name": c.name, "value": c.value} for c in client.session.cookies],
     )
-    if edu_identifier or edu_error:
-        update_session(token, {"edu_identifier": edu_identifier, "edu_status_message": edu_error})
+    if client.identifier:
+        update_session(token, {"edu_identifier": client.identifier, "edu_status_message": ""})
 
-    return {
-        "token": token,
-        "user": {
-            "user_id": req.student_id, "student_type": req.student_type,
-            "display_name": req.student_id, "edu_authenticated": edu_authenticated,
-        },
-        "edu_error": edu_error,
-    }
+    response = JSONResponse(
+        {
+            "user": {
+                "user_id": req.student_id,
+                "student_type": req.student_type,
+                "display_name": req.student_id,
+                "edu_authenticated": True,
+            },
+            "edu_error": "",
+        }
+    )
+    _set_auth_cookie(response, token, request)
+    return response
 
 
 @app.post("/api/auth/logout")
-def logout(user: AuthUser = Depends(require_auth)) -> Dict[str, bool]:
+def logout(request: Request, user: AuthUser = Depends(require_auth)) -> JSONResponse:
     invalidate_session(user.token)
-    return {"ok": True}
+    response = JSONResponse({"ok": True})
+    _clear_auth_cookie(response, request)
+    return response
 
 
 @app.get("/api/auth/me")

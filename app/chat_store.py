@@ -8,6 +8,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Dict, Iterator, List
 
+from .security_utils import ensure_private_dir, ensure_private_file
+
 BASE_DIR = Path(__file__).resolve().parent
 STORAGE_DIR = BASE_DIR / "storage"
 CHAT_DB_PATH = STORAGE_DIR / "chat_history.sqlite"
@@ -20,12 +22,18 @@ def now_iso() -> str:
 class ChatStore:
     def __init__(self, db_path: Path):
         self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(self.db_path.parent)
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.lock = RLock()
         self._setup()
+        self._harden_storage_files()
         self._clear_legacy_json()
+
+    def _harden_storage_files(self) -> None:
+        ensure_private_file(self.db_path)
+        ensure_private_file(self.db_path.with_name(f"{self.db_path.name}-wal"))
+        ensure_private_file(self.db_path.with_name(f"{self.db_path.name}-shm"))
 
     def _setup(self) -> None:
         with self.lock:
@@ -33,6 +41,7 @@ class ChatStore:
                 """
                 PRAGMA journal_mode=WAL;
                 PRAGMA foreign_keys=ON;
+                PRAGMA secure_delete=ON;
 
                 CREATE TABLE IF NOT EXISTS conversations (
                     id TEXT PRIMARY KEY,
@@ -66,6 +75,7 @@ class ChatStore:
                 """
             )
             self.conn.commit()
+            self._harden_storage_files()
 
     def _clear_legacy_json(self) -> None:
         for path in STORAGE_DIR.glob("**/conversations.json*"):
@@ -84,6 +94,7 @@ class ChatStore:
                 self.conn.rollback()
                 raise
             finally:
+                self._harden_storage_files()
                 cur.close()
 
     def _message_from_row(self, row: sqlite3.Row) -> Dict[str, Any]:

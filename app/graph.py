@@ -31,6 +31,8 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
+from .security_utils import ensure_private_dir, ensure_private_file, env_flag
+
 BASE_DIR = Path(__file__).resolve().parent
 FAISS_DIR = BASE_DIR / "faiss" / "fzu_chat"
 DATA_DIR = BASE_DIR / "data"
@@ -302,11 +304,18 @@ def read_secret_or_env(secret_path: str, *env_names: str) -> str | None:
 
 
 LANGSMITH_API_KEY = read_secret_or_env("/run/secrets/langsmith_api_key", "LANGSMITH_API_KEY")
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
-if not LANGSMITH_API_KEY:
-    raise ValueError("Langsmith API密钥未设置")
-os.environ["LANGCHAIN_API_KEY"] = LANGSMITH_API_KEY
-os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
+LANGSMITH_TRACING_ENABLED = env_flag("FZU_CHAT_ENABLE_LANGSMITH_TRACING", default=False)
+
+if LANGSMITH_TRACING_ENABLED:
+    if not LANGSMITH_API_KEY:
+        raise ValueError("已启用 LangSmith tracing，但未配置 LangSmith API 密钥")
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    os.environ["LANGCHAIN_API_KEY"] = LANGSMITH_API_KEY
+    os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
+else:
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
+    os.environ.pop("LANGCHAIN_API_KEY", None)
+    os.environ.pop("LANGCHAIN_ENDPOINT", None)
 
 dashscope_api_key = read_secret_or_env("/run/secrets/dashscope_api_key", "DASHSCOPE_API_KEY")
 
@@ -536,8 +545,10 @@ def _build_query_or_respond(edu_tools, user_memory_tools):
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 import sqlite3
-CHECKPOINT_PATH.parent.mkdir(parents=True, exist_ok=True)
+ensure_private_dir(CHECKPOINT_PATH.parent)
 conn = sqlite3.connect(str(CHECKPOINT_PATH), check_same_thread=False)
+conn.execute("PRAGMA secure_delete=ON")
+ensure_private_file(CHECKPOINT_PATH)
 memory = SqliteSaver(conn)
 
 

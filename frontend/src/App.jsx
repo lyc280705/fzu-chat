@@ -334,11 +334,9 @@ const normMsgs = (msgs = []) =>
 /* ------------------------------------------------------------------ */
 
 const api = (url, opts = {}) => {
-  const token = localStorage.getItem('fzu_token')
   const headers = { ...(opts.headers || {}) }
-  if (token) headers['Authorization'] = `Bearer ${token}`
   if (opts.body && typeof opts.body === 'string') headers['Content-Type'] = 'application/json'
-  return fetch(url, { ...opts, headers })
+  return fetch(url, { credentials: opts.credentials ?? 'same-origin', ...opts, headers })
 }
 
 /* ================================================================== */
@@ -360,6 +358,7 @@ function LoginPage({ onLogin }) {
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ student_id: studentId.trim(), password: password.trim(), student_type: studentType }),
       })
@@ -368,7 +367,6 @@ function LoginPage({ onLogin }) {
         throw new Error(data.detail || '登录失败')
       }
       const data = await res.json()
-      localStorage.setItem('fzu_token', data.token)
       onLogin(data.user, data.edu_error || '')
     } catch (err) {
       setError(err.message)
@@ -399,14 +397,14 @@ function LoginPage({ onLogin }) {
             <span>学生类型</span>
             <select value={studentType} onChange={(e) => setStudentType(e.target.value)}>
               <option value="undergraduate">本科生</option>
-              <option value="graduate">研究生</option>
+              <option value="graduate" disabled>研究生（暂未开放）</option>
             </select>
           </label>
           <button type="submit" className="login-btn" disabled={loading || !studentId.trim() || !password.trim()}>
             {loading ? '登录中…' : '登 录'}
           </button>
         </form>
-        <p className="login-footer">密码仅用于教务系统认证，不会被存储</p>
+        <p className="login-footer">密码仅用于即时教务认证，登录态通过站点安全 Cookie 保存</p>
       </div>
     </div>
   )
@@ -1362,12 +1360,8 @@ function App() {
   }, [])
 
   const refreshAuthState = useCallback(async () => {
-    const token = localStorage.getItem('fzu_token')
-    if (!token) return null
-
     const response = await api('/api/auth/me')
     if (response.status === 401) {
-      localStorage.removeItem('fzu_token')
       setUser(null)
       setEduError('')
       setConversations([])
@@ -1407,11 +1401,9 @@ function App() {
 
   // --- Check existing token on mount ---
   useEffect(() => {
-    const token = localStorage.getItem('fzu_token')
-    if (!token) { setAuthChecked(true); return }
     refreshAuthState()
       .then(() => { setAuthChecked(true) })
-      .catch(() => { localStorage.removeItem('fzu_token'); setAuthChecked(true) })
+      .catch(() => { setAuthChecked(true) })
   }, [refreshAuthState])
 
   // --- Bootstrap after login ---
@@ -1458,7 +1450,6 @@ function App() {
 
   const handleLogout = useCallback(async () => {
     await api('/api/auth/logout', { method: 'POST' }).catch(() => {})
-    localStorage.removeItem('fzu_token')
     setUser(null)
     setEduError('')
     setConversations([])
