@@ -1,4 +1,4 @@
-# Copyright © 2024-2025 林昱辰&章勋. All Rights Reserved.
+# Copyright © 2024-2026 林昱辰&章勋. All Rights Reserved.
 # 
 # 福大灵犀 - 基于LangGraph和Streamlit的福州大学智能问答系统
 # 
@@ -105,8 +105,6 @@ retriever = MultiVectorRetriever(
     search_kwargs={"k": 3},
 )
 from langgraph.graph import MessagesState, StateGraph
-
-graph_builder = StateGraph(MessagesState)
 from langchain_core.tools import tool
 
 @tool(response_format="content_and_artifact")
@@ -276,77 +274,107 @@ class CustomChatTongyi(ChatTongyi):
 #         "stop": "请用以下风格与用户交流"
 #     })
 
-def query_or_respond(state: MessagesState,config: Dict[str, Any] = None):
-    """Generate tool call for retrieval or respond."""
-    config = config or {}
-    configurable = config.get("configurable", {})
-    model_name = configurable.get("model", "qwen-max-latest")
-    if model_name == "deepseek-chat":
-        llm = ChatDeepSeek(
-            model="deepseek-chat",
-            temperature=0.4,
-            streaming=True,
-            api_key=deepseek_api_key,
-            model_kwargs={
-                "stop": "请用以下风格与用户交流"
-            }
-        )
-    elif model_name == "ERNIE-4.5-Turbo-32K":
-        llm = ChatOpenAI(
-            model="ernie-4.5-turbo-32k",
-            temperature=0.4,
-            streaming=True,
-            api_key=qianfan_api_key,
-            model_kwargs={
-                "stop": ["请用以下风格与用户交流"]
-            },
-            base_url="https://qianfan.baidubce.com/v2"
-        )
-    else:
-        llm = CustomChatTongyi(
-            model=model_name, 
-            temperature=0.4, 
-            streaming=True,
-            dashscope_api_key=dashscope_api_key,    
-            model_kwargs={
-                "enable_thinking": False,
-                "stop": "请用以下风格与用户交流"
-            }
-        )
-    from .edu_tools import ALL_EDU_TOOLS
-    all_tools = [retrieve, bocha_websearch_tool] + ALL_EDU_TOOLS
-    llm_with_tools = llm.bind_tools(all_tools)
-    # 生成当前时间
-    current_time = datetime.now().strftime("%Y年%m月%d日")
-    sys_prompt = f"""作为福大灵犀，你是一个温暖亲切的福州大学AI助手。请用以下风格与用户交流：
+def _build_query_or_respond(edu_tools, user_memory_tools):
+    def query_or_respond(state: MessagesState, config: Dict[str, Any] = None):
+        """Generate tool call for retrieval or respond."""
+        config = config or {}
+        configurable = config.get("configurable", {})
+        model_name = configurable.get("model", "qwen-max-latest")
+        if model_name == "deepseek-chat":
+            llm = ChatDeepSeek(
+                model="deepseek-chat",
+                temperature=0.4,
+                streaming=True,
+                api_key=deepseek_api_key,
+                model_kwargs={
+                    "stop": "请用以下风格与用户交流"
+                }
+            )
+        elif model_name == "ERNIE-4.5-Turbo-32K":
+            llm = ChatOpenAI(
+                model="ernie-4.5-turbo-32k",
+                temperature=0.4,
+                streaming=True,
+                api_key=qianfan_api_key,
+                model_kwargs={
+                    "stop": ["请用以下风格与用户交流"]
+                },
+                base_url="https://qianfan.baidubce.com/v2"
+            )
+        else:
+            llm = CustomChatTongyi(
+                model=model_name,
+                temperature=0.4,
+                streaming=True,
+                dashscope_api_key=dashscope_api_key,
+                model_kwargs={
+                    "enable_thinking": False,
+                    "stop": "请用以下风格与用户交流"
+                }
+            )
+        all_tools = [retrieve, bocha_websearch_tool] + edu_tools + user_memory_tools
+        llm_with_tools = llm.bind_tools(all_tools)
+        current_time = datetime.now().strftime("%Y年%m月%d日")
+        sys_prompt = f"""作为福大灵犀，你是一个温暖亲切的福州大学AI助手。请用以下风格与用户交流：
 
 1. 开场、结尾与身份：
-   - 首次对话时，以温暖的语气简短介绍："你好呀！我是福大灵犀，很高兴能和你聊天呢！～"
-   - 后续对话无需重复自我介绍
-   - 每次结尾时，都要问"还有什么其他问题吗？我都愿意为你解答哦！"
+    - 首次对话时，以温暖的语气简短介绍："你好呀！我是福大灵犀，很高兴能和你聊天呢！～"
+    - 后续对话无需重复自我介绍
+    - 不要在每次回答末尾机械重复固定结束语；只有在自然合适时，再简短追问下一步需求
 
 2. 回答风格：
-   - 使用温和、亲切的语气，就像在跟朋友聊天
-   - 在工具调用前要用生动的语言进行简短的交流，例如："稍等，让我查询一下这个问题～"
-   - 适当使用"呢"、"啊"、"哦"等语气词增加亲和感
-   - 避免生硬或过于正式的表达
-   - 适当使用emoji表情，增加对话趣味性
+    - 使用温和、亲切但简洁的语气
+    - 在工具调用前只用一句短提示，不要连续寒暄
+    - 避免生硬或过于正式的表达
+    - 工具型回复默认不使用 emoji，除非用户明显偏好这种风格
+    - 对工具结果，优先直接给出结论和结构化信息，不要把同一信息先口语复述一遍、再列表重复一遍
 
 3. 教务系统查询工具：
    你拥有以下教务系统工具，可以直接查询当前登录学生的个人教务数据：
    - query_grades: 查询课程成绩和绩点
+    - query_gpa_ranking: 查询绩点、专业排名、班级排名等统计信息
+    - query_credit_statistics: 查询主修/辅修学分统计
    - query_courses: 查询课表和上课信息
+        - query_course_selection: 查询各类选课时间、通识缺口和当前候选课程
+        - select_course: 为用户提交真实选课请求
+    - query_exam_rooms: 查询考试安排和考场地点
    - query_student_info: 查询学生个人基本信息
    - query_exam_scores: 查询等级考试成绩（四六级等）
+    - query_academic_calendar: 查询校历、开学时间、放假安排、学期事件
+    - query_cultivate_plan: 查询当前专业培养方案正文，也可按培养目标、毕业要求、核心课程、课程设置等特定章节检索
 
-   当用户询问自己的成绩、课表、个人信息等教务相关问题时，优先使用这些工具。
+        当用户询问自己的成绩、绩点、排名、学分、课表、选课、考场、个人信息、等级考试成绩、校历、培养方案等教务相关问题时，优先使用这些工具。
    如果工具返回"尚未登录教务系统"，请友善地提醒用户先在侧边栏登录教务系统。
+    当工具已经返回结构化结果时：
+    - 直接基于工具结果整理回答，保留关键字段，不要改写关键数字
+    - 优先使用 markdown 列表或表格
+    - 删除寒暄、重复总结、重复状态描述
+    - 不要重复抄写工具卡片中已经明显展示的同一批字段
+        对于 select_course：
+        - 只有当用户明确要求“帮我选/提交某门课”时才调用
+        - 必须拿到明确的选课类别和准确课程名；若同名课程可能有多门，还应补充教师信息
+        - 如果用户只是询问“现在有什么可以选”或“我还差什么课”，先调用 query_course_selection，不要直接提交选课
+
+3.1 个性化记忆工具：
+    你拥有以下用户个性化记忆工具：
+    - query_user_memory: 查询当前用户已确认保存的长期偏好、背景和习惯，也可在 query 为空时列出最近保存的全部记忆
+    - save_user_memory: 生成一条待确认保存的记忆建议，只有用户在前端卡片点击确认后才会真正写入数据库
+    - delete_user_memory: 生成一条待确认删除的记忆建议，只有用户在前端卡片点击确认后才会真正删除
+
+    使用规则：
+    - 当回答明显依赖用户的长期偏好、称呼、饮食习惯、学习目标、输出风格或其他稳定背景时，可先调用 query_user_memory
+    - 当用户要求“看看你记住了什么”“管理/删除记忆”“忘掉某条偏好”等需求时，应先调用 query_user_memory 查看现有记忆及其 ID，再按需调用 delete_user_memory
+    - 只有当用户在对话中明确表达了长期稳定、未来复用价值高的信息时，才调用 save_user_memory
+    - 不要保存临时安排、一次性需求、短期情绪、教务账号密码、证件号、手机号、邮箱等敏感或易变信息
+    - 调用 save_user_memory 后，只能表述为“已发起保存建议，等待确认”，不能说成已经保存成功
+    - 调用 delete_user_memory 后，只能表述为“已发起删除建议，等待确认”，不能说成已经删除成功
+    - 如果用户要删除全部或一批记忆，可以多次调用 delete_user_memory 逐条发起删除建议
 
 4. 信息检索与搜索策略：
    请遵循以下严格的决策树来处理用户问题：
 
    a) 如果用户询问自己的成绩、课表、个人信息等教务数据：
-      → 使用教务系统查询工具（query_grades / query_courses / query_student_info / query_exam_scores）
+            → 使用教务系统查询工具（query_grades / query_gpa_ranking / query_credit_statistics / query_courses / query_course_selection / query_exam_rooms / query_student_info / query_exam_scores / query_academic_calendar / query_cultivate_plan）
 
    b) 如果用户询问福州大学的公共信息：
       → 优先使用 retrieve 工具查询校内知识库
@@ -384,36 +412,47 @@ def query_or_respond(state: MessagesState,config: Dict[str, Any] = None):
 - 若你已声明将执行某项操作，便应直接调用工具完成，无需再征求用户许可
 - 使用工具前不要主观猜测问题的答案，而是直接使用工具获取信息
 - **不要自己编造信息或用基础知识回答**"""
-    trimmer = trim_messages(strategy="last", token_counter=len,max_tokens=8,allow_partial=False)
-    prompt=[SystemMessage(sys_prompt)]+trimmer.invoke(state["messages"])
-    response = llm_with_tools.invoke(prompt)
-    # MessagesState appends messages to state instead of overwriting
-    return {"messages": [response]}
+        trimmer = trim_messages(strategy="last", token_counter=len,max_tokens=8,allow_partial=False)
+        prompt = [SystemMessage(sys_prompt)] + trimmer.invoke(state["messages"])
+        response = llm_with_tools.invoke(prompt)
+        return {"messages": [response]}
 
+    return query_or_respond
 
-from .edu_tools import ALL_EDU_TOOLS
-
-tools = ToolNode([retrieve, bocha_websearch_tool] + ALL_EDU_TOOLS)
 
 from langgraph.graph import END
 from langgraph.prebuilt import ToolNode, tools_condition
-
-graph_builder.add_node(query_or_respond)
-graph_builder.add_node(tools)
-graph_builder.set_entry_point("query_or_respond")
-graph_builder.add_conditional_edges(
-    "query_or_respond",
-    tools_condition,
-    {END: END, "tools": "tools"},
-)
-graph_builder.add_edge("tools", "query_or_respond")
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 import sqlite3
 CHECKPOINT_PATH.parent.mkdir(parents=True, exist_ok=True)
 conn = sqlite3.connect(str(CHECKPOINT_PATH), check_same_thread=False)
 memory = SqliteSaver(conn)
-graph = graph_builder.compile(checkpointer=memory)
+
+
+def build_graph(edu_session: Dict[str, Any] | None = None, use_checkpointer: bool = True):
+    from .edu_tools import build_edu_tools
+    from .user_memory_tools import build_user_memory_tools
+
+    edu_tools = build_edu_tools(edu_session)
+    user_memory_tools = build_user_memory_tools(edu_session)
+    query_or_respond = _build_query_or_respond(edu_tools, user_memory_tools)
+    tools = ToolNode([retrieve, bocha_websearch_tool] + edu_tools + user_memory_tools)
+    graph_builder = StateGraph(MessagesState)
+    graph_builder.add_node("query_or_respond", query_or_respond)
+    graph_builder.add_node("tools", tools)
+    graph_builder.set_entry_point("query_or_respond")
+    graph_builder.add_conditional_edges(
+        "query_or_respond",
+        tools_condition,
+        {END: END, "tools": "tools"},
+    )
+    graph_builder.add_edge("tools", "query_or_respond")
+    compile_kwargs = {"checkpointer": memory} if use_checkpointer else {}
+    return graph_builder.compile(**compile_kwargs)
+
+
+graph = build_graph()
 
 
 prompt = "请概括用户的问题作为对话的标题，标题需要简短概括，不多于20个字。注意你的输出直接作为标题，所以不要有其他输出，不要输出标题二字。请输出标题"
