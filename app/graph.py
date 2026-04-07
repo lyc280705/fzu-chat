@@ -37,7 +37,7 @@ BASE_DIR = Path(__file__).resolve().parent
 FAISS_DIR = BASE_DIR / "faiss" / "fzu_chat"
 DATA_DIR = BASE_DIR / "data"
 CHECKPOINT_PATH = Path(
-    os.getenv("FZU_CHAT_CHECKPOINT_PATH", str(BASE_DIR / "conversation_history.sqlite"))
+    os.getenv("FZU_CHAT_CHECKPOINT_PATH", str(BASE_DIR / "storage" / "conversation_history.sqlite"))
 )
 HUAWEICLOUD_OPENAI_BASE_URL = os.getenv(
     "HUAWEICLOUD_OPENAI_BASE_URL",
