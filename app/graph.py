@@ -9,14 +9,14 @@
 # 提示词: 章勋
 # 电子邮箱: 3134429813@qq.com
 # 最后修改: 2025年6月7日
-from __future__ import annotations
-from langchain.retrievers.multi_vector import MultiVectorRetriever
+from langchain_classic.retrievers.multi_vector import MultiVectorRetriever
 from langchain_community.vectorstores import FAISS
-from langchain.storage import LocalFileStore
+from langchain_classic.storage import LocalFileStore
 from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_core.messages import trim_messages
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableConfig
 from langchain_deepseek import ChatDeepSeek
 from langchain_openai import ChatOpenAI
 from datetime import datetime
@@ -275,7 +275,7 @@ class CustomChatTongyi(ChatTongyi):
 #     })
 
 def _build_query_or_respond(edu_tools, user_memory_tools):
-    def query_or_respond(state: MessagesState, config: Dict[str, Any] = None):
+    def query_or_respond(state: MessagesState, config: RunnableConfig | None = None):
         """Generate tool call for retrieval or respond."""
         config = config or {}
         configurable = config.get("configurable", {})
