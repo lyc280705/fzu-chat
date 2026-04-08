@@ -682,7 +682,7 @@ body {
 }
 
 .msg-bubble {
-  width: fit-content;
+  width: min(100%, 42rem);
   max-width: min(100%, 42rem);
   padding: 0.85rem 1rem;
   border-radius: 18px;
@@ -699,6 +699,7 @@ body {
 }
 
 .msg-row--user .msg-bubble {
+  width: fit-content;
   background: linear-gradient(135deg, rgba(37, 99, 235, 0.85), rgba(56, 189, 248, 0.85));
   border-color: transparent;
   margin-right: auto;
