@@ -683,7 +683,6 @@ body {
 
 .msg-bubble {
   width: min(100%, 42rem);
-  max-width: min(100%, 42rem);
   padding: 0.85rem 1rem;
   border-radius: 18px;
   background: rgba(15, 23, 42, 0.6);
