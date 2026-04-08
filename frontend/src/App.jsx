@@ -1374,8 +1374,8 @@ function App() {
   const [msgStore, setMsgStore] = useState({})
   const [input, setInput] = useState('')
   const [selModel, setSelModel] = useState('glm-5.1')
-  const [sending, setSending] = useState(false)
-  const [stopPending, setStopPending] = useState(false)
+  const [streamingConversations, setStreamingConversations] = useState({})
+  const [stopPendingConversations, setStopPendingConversations] = useState({})
   const [error, setError] = useState('')
   const [fbPending, setFbPending] = useState([])
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -1385,7 +1385,6 @@ function App() {
   })
   const msgListRef = useRef(null)
   const shouldAutoScrollRef = useRef(true)
-  const activeStreamConversationRef = useRef(null)
   const draftThinkingTimersRef = useRef(new Map())
   const titleRefreshTimersRef = useRef(new Map())
 
@@ -1393,6 +1392,8 @@ function App() {
   const activeMsgs = useMemo(() => normMsgs(msgStore[activeId]?.messages ?? []), [activeId, msgStore])
   const userId = user?.user_id ?? ''
   const needsEduRelogin = user?.student_type === 'undergraduate' && !user?.edu_authenticated
+  const isActiveConversationStreaming = Boolean(activeId && streamingConversations[activeId])
+  const isActiveConversationStopPending = Boolean(activeId && stopPendingConversations[activeId])
 
   const syncAutoScrollState = useCallback(() => {
     const list = msgListRef.current
@@ -1409,6 +1410,40 @@ function App() {
     list.scrollTop = list.scrollHeight
   }, [])
 
+  const setConversationStreaming = useCallback((cid, nextValue) => {
+    if (!cid) return
+    setStreamingConversations((prev) => {
+      if (nextValue) {
+        if (prev[cid]) return prev
+        return { ...prev, [cid]: true }
+      }
+      if (!prev[cid]) return prev
+      const next = { ...prev }
+      delete next[cid]
+      return next
+    })
+  }, [])
+
+  const setConversationStopPending = useCallback((cid, nextValue) => {
+    if (!cid) return
+    setStopPendingConversations((prev) => {
+      if (nextValue) {
+        if (prev[cid]) return prev
+        return { ...prev, [cid]: true }
+      }
+      if (!prev[cid]) return prev
+      const next = { ...prev }
+      delete next[cid]
+      return next
+    })
+  }, [])
+
+  const clearConversationStreamState = useCallback((cid) => {
+    if (!cid) return
+    setConversationStreaming(cid, false)
+    setConversationStopPending(cid, false)
+  }, [setConversationStopPending, setConversationStreaming])
+
   const resetAuthState = useCallback(() => {
     for (const timerId of draftThinkingTimersRef.current.values()) {
       clearTimeout(timerId)
@@ -1418,14 +1453,13 @@ function App() {
       clearTimeout(timerId)
     }
     titleRefreshTimersRef.current.clear()
-    activeStreamConversationRef.current = null
     setUser(null)
     setEduError('')
     setConversations([])
     setMsgStore({})
     setActiveId(null)
-    setSending(false)
-    setStopPending(false)
+    setStreamingConversations({})
+    setStopPendingConversations({})
     setError('')
   }, [])
 
@@ -1649,6 +1683,7 @@ function App() {
     try {
       const r = await api(`/api/conversations/${id}`, { method: 'DELETE' })
       if (!r.ok) throw new Error('删除对话失败')
+      clearConversationStreamState(id)
       clearDraftThinkingTimer(id)
       clearScheduledTitleRefresh(id)
       const nextConversations = conversations.filter((c) => c.id !== id)
@@ -1656,7 +1691,7 @@ function App() {
       setMsgStore((p) => { const n = { ...p }; delete n[id]; return n })
       if (activeId === id) setActiveId(nextConversations[0]?.id ?? null)
     } catch (e) { setError(e.message) }
-  }, [activeId, clearDraftThinkingTimer, clearScheduledTitleRefresh, conversations])
+  }, [activeId, clearConversationStreamState, clearDraftThinkingTimer, clearScheduledTitleRefresh, conversations])
 
   const updateDraft = useCallback((cid, fn) => {
     setMsgStore((s) => {
@@ -1777,10 +1812,10 @@ function App() {
   }, [replaceDraft, scheduleDraftThinkingIndicator, updateDraft])
 
   const handleStop = useCallback(async () => {
-    const cid = activeStreamConversationRef.current
-    if (!cid || stopPending) return
+    const cid = activeId
+    if (!cid || !streamingConversations[cid] || stopPendingConversations[cid]) return
     setError('')
-    setStopPending(true)
+    setConversationStopPending(cid, true)
     try {
       const response = await api(`/api/conversations/${cid}/stop`, { method: 'POST' })
       const payload = await response.json().catch(() => ({}))
@@ -1788,19 +1823,18 @@ function App() {
         throw new Error(payload.detail || '停止响应失败')
       }
       if (payload.ok === false) {
-        setStopPending(false)
+        setConversationStopPending(cid, false)
       }
     } catch (err) {
-      setStopPending(false)
+      setConversationStopPending(cid, false)
       setError(err.message || '停止响应失败')
     }
-  }, [stopPending])
+  }, [activeId, setConversationStopPending, stopPendingConversations, streamingConversations])
 
   const handleSubmit = useCallback(async (e) => {
     e.preventDefault()
-    if (!input.trim() || sending) return
-    setSending(true); setError('')
-    setStopPending(false)
+    if (!input.trim() || (activeId && streamingConversations[activeId])) return
+    setError('')
     shouldAutoScrollRef.current = true
     const prompt = input.trim()
     let cid = activeId
@@ -1821,7 +1855,8 @@ function App() {
         updated_at: timestamp,
         messages: [...(conv.messages ?? []), um, draftAssistant()],
       }
-      activeStreamConversationRef.current = cid
+      setConversationStopPending(cid, false)
+      setConversationStreaming(cid, true)
       setMsgStore((s) => ({ ...s, [cid]: pendingConversation }))
       updateSummary(makeConversationSummary(pendingConversation))
       const r = await api(`/api/conversations/${cid}/messages`, { method: 'POST', body: JSON.stringify({ content: prompt, model: selModel }) })
@@ -1838,16 +1873,14 @@ function App() {
       }
     } finally {
       if (cid) clearDraftThinkingTimer(cid)
-      activeStreamConversationRef.current = null
-      setStopPending(false)
-      setSending(false)
+      clearConversationStreamState(cid)
       try {
         await refreshAuthState()
       } catch {
         // Ignore auth refresh failures after sending; a later retry will resync the state.
       }
     }
-  }, [input, sending, activeId, activeConv, msgStore, selModel, clearDraftThinkingTimer, createConv, readSSE, refreshAuthState, replaceDraft, updateDraft, updateSummary])
+  }, [input, activeId, activeConv, msgStore, selModel, clearConversationStreamState, clearDraftThinkingTimer, createConv, readSSE, refreshAuthState, replaceDraft, setConversationStopPending, setConversationStreaming, streamingConversations, updateDraft, updateSummary])
 
   const handleFeedback = useCallback(async (mid, fb) => {
     const cid = activeId
@@ -2041,14 +2074,14 @@ function App() {
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void handleSubmit(e) } }}
             />
             <button
-              className={`send-btn ${sending ? 'send-btn--stop' : ''}`}
-              type={sending ? 'button' : 'submit'}
-              disabled={sending ? stopPending : !input.trim()}
-              onClick={sending ? () => { void handleStop() } : undefined}
-              aria-label={sending ? '停止响应' : '发送消息'}
-              title={sending ? '停止响应' : '发送消息'}
+              className={`send-btn ${isActiveConversationStreaming ? 'send-btn--stop' : ''}`}
+              type={isActiveConversationStreaming ? 'button' : 'submit'}
+              disabled={isActiveConversationStreaming ? isActiveConversationStopPending : !input.trim()}
+              onClick={isActiveConversationStreaming ? () => { void handleStop() } : undefined}
+              aria-label={isActiveConversationStreaming ? '停止响应' : '发送消息'}
+              title={isActiveConversationStreaming ? '停止响应' : '发送消息'}
             >
-              {sending ? '■' : '➤'}
+              {isActiveConversationStreaming ? '■' : '➤'}
             </button>
           </form>
         </footer>
