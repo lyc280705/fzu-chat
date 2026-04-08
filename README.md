@@ -4,8 +4,6 @@
 
 A Fuzhou University intelligent Q&A system with student authentication and educational system integration, built with LangGraph, FastAPI, and React.
 
-Current stable release: **v1.0.0**
-
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://python.org)
 [![React](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
