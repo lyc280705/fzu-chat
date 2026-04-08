@@ -52,7 +52,7 @@ def _build_client(edu_session: Dict[str, Any] | None = None) -> JwchClient:
     session = _resolve_edu_session(edu_session)
     if not session or not session.get("edu_authenticated"):
         status_message = str((session or {}).get("edu_status_message") or "").strip()
-        raise JwchError(status_message or "当前用户尚未登录教务系统，无法查询教务信息。请先使用学号和密码登录。")
+        raise JwchError(status_message or "当前用户尚未连接教务系统，无法查询教务信息。请在侧栏重新连接教务后再试。")
     cookies = session.get("edu_cookies") or []
     student_id = session.get("user_id", "")
     identifier = session.get("edu_identifier", "")

@@ -318,6 +318,78 @@ body {
   font-size: 0.78rem;
 }
 
+.edu-warn--interactive {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(251, 191, 36, 0.18);
+}
+
+.edu-warn-title {
+  color: #fde68a;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.edu-warn-note {
+  color: #fcd34d;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.edu-relogin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.edu-relogin-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: #fef3c7;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.edu-relogin-field input {
+  padding: 0.72rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  background: rgba(15, 23, 42, 0.55);
+  color: #f8fafc;
+  font: inherit;
+  outline: none;
+}
+
+.edu-relogin-field input:focus {
+  border-color: rgba(251, 191, 36, 0.55);
+}
+
+.edu-relogin-btn {
+  padding: 0.75rem 0.85rem;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #fff;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.edu-relogin-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.edu-relogin-error {
+  color: #fecaca;
+  font-size: 0.75rem;
+}
+
 .new-chat-btn {
   display: flex;
   align-items: center;

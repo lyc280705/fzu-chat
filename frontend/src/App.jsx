@@ -410,6 +410,50 @@ function LoginPage({ onLogin }) {
   )
 }
 
+function EduReloginPanel({ message, studentId, onSubmit }) {
+  const [password, setPassword] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    if (!password.trim() || loading) return
+    setLoading(true)
+    setError('')
+    try {
+      await onSubmit(password.trim())
+      setPassword('')
+    } catch (err) {
+      setError(err.message || '重新连接教务失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="edu-warn edu-warn--interactive">
+      <div className="edu-warn-title">{message || '教务登录已过期，请重新连接教务。'}</div>
+      <div className="edu-warn-note">重新连接后不会退出当前账号，也不会丢失现有对话。</div>
+      <form className="edu-relogin-form" onSubmit={handleSubmit}>
+        <label className="edu-relogin-field">
+          <span>{studentId ? `当前学号：${studentId}` : '教务密码'}</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="请输入教务密码"
+            autoComplete="current-password"
+          />
+        </label>
+        <button type="submit" className="edu-relogin-btn" disabled={loading || !password.trim()}>
+          {loading ? '重新连接中…' : '重新连接教务'}
+        </button>
+      </form>
+      {error && <div className="edu-relogin-error">{error}</div>}
+    </div>
+  )
+}
+
 /* ================================================================== */
 /*  Grade Table                                                        */
 /* ================================================================== */
@@ -1343,6 +1387,7 @@ function App() {
   const activeConv = useMemo(() => conversations.find((c) => c.id === activeId) ?? null, [activeId, conversations])
   const activeMsgs = useMemo(() => normMsgs(msgStore[activeId]?.messages ?? []), [activeId, msgStore])
   const userId = user?.user_id ?? ''
+  const needsEduRelogin = user?.student_type === 'undergraduate' && !user?.edu_authenticated
 
   const syncAutoScrollState = useCallback(() => {
     const list = msgListRef.current
@@ -1455,6 +1500,28 @@ function App() {
     setConversations([])
     setMsgStore({})
     setActiveId(null)
+  }, [])
+
+  const handleEduRelogin = useCallback(async (password) => {
+    const response = await api('/api/auth/edu-login', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    })
+    const payload = await response.json().catch(() => ({}))
+    if (response.status === 401) {
+      setUser(null)
+      setEduError('')
+      setConversations([])
+      setMsgStore({})
+      setActiveId(null)
+      throw new Error('当前登录已失效，请重新登录。')
+    }
+    if (!response.ok) {
+      throw new Error(payload.detail || '重新连接教务失败')
+    }
+    setUser(payload.user)
+    setEduError(payload.edu_error || '')
+    return payload.user
   }, [])
 
   const createConv = useCallback(async () => {
@@ -1724,12 +1791,18 @@ function App() {
             <div className="user-info">
               <strong>{user.display_name}</strong>
               <span>{user.student_type === 'undergraduate' ? '本科生' : '研究生'}
-                {user.edu_authenticated ? ' · 教务已连接' : ''}</span>
+                {user.edu_authenticated ? ' · 教务已连接' : needsEduRelogin ? ' · 教务待重新连接' : ''}</span>
             </div>
             <button className="logout-btn" onClick={handleLogout} type="button" title="退出登录">⏻</button>
           </div>
 
-          {eduError && <div className="edu-warn">{eduError}</div>}
+          {needsEduRelogin ? (
+            <EduReloginPanel
+              message={eduError}
+              studentId={user.user_id}
+              onSubmit={handleEduRelogin}
+            />
+          ) : eduError ? <div className="edu-warn">{eduError}</div> : null}
 
           <button className="new-chat-btn" onClick={handleNew} type="button">
             <span className="plus-icon">+</span> 新建对话

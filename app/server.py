@@ -200,6 +200,10 @@ class LoginRequest(BaseModel):
     student_type: str = "undergraduate"
 
 
+class EduReloginRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=100)
+
+
 class ConversationCreateRequest(BaseModel):
     model: str = DEFAULT_CHAT_MODEL
 
@@ -820,7 +824,7 @@ def refresh_edu_session_status(token: str) -> Dict[str, Any] | None:
                 "edu_authenticated": False,
                 "edu_cookies": None,
                 "edu_identifier": "",
-                "edu_status_message": "教务登录已过期，请重新登录。",
+                "edu_status_message": "教务登录已过期，请在侧栏重新连接教务。",
             },
         )
         return get_session(token)
@@ -844,7 +848,7 @@ def refresh_edu_session_status(token: str) -> Dict[str, Any] | None:
                 "edu_authenticated": False,
                 "edu_cookies": None,
                 "edu_identifier": "",
-                "edu_status_message": "教务登录已过期，请重新登录。",
+                "edu_status_message": "教务登录已过期，请在侧栏重新连接教务。",
             },
         )
         return get_session(token)
@@ -927,6 +931,45 @@ def login(req: LoginRequest, request: Request) -> JSONResponse:
     )
     _set_auth_cookie(response, token, request)
     return response
+
+
+@app.post("/api/auth/edu-login")
+def relogin_edu(req: EduReloginRequest, user: AuthUser = Depends(require_auth)) -> JSONResponse:
+    if user.student_type != "undergraduate":
+        raise HTTPException(status_code=403, detail="当前账号不支持重新连接教务。")
+
+    try:
+        client = JwchClient(user.user_id, req.password)
+        client.login()
+    except JwchLoginError as exc:
+        logger.warning("Edu relogin rejected for %s: %s", mask_user_id(user.user_id), type(exc).__name__)
+        raise HTTPException(status_code=400, detail="教务系统重新连接失败，请检查密码后重试。") from exc
+    except Exception as exc:
+        logger.warning("Edu relogin unavailable for %s: %s", mask_user_id(user.user_id), type(exc).__name__)
+        raise HTTPException(status_code=503, detail="教务系统连接失败，请稍后重试。") from exc
+
+    update_session(
+        user.token,
+        {
+            "edu_authenticated": True,
+            "edu_cookies": [{"name": c.name, "value": c.value} for c in client.session.cookies],
+            "edu_identifier": client.identifier,
+            "edu_status_message": "",
+        },
+    )
+
+    session = get_session(user.token) or {}
+    return JSONResponse(
+        {
+            "user": {
+                "user_id": session.get("user_id", user.user_id),
+                "student_type": session.get("student_type", user.student_type),
+                "display_name": session.get("display_name", user.display_name),
+                "edu_authenticated": True,
+            },
+            "edu_error": "",
+        }
+    )
 
 
 @app.post("/api/auth/logout")
