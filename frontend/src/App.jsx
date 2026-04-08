@@ -1404,14 +1404,22 @@ function App() {
     list.scrollTop = list.scrollHeight
   }, [])
 
+  const resetAuthState = useCallback(() => {
+    activeStreamConversationRef.current = null
+    setUser(null)
+    setEduError('')
+    setConversations([])
+    setMsgStore({})
+    setActiveId(null)
+    setSending(false)
+    setStopPending(false)
+    setError('')
+  }, [])
+
   const refreshAuthState = useCallback(async () => {
     const response = await api('/api/auth/me')
     if (response.status === 401) {
-      setUser(null)
-      setEduError('')
-      setConversations([])
-      setMsgStore({})
-      setActiveId(null)
+      resetAuthState()
       return null
     }
     if (!response.ok) {
@@ -1422,7 +1430,7 @@ function App() {
     setUser(nextUser)
     setEduError(nextUser.edu_error || '')
     return nextUser
-  }, [])
+  }, [resetAuthState])
 
   const handleMsgListWheel = useCallback((event) => {
     if (event.deltaY < 0) {
@@ -1491,16 +1499,25 @@ function App() {
   }, [activeConv, activeId, models, msgStore])
 
   // --- Handlers ---
-  const handleLogin = useCallback((u, eduErr) => { setUser(u); setEduError(eduErr) }, [])
+  const handleLogin = useCallback((u, eduErr) => { setUser(u); setEduError(eduErr); setError('') }, [])
 
   const handleLogout = useCallback(async () => {
-    await api('/api/auth/logout', { method: 'POST' }).catch(() => {})
-    setUser(null)
-    setEduError('')
-    setConversations([])
-    setMsgStore({})
-    setActiveId(null)
-  }, [])
+    setError('')
+    try {
+      const response = await api('/api/auth/logout', { method: 'POST' })
+      if (response.status === 401) {
+        resetAuthState()
+        return
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}))
+        throw new Error(payload.detail || '退出登录失败，请稍后重试。')
+      }
+      resetAuthState()
+    } catch (err) {
+      setError(err.message || '退出登录失败，请稍后重试。')
+    }
+  }, [resetAuthState])
 
   const handleEduRelogin = useCallback(async (password) => {
     const response = await api('/api/auth/edu-login', {
@@ -1509,11 +1526,7 @@ function App() {
     })
     const payload = await response.json().catch(() => ({}))
     if (response.status === 401) {
-      setUser(null)
-      setEduError('')
-      setConversations([])
-      setMsgStore({})
-      setActiveId(null)
+      resetAuthState()
       throw new Error('当前登录已失效，请重新登录。')
     }
     if (!response.ok) {
@@ -1522,7 +1535,7 @@ function App() {
     setUser(payload.user)
     setEduError(payload.edu_error || '')
     return payload.user
-  }, [])
+  }, [resetAuthState])
 
   const createConv = useCallback(async () => {
     const activeConversation = activeId ? (msgStore[activeId] ?? activeConv) : null

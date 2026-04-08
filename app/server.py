@@ -138,6 +138,14 @@ def _clear_auth_cookie(response: Response, request: Request) -> None:
     )
 
 
+def _extract_auth_token(authorization: str | None, session_cookie: str | None) -> str | None:
+    if authorization:
+        return authorization[7:] if authorization.startswith("Bearer ") else authorization
+    if session_cookie:
+        return session_cookie
+    return None
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     yield
@@ -171,11 +179,7 @@ def require_auth(
     authorization: str | None = Header(default=None),
     session_cookie: str | None = Cookie(default=None, alias=AUTH_COOKIE_NAME),
 ) -> AuthUser:
-    token: str | None = None
-    if authorization:
-        token = authorization[7:] if authorization.startswith("Bearer ") else authorization
-    elif session_cookie:
-        token = session_cookie
+    token = _extract_auth_token(authorization, session_cookie)
     if not token:
         raise HTTPException(status_code=401, detail="未登录")
     session = get_session(token)
@@ -973,8 +977,14 @@ def relogin_edu(req: EduReloginRequest, user: AuthUser = Depends(require_auth)) 
 
 
 @app.post("/api/auth/logout")
-def logout(request: Request, user: AuthUser = Depends(require_auth)) -> JSONResponse:
-    invalidate_session(user.token)
+def logout(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    session_cookie: str | None = Cookie(default=None, alias=AUTH_COOKIE_NAME),
+) -> JSONResponse:
+    token = _extract_auth_token(authorization, session_cookie)
+    if token:
+        invalidate_session(token)
     response = JSONResponse({"ok": True})
     _clear_auth_cookie(response, request)
     return response
