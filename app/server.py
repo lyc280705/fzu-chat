@@ -72,6 +72,8 @@ logger = logging.getLogger(__name__)
 
 active_stream_stops: Dict[tuple[str, str], Event] = {}
 active_stream_stops_lock = Lock()
+pending_title_updates: Dict[tuple[str, str], asyncio.Task[None]] = {}
+pending_title_updates_lock = Lock()
 
 
 class SecurityHeadersMiddleware:
@@ -711,7 +713,7 @@ def truncate_title(title: str) -> str:
     return cleaned[:MAX_TITLE_LENGTH].rstrip(" ,，。；;") or "新对话"
 
 
-def summarize_title(messages: List[Dict[str, Any]]) -> str:
+async def summarize_title(messages: List[Dict[str, Any]]) -> str:
     lines = []
     for m in messages:
         c = (m.get("content") or "").strip()
@@ -721,7 +723,7 @@ def summarize_title(messages: List[Dict[str, Any]]) -> str:
     if not transcript:
         return "新对话"
     try:
-        return truncate_title(summary_chain.invoke({"input": transcript}).strip())
+        return truncate_title((await summary_chain.ainvoke({"input": transcript})).strip())
     except Exception:
         return "新对话"
 
@@ -754,6 +756,53 @@ def clear_active_stream_stop(user_id: str, conversation_id: str, stop_event: Eve
             active_stream_stops.pop(stream_key, None)
 
 
+async def update_conversation_title_in_background(
+    user_id: str,
+    conversation_id: str,
+    messages: List[Dict[str, Any]],
+) -> None:
+    try:
+        next_title = await summarize_title(messages)
+        conversation = chat_store.get_conversation(user_id, conversation_id)
+        if conversation is None or conversation.get("title") != "新对话":
+            return
+        updated = chat_store.update_conversation(
+            user_id,
+            conversation_id,
+            title=next_title,
+            updated_at=conversation["updated_at"],
+        )
+        if updated is None:
+            logger.warning("Conversation disappeared before title update completed: %s", conversation_id)
+    except Exception:
+        logger.exception("Async title update failed for %s", conversation_id)
+
+
+def schedule_conversation_title_update(
+    user_id: str,
+    conversation_id: str,
+    messages: List[Dict[str, Any]],
+) -> None:
+    stream_key = (user_id, conversation_id)
+    with pending_title_updates_lock:
+        existing = pending_title_updates.get(stream_key)
+        if existing is not None and not existing.done():
+            return
+        task = asyncio.create_task(
+            update_conversation_title_in_background(user_id, conversation_id, messages),
+            name=f"conversation-title-{conversation_id}",
+        )
+        pending_title_updates[stream_key] = task
+
+    def cleanup(done_task: asyncio.Task[None]) -> None:
+        with pending_title_updates_lock:
+            current = pending_title_updates.get(stream_key)
+            if current is done_task:
+                pending_title_updates.pop(stream_key, None)
+
+    task.add_done_callback(cleanup)
+
+
 def finalize_stream_text(atxt: str, final_ai_text: str, parts: List[Dict[str, Any]]) -> str:
     if final_ai_text:
         if not atxt:
@@ -776,7 +825,7 @@ def mark_running_tool_parts_stopped(parts: List[Dict[str, Any]]) -> None:
         part["status_label"] = f"{label}（已停止）"
 
 
-def persist_assistant_message(
+async def persist_assistant_message(
     user_id: str,
     conversation_id: str,
     model: str,
@@ -799,15 +848,7 @@ def persist_assistant_message(
     if c2 is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     if c2["title"] == "新对话":
-        c2 = chat_store.update_conversation(
-            user_id,
-            conversation_id,
-            title=summarize_title(c2["messages"]),
-            model=model,
-            updated_at=now_iso(),
-        )
-        if c2 is None:
-            raise HTTPException(status_code=404, detail="Conversation not found")
+        schedule_conversation_title_update(user_id, conversation_id, c2["messages"])
     return amsg, make_conversation_summary(c2)
 
 
@@ -1248,14 +1289,14 @@ async def create_message(
         stream_stopped = False
         client_disconnected = False
 
-        def build_done_payload(stopped: bool) -> Dict[str, Any]:
+        async def build_done_payload(stopped: bool) -> Dict[str, Any]:
             nonlocal atxt, final_payload
             if final_payload is not None:
                 return final_payload
             atxt = finalize_stream_text(atxt, final_ai_text, parts)
             if stopped:
                 mark_running_tool_parts_stopped(parts)
-            amsg, summary = persist_assistant_message(user.user_id, cid, sel, atxt, parts)
+            amsg, summary = await persist_assistant_message(user.user_id, cid, sel, atxt, parts)
             final_payload = {"message": amsg, "conversation": summary, "stopped": stopped}
             return final_payload
 
@@ -1350,12 +1391,12 @@ async def create_message(
                     client_disconnected = True
                     break
 
-            payload = build_done_payload(stream_stopped)
+            payload = await build_done_payload(stream_stopped)
             if not client_disconnected:
                 yield serialize_event("done", payload)
         except asyncio.CancelledError:
             logger.info("Stream cancelled for %s", cid)
-            build_done_payload(True)
+            await build_done_payload(True)
             return
         except Exception:
             if final_payload is not None:

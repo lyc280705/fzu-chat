@@ -9,6 +9,8 @@ import './App.css'
 
 const EMPTY_MSG = '你好呀！我是福大灵犀，你可以向我提问关于福州大学的任何问题，也可以查询你的成绩和课表哦～'
 const AUTO_SCROLL_THRESHOLD = 80
+const THINKING_INDICATOR_DELAY = 1000
+const TITLE_REFRESH_DELAYS = [900, 1500, 2500, 4000, 6000, 8000]
 
 const TOOL_ICONS = {
   retrieve: '📚',
@@ -268,6 +270,7 @@ const draftAssistant = () => ({
   feedback: null,
   timestamp: new Date().toISOString(),
   isDraft: true,
+  showThinkingIndicator: true,
 })
 
 const previewText = (messages = [], { skipErrorFallback = true } = {}) => {
@@ -1370,7 +1373,7 @@ function App() {
   const [activeId, setActiveId] = useState(null)
   const [msgStore, setMsgStore] = useState({})
   const [input, setInput] = useState('')
-  const [selModel, setSelModel] = useState('glm-5')
+  const [selModel, setSelModel] = useState('glm-5.1')
   const [sending, setSending] = useState(false)
   const [stopPending, setStopPending] = useState(false)
   const [error, setError] = useState('')
@@ -1383,6 +1386,8 @@ function App() {
   const msgListRef = useRef(null)
   const shouldAutoScrollRef = useRef(true)
   const activeStreamConversationRef = useRef(null)
+  const draftThinkingTimersRef = useRef(new Map())
+  const titleRefreshTimersRef = useRef(new Map())
 
   const activeConv = useMemo(() => conversations.find((c) => c.id === activeId) ?? null, [activeId, conversations])
   const activeMsgs = useMemo(() => normMsgs(msgStore[activeId]?.messages ?? []), [activeId, msgStore])
@@ -1405,6 +1410,14 @@ function App() {
   }, [])
 
   const resetAuthState = useCallback(() => {
+    for (const timerId of draftThinkingTimersRef.current.values()) {
+      clearTimeout(timerId)
+    }
+    draftThinkingTimersRef.current.clear()
+    for (const timerId of titleRefreshTimersRef.current.values()) {
+      clearTimeout(timerId)
+    }
+    titleRefreshTimersRef.current.clear()
     activeStreamConversationRef.current = null
     setUser(null)
     setEduError('')
@@ -1451,6 +1464,17 @@ function App() {
   useEffect(() => {
     shouldAutoScrollRef.current = true
   }, [activeId])
+
+  useEffect(() => () => {
+    for (const timerId of draftThinkingTimersRef.current.values()) {
+      clearTimeout(timerId)
+    }
+    draftThinkingTimersRef.current.clear()
+    for (const timerId of titleRefreshTimersRef.current.values()) {
+      clearTimeout(timerId)
+    }
+    titleRefreshTimersRef.current.clear()
+  }, [])
 
   // --- Check existing token on mount ---
   useEffect(() => {
@@ -1573,21 +1597,66 @@ function App() {
     setSidebarCollapsed((value) => !value)
   }, [])
 
+  const updateSummary = useCallback((sm) => {
+    setConversations((p) => [sm, ...p.filter((c) => c.id !== sm.id)])
+  }, [])
+
+  const refreshConversation = useCallback(async (cid) => {
+    const response = await api(`/api/conversations/${cid}`)
+    if (!response.ok) throw new Error('刷新对话失败')
+    const conversation = await response.json()
+    setMsgStore((prev) => ({ ...prev, [cid]: conversation }))
+    updateSummary(makeConversationSummary(conversation))
+    return conversation
+  }, [updateSummary])
+
+  const clearScheduledTitleRefresh = useCallback((cid) => {
+    const timerId = titleRefreshTimersRef.current.get(cid)
+    if (timerId === undefined) return
+    clearTimeout(timerId)
+    titleRefreshTimersRef.current.delete(cid)
+  }, [])
+
+  const clearDraftThinkingTimer = useCallback((cid) => {
+    const timerId = draftThinkingTimersRef.current.get(cid)
+    if (timerId === undefined) return
+    clearTimeout(timerId)
+    draftThinkingTimersRef.current.delete(cid)
+  }, [])
+
+  const scheduleTitleRefresh = useCallback((cid, attempt = 0) => {
+    if (typeof window === 'undefined' || !cid) return
+    clearScheduledTitleRefresh(cid)
+    const delay = TITLE_REFRESH_DELAYS[Math.min(attempt, TITLE_REFRESH_DELAYS.length - 1)]
+    const timerId = window.setTimeout(async () => {
+      titleRefreshTimersRef.current.delete(cid)
+      try {
+        const conversation = await refreshConversation(cid)
+        if (conversation.title === '新对话' && attempt < TITLE_REFRESH_DELAYS.length - 1) {
+          scheduleTitleRefresh(cid, attempt + 1)
+        }
+      } catch {
+        if (attempt < TITLE_REFRESH_DELAYS.length - 1) {
+          scheduleTitleRefresh(cid, attempt + 1)
+        }
+      }
+    }, delay)
+    titleRefreshTimersRef.current.set(cid, timerId)
+  }, [clearScheduledTitleRefresh, refreshConversation])
+
   const handleDelete = useCallback(async (id) => {
     setError('')
     try {
       const r = await api(`/api/conversations/${id}`, { method: 'DELETE' })
       if (!r.ok) throw new Error('删除对话失败')
+      clearDraftThinkingTimer(id)
+      clearScheduledTitleRefresh(id)
       const nextConversations = conversations.filter((c) => c.id !== id)
       setConversations(nextConversations)
       setMsgStore((p) => { const n = { ...p }; delete n[id]; return n })
       if (activeId === id) setActiveId(nextConversations[0]?.id ?? null)
     } catch (e) { setError(e.message) }
-  }, [activeId, conversations])
-
-  const updateSummary = useCallback((sm) => {
-    setConversations((p) => [sm, ...p.filter((c) => c.id !== sm.id)])
-  }, [])
+  }, [activeId, clearDraftThinkingTimer, clearScheduledTitleRefresh, conversations])
 
   const updateDraft = useCallback((cid, fn) => {
     setMsgStore((s) => {
@@ -1599,7 +1668,18 @@ function App() {
     })
   }, [])
 
+  const scheduleDraftThinkingIndicator = useCallback((cid) => {
+    if (typeof window === 'undefined' || !cid) return
+    clearDraftThinkingTimer(cid)
+    const timerId = window.setTimeout(() => {
+      draftThinkingTimersRef.current.delete(cid)
+      updateDraft(cid, (m) => ({ ...m, showThinkingIndicator: true }))
+    }, THINKING_INDICATOR_DELAY)
+    draftThinkingTimersRef.current.set(cid, timerId)
+  }, [clearDraftThinkingTimer, updateDraft])
+
   const replaceDraft = useCallback((cid, msg, sm) => {
+    clearDraftThinkingTimer(cid)
     setMsgStore((s) => {
       const cv = s[cid]; if (!cv) return s
       const ms = [...cv.messages]
@@ -1607,7 +1687,9 @@ function App() {
       return { ...s, [cid]: { ...cv, title: sm.title, updated_at: sm.updated_at, model: sm.model, messages: ms } }
     })
     updateSummary(sm)
-  }, [updateSummary])
+    if (sm.title === '新对话') scheduleTitleRefresh(cid)
+    else clearScheduledTitleRefresh(cid)
+  }, [clearDraftThinkingTimer, clearScheduledTitleRefresh, scheduleTitleRefresh, updateSummary])
 
   const replaceMessageToolPart = useCallback((cid, mid, part) => {
     setMsgStore((s) => {
@@ -1663,20 +1745,25 @@ function App() {
         if (ev === 'chunk') {
           updateDraft(cid, (m) => {
             const text = m.content + d.delta
-            return { ...m, content: text, parts: appendTextPart(m.parts, d.delta) }
+            return { ...m, content: text, parts: appendTextPart(m.parts, d.delta), showThinkingIndicator: false }
           })
+          scheduleDraftThinkingIndicator(cid)
         }
         if (ev === 'tool_call') {
           updateDraft(cid, (m) => ({
             ...m,
             parts: compactParts([...m.parts, d]),
+            showThinkingIndicator: false,
           }))
+          scheduleDraftThinkingIndicator(cid)
         }
         if (ev === 'tool_result') {
           updateDraft(cid, (m) => ({
             ...m,
             parts: replaceToolPart(m.parts, d),
+            showThinkingIndicator: false,
           }))
+          scheduleDraftThinkingIndicator(cid)
         }
         if (ev === 'done') replaceDraft(cid, d.message, d.conversation)
         if (ev === 'error') {
@@ -1687,7 +1774,7 @@ function App() {
         }
       }
     }
-  }, [updateDraft, replaceDraft])
+  }, [replaceDraft, scheduleDraftThinkingIndicator, updateDraft])
 
   const handleStop = useCallback(async () => {
     const cid = activeStreamConversationRef.current
@@ -1745,10 +1832,12 @@ function App() {
       if (cid && err.fallback && err.conversation) {
         replaceDraft(cid, err.fallback, err.conversation)
       } else if (cid) {
+        clearDraftThinkingTimer(cid)
         const fallback = localError()
         updateDraft(cid, (m) => ({ ...fallback, id: m.id, timestamp: m.timestamp }))
       }
     } finally {
+      if (cid) clearDraftThinkingTimer(cid)
       activeStreamConversationRef.current = null
       setStopPending(false)
       setSending(false)
@@ -1758,7 +1847,7 @@ function App() {
         // Ignore auth refresh failures after sending; a later retry will resync the state.
       }
     }
-  }, [input, sending, activeId, activeConv, msgStore, selModel, createConv, readSSE, refreshAuthState, replaceDraft, updateDraft, updateSummary])
+  }, [input, sending, activeId, activeConv, msgStore, selModel, clearDraftThinkingTimer, createConv, readSSE, refreshAuthState, replaceDraft, updateDraft, updateSummary])
 
   const handleFeedback = useCallback(async (mid, fb) => {
     const cid = activeId
@@ -1888,6 +1977,12 @@ function App() {
               const parts = compactParts(m.parts)
               const citationMap = buildCitationLinkMap(m.id, parts)
               const showBubble = parts.length > 0 || m.isDraft
+              const showThinkingIndicator = m.isDraft && (m.showThinkingIndicator ?? parts.length === 0)
+              const isDraftWaiting = showThinkingIndicator && parts.length === 0
+              const bubbleClassName = [
+                'msg-bubble',
+                isDraftWaiting ? 'msg-bubble--thinking' : '',
+              ].filter(Boolean).join(' ')
 
               return (
                 <article key={m.id} className={`msg-row ${m.role === 'user' ? 'msg-row--user' : ''}`}>
@@ -1900,7 +1995,7 @@ function App() {
                       <time>{fmt(m.timestamp)}</time>
                     </div>
                     {showBubble && (
-                      <div className="msg-bubble">
+                      <div className={bubbleClassName}>
                         <div className="msg-bubble-content">
                           {parts.map((p, i) =>
                             p.type === 'tool' ? (
@@ -1915,8 +2010,10 @@ function App() {
                               <MessageMarkdown key={`${m.id}-text-${i}`} content={p.content} citationMap={citationMap} />
                             ),
                           )}
-                          {m.isDraft && parts.length === 0 && (
-                            <div className="typing-indicator"><span /><span /><span /></div>
+                          {showThinkingIndicator && (
+                            <div className={`thinking-indicator ${isDraftWaiting ? '' : 'thinking-indicator--inline'}`.trim()} role="status" aria-live="polite" aria-label="正在思考">
+                              <span className="thinking-indicator__label">正在思考</span>
+                            </div>
                           )}
                         </div>
                       </div>

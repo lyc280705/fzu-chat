@@ -43,11 +43,11 @@ HUAWEICLOUD_OPENAI_BASE_URL = os.getenv(
     "HUAWEICLOUD_OPENAI_BASE_URL",
     "https://api.modelarts-maas.com/openai/v1",
 )
-DEFAULT_CHAT_MODEL = "glm-5"
+DEFAULT_CHAT_MODEL = "glm-5.1"
 SECONDARY_CHAT_MODEL = "deepseek-v3.2"
 TITLE_SUMMARY_MODEL = "qwen3-32b"
 CHAT_MODEL_OPTIONS = {
-    DEFAULT_CHAT_MODEL: "GLM-5",
+    DEFAULT_CHAT_MODEL: "GLM-5.1",
     SECONDARY_CHAT_MODEL: "DeepSeek V3.2",
 }
 SEARCH_RESULT_TOOL_NAMES = {"retrieve", "bocha_websearch_tool"}
@@ -383,6 +383,7 @@ def build_chat_llm(
     temperature: float,
     streaming: bool,
     stop: List[str] | None = None,
+    thinking_type: str | None = None,
 ) -> ChatOpenAI:
     normalized_model = model_name if model_name in CHAT_MODEL_OPTIONS or model_name == TITLE_SUMMARY_MODEL else DEFAULT_CHAT_MODEL
     init_kwargs: Dict[str, Any] = {
@@ -393,7 +394,9 @@ def build_chat_llm(
         "base_url": HUAWEICLOUD_OPENAI_BASE_URL,
     }
     if stop:
-        init_kwargs["model_kwargs"] = {"stop": stop}
+        init_kwargs["stop_sequences"] = stop
+    if thinking_type:
+        init_kwargs["extra_body"] = {"thinking": {"type": thinking_type}}
     return ChatOpenAI(**init_kwargs)
 
 vector_store = FAISS.load_local(
@@ -637,6 +640,6 @@ summary_prompt = ChatPromptTemplate.from_messages(
 )
 summary_chain = (
     summary_prompt
-    | build_chat_llm(TITLE_SUMMARY_MODEL, temperature=0.3, streaming=False)
+    | build_chat_llm(TITLE_SUMMARY_MODEL, temperature=0.3, streaming=False, thinking_type="disabled")
     | StrOutputParser()
 )
