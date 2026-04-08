@@ -143,7 +143,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="FZU Chat API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="FZU Chat API", version="3.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
