@@ -11,12 +11,14 @@
 # 最后修改: 2025年6月7日
 from contextvars import ContextVar
 from datetime import datetime
+import json
 import os
 from pathlib import Path
 import re
 import requests
 from typing import Any, Dict, List
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from langchain_classic.retrievers.multi_vector import MultiVectorRetriever
 from langchain_classic.storage import LocalFileStore
@@ -331,6 +333,98 @@ def normalize_search_tool_messages(messages: List[Any], prior_messages: List[Any
     return normalized_messages
 
 
+def parse_tool_call_args(value: Any) -> Dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return None
+
+    candidate = value.strip()
+    if not candidate:
+        return {}
+
+    attempts = [candidate]
+    if not candidate.startswith("{"):
+        attempts.append("{" + candidate)
+    if not candidate.endswith("}"):
+        attempts.append(candidate + "}")
+    if not candidate.startswith("{") and not candidate.endswith("}"):
+        attempts.append("{" + candidate + "}")
+
+    for attempt in dict.fromkeys(attempts):
+        try:
+            parsed = json.loads(attempt)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def recover_invalid_tool_calls(message: Any) -> Any:
+    if not hasattr(message, "tool_calls") and not hasattr(message, "invalid_tool_calls"):
+        return message
+
+    raw_tool_calls = list(getattr(message, "tool_calls", None) or [])
+    raw_invalid_tool_calls = list(getattr(message, "invalid_tool_calls", None) or [])
+    if not raw_invalid_tool_calls:
+        return message
+
+    normalized_tool_calls: List[Dict[str, Any]] = []
+    seen_keys: set[tuple[str, str]] = set()
+    changed = False
+
+    for tool_call in raw_tool_calls:
+        if not isinstance(tool_call, dict):
+            changed = True
+            continue
+        name = str(tool_call.get("name") or "").strip()
+        tool_call_id = str(tool_call.get("id") or "").strip() or f"call_{uuid4().hex[:24]}"
+        args = parse_tool_call_args(tool_call.get("args"))
+        if not name or args is None:
+            changed = True
+            continue
+
+        normalized_tool_call = {**tool_call, "name": name, "id": tool_call_id, "args": args}
+        normalized_tool_calls.append(normalized_tool_call)
+        seen_keys.add((name, tool_call_id))
+        if normalized_tool_call != tool_call:
+            changed = True
+
+    remaining_invalid_tool_calls: List[Any] = []
+    for invalid_tool_call in raw_invalid_tool_calls:
+        if not isinstance(invalid_tool_call, dict):
+            remaining_invalid_tool_calls.append(invalid_tool_call)
+            continue
+
+        name = str(invalid_tool_call.get("name") or "").strip()
+        if not name:
+            remaining_invalid_tool_calls.append(invalid_tool_call)
+            continue
+
+        args = parse_tool_call_args(invalid_tool_call.get("args"))
+        if args is None:
+            remaining_invalid_tool_calls.append(invalid_tool_call)
+            continue
+
+        tool_call_id = str(invalid_tool_call.get("id") or "").strip() or f"call_{uuid4().hex[:24]}"
+        key = (name, tool_call_id)
+        if key not in seen_keys:
+            normalized_tool_calls.append({"name": name, "args": args, "id": tool_call_id, "type": "tool_call"})
+            seen_keys.add(key)
+        changed = True
+
+    if not changed:
+        return message
+
+    return message.model_copy(
+        update={
+            "tool_calls": normalized_tool_calls,
+            "invalid_tool_calls": remaining_invalid_tool_calls,
+        }
+    )
+
+
 def read_secret_or_env(secret_path: str, *env_names: str) -> str | None:
     if os.path.exists(secret_path):
         with open(secret_path, "r") as secret_file:
@@ -583,7 +677,7 @@ def _build_query_or_respond(edu_tools, user_memory_tools):
             end_on=("human", "tool"),
             include_system=True,
         )
-        response = llm_with_tools.invoke(prompt)
+        response = recover_invalid_tool_calls(llm_with_tools.invoke(prompt))
         return {"messages": [response]}
 
     return query_or_respond
