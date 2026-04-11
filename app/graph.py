@@ -471,12 +471,19 @@ if not BOCHA_API_KEY:
     raise ValueError("Bocha API密钥未设置")
 
 
+def build_thinking_config(thinking_enabled: bool | None) -> Dict[str, Any]:
+    if thinking_enabled is None:
+        return {}
+    return {"thinking": {"type": "enabled" if thinking_enabled else "disabled"}}
+
+
 def build_chat_llm(
     model_name: str,
     *,
     temperature: float,
     streaming: bool,
     stop: List[str] | None = None,
+    thinking_enabled: bool | None = None,
     thinking_type: str | None = None,
 ) -> ChatOpenAI:
     normalized_model = model_name if model_name in CHAT_MODEL_OPTIONS or model_name == TITLE_SUMMARY_MODEL else DEFAULT_CHAT_MODEL
@@ -489,8 +496,11 @@ def build_chat_llm(
     }
     if stop:
         init_kwargs["stop_sequences"] = stop
+    extra_body = build_thinking_config(thinking_enabled)
     if thinking_type:
-        init_kwargs["extra_body"] = {"thinking": {"type": thinking_type}}
+        extra_body["thinking"] = {"type": thinking_type}
+    if extra_body:
+        init_kwargs["extra_body"] = extra_body
     return ChatOpenAI(**init_kwargs)
 
 vector_store = FAISS.load_local(
@@ -558,11 +568,15 @@ def _build_query_or_respond(edu_tools, user_memory_tools):
         config = config or {}
         configurable = config.get("configurable", {})
         model_name = configurable.get("model", DEFAULT_CHAT_MODEL)
+        thinking_enabled = configurable.get("thinking_enabled")
+        if not isinstance(thinking_enabled, bool):
+            thinking_enabled = None
         llm = build_chat_llm(
             model_name,
             temperature=0.4,
             streaming=True,
             stop=["请用以下风格与用户交流"],
+            thinking_enabled=thinking_enabled,
         )
         all_tools = [retrieve, bocha_websearch_tool] + edu_tools + user_memory_tools
         llm_with_tools = llm.bind_tools(all_tools)

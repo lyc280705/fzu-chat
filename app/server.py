@@ -222,6 +222,7 @@ class ConversationUpdateRequest(BaseModel):
 class MessageCreateRequest(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
     model: str | None = None
+    thinking_enabled: bool | None = None
 
 
 class FeedbackUpdateRequest(BaseModel):
@@ -1276,7 +1277,13 @@ async def create_message(
     }
     runtime_graph = build_graph(edu_ctx, use_checkpointer=False)
     stop_event = register_active_stream_stop(user.user_id, cid)
-    graph_config = {"configurable": {"model": sel, "thread_id": conv["thread_id"]}}
+    graph_config = {
+        "configurable": {
+            "model": sel,
+            "thread_id": conv["thread_id"],
+            "thinking_enabled": req.thinking_enabled,
+        }
+    }
 
     async def event_stream() -> AsyncIterator[bytes]:
         set_current_edu_session(edu_ctx)
