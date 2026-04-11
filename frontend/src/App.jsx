@@ -11,6 +11,7 @@ const EMPTY_MSG = '你好呀！我是福大灵犀，你可以向我提问关于�
 const AUTO_SCROLL_THRESHOLD = 80
 const THINKING_INDICATOR_DELAY = 1000
 const TITLE_REFRESH_DELAYS = [900, 1500, 2500, 4000, 6000, 8000]
+const THINKING_STORAGE_KEY = 'fzu_thinking_enabled'
 
 const TOOL_ICONS = {
   retrieve: '📚',
@@ -1374,6 +1375,10 @@ function App() {
   const [msgStore, setMsgStore] = useState({})
   const [input, setInput] = useState('')
   const [selModel, setSelModel] = useState('glm-5.1')
+  const [thinkingEnabled, setThinkingEnabled] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.localStorage.getItem(THINKING_STORAGE_KEY) === '1'
+  })
   const [streamingConversations, setStreamingConversations] = useState({})
   const [stopPendingConversations, setStopPendingConversations] = useState({})
   const [error, setError] = useState('')
@@ -1489,6 +1494,11 @@ function App() {
     if (typeof window === 'undefined') return
     window.localStorage.setItem('fzu_sidebar_collapsed', sidebarCollapsed ? '1' : '0')
   }, [sidebarCollapsed])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(THINKING_STORAGE_KEY, thinkingEnabled ? '1' : '0')
+  }, [thinkingEnabled])
 
   useEffect(() => {
     if (!shouldAutoScrollRef.current) return
@@ -1859,7 +1869,10 @@ function App() {
       setConversationStreaming(cid, true)
       setMsgStore((s) => ({ ...s, [cid]: pendingConversation }))
       updateSummary(makeConversationSummary(pendingConversation))
-      const r = await api(`/api/conversations/${cid}/messages`, { method: 'POST', body: JSON.stringify({ content: prompt, model: selModel }) })
+      const r = await api(`/api/conversations/${cid}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ content: prompt, model: selModel, thinking_enabled: thinkingEnabled }),
+      })
       if (!r.ok || !r.body) throw new Error('发送消息失败')
       await readSSE(r, cid)
     } catch (err) {
@@ -1880,7 +1893,7 @@ function App() {
         // Ignore auth refresh failures after sending; a later retry will resync the state.
       }
     }
-  }, [input, activeId, activeConv, msgStore, selModel, clearConversationStreamState, clearDraftThinkingTimer, createConv, readSSE, refreshAuthState, replaceDraft, setConversationStopPending, setConversationStreaming, streamingConversations, updateDraft, updateSummary])
+  }, [input, activeId, activeConv, msgStore, selModel, thinkingEnabled, clearConversationStreamState, clearDraftThinkingTimer, createConv, readSSE, refreshAuthState, replaceDraft, setConversationStopPending, setConversationStreaming, streamingConversations, updateDraft, updateSummary])
 
   const handleFeedback = useCallback(async (mid, fb) => {
     const cid = activeId
@@ -1949,6 +1962,25 @@ function App() {
           <select id="model-sel" value={selModel} onChange={(e) => setSelModel(e.target.value)}>
             {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
+          <div className="thinking-panel">
+            <div className="thinking-panel__copy">
+              <span className="thinking-panel__title">思考模式</span>
+              <span className="thinking-panel__hint">{thinkingEnabled ? '更深入，但响应会更慢' : '直接回复，速度更快'} · 影响下一条消息</span>
+            </div>
+            <button
+              type="button"
+              className={`thinking-toggle ${thinkingEnabled ? 'thinking-toggle--on' : ''}`}
+              role="switch"
+              aria-checked={thinkingEnabled}
+              aria-label={thinkingEnabled ? '关闭思考模式' : '开启思考模式'}
+              onClick={() => setThinkingEnabled((value) => !value)}
+            >
+              <span className="thinking-toggle__track">
+                <span className="thinking-toggle__thumb" />
+              </span>
+              <span className="thinking-toggle__label">{thinkingEnabled ? '已开启' : '已关闭'}</span>
+            </button>
+          </div>
         </div>
 
         <div className="sidebar-convos">
@@ -1989,7 +2021,12 @@ function App() {
               <p>福州大学知识库 · 联网搜索 · 教务系统</p>
             </div>
           </div>
-          <div className="chat-header-badge">{models.find((m) => m.id === selModel)?.label ?? selModel}</div>
+          <div className="chat-header-badges">
+            <div className="chat-header-badge">{models.find((m) => m.id === selModel)?.label ?? selModel}</div>
+            <div className={`chat-header-badge chat-header-badge--thinking ${thinkingEnabled ? 'chat-header-badge--thinking-on' : ''}`}>
+              {thinkingEnabled ? '思考开启' : '思考关闭'}
+            </div>
+          </div>
         </header>
 
         <section className="msg-list" ref={msgListRef} onScroll={syncAutoScrollState} onWheel={handleMsgListWheel}>
