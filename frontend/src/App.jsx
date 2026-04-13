@@ -244,6 +244,9 @@ const appendTextPart = (parts = [], delta = '') => {
 const replaceToolPart = (parts = [], nextPart) =>
   compactParts(parts.map((part) => (part.type === 'tool' && part.tool_id === nextPart.tool_id ? nextPart : part)))
 
+const hasRunningToolPart = (parts = []) =>
+  parts.some((part) => part?.type === 'tool' && part.status === 'running')
+
 const creditProgress = (gain, total) => {
   const gainValue = Number.parseFloat(String(gain ?? '').replace(/[^\d.]+/g, ''))
   const totalValue = Number.parseFloat(String(total ?? '').replace(/[^\d.]+/g, ''))
@@ -1978,7 +1981,6 @@ function App() {
               <span className="thinking-toggle__track">
                 <span className="thinking-toggle__thumb" />
               </span>
-              <span className="thinking-toggle__label">{thinkingEnabled ? '已开启' : '已关闭'}</span>
             </button>
           </div>
         </div>
@@ -2046,8 +2048,9 @@ function App() {
             activeMsgs.map((m) => {
               const parts = compactParts(m.parts)
               const citationMap = buildCitationLinkMap(m.id, parts)
+              const hasRunningTool = hasRunningToolPart(parts)
               const showBubble = parts.length > 0 || m.isDraft
-              const showThinkingIndicator = m.isDraft && (m.showThinkingIndicator ?? parts.length === 0)
+              const showThinkingIndicator = m.isDraft && !hasRunningTool && (m.showThinkingIndicator ?? parts.length === 0)
               const isDraftWaiting = showThinkingIndicator && parts.length === 0
               const bubbleClassName = [
                 'msg-bubble',
