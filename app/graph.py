@@ -10,12 +10,13 @@
 # 电子邮箱: 3134429813@qq.com
 # 最后修改: 2025年6月7日
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
 import re
 import requests
+from threading import Lock
 from typing import Any, Dict, List
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -57,6 +58,14 @@ SEARCH_RESULT_CITATION_RE = re.compile(r"^\[(\d+)\]$")
 SEARCH_RESULT_INLINE_CITATION_RE = re.compile(r"\[(\d+)\](?!\()")
 SEARCH_CITATION_COUNTER: ContextVar[int] = ContextVar("search_citation_counter", default=0)
 MAX_HISTORY_MESSAGES = 32
+JWCH_LOCATE_DATE_URL = "https://jwcjwxt2.fzu.edu.cn:82/week.asp"
+JWCH_LOCATE_DATE_TIMEOUT = 5
+JWCH_LOCATE_DATE_RE = re.compile(
+    r'var\s+week\s*=\s*"(?P<week>\d+)".*?var\s+xn\s*=\s*"(?P<year>\d{4})".*?var\s+xq\s*=\s*"(?P<term>\d{2})"',
+    re.S,
+)
+WEEK_LOCATE_CACHE: Dict[str, Any] = {}
+WEEK_LOCATE_CACHE_LOCK = Lock()
 
 
 def reset_search_citation_counter() -> None:
@@ -67,6 +76,76 @@ def next_search_citation_id() -> int:
     citation_id = SEARCH_CITATION_COUNTER.get() + 1
     SEARCH_CITATION_COUNTER.set(citation_id)
     return citation_id
+
+
+def _week_anchor(value: datetime) -> datetime:
+    return (value - timedelta(days=value.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _format_term_label(year: Any, term: Any) -> str:
+    try:
+        normalized_year = int(year)
+    except (TypeError, ValueError):
+        return ""
+
+    normalized_term = str(term or "").strip()
+    if normalized_term not in {"01", "02"}:
+        return ""
+    term_label = "第一学期" if normalized_term == "01" else "第二学期"
+    return f"{normalized_year}-{normalized_year + 1}学年{term_label}"
+
+
+def _format_teaching_week_context(week: Any, year: Any, term: Any) -> str:
+    try:
+        normalized_week = max(int(week), 1)
+    except (TypeError, ValueError):
+        return ""
+
+    term_label = _format_term_label(year, term)
+    if term_label:
+        return f"{term_label}第{normalized_week}周"
+    return f"第{normalized_week}周"
+
+
+def _fetch_jwch_locate_date() -> Dict[str, Any]:
+    response = requests.get(JWCH_LOCATE_DATE_URL, timeout=JWCH_LOCATE_DATE_TIMEOUT)
+    response.raise_for_status()
+    match = JWCH_LOCATE_DATE_RE.search(response.text)
+    if not match:
+        raise ValueError("无法解析教务周次信息")
+    return {
+        "week": int(match.group("week")),
+        "year": int(match.group("year")),
+        "term": match.group("term"),
+        "fetched_at": datetime.now(),
+    }
+
+
+def get_current_teaching_week_context() -> str:
+    now = datetime.now()
+    with WEEK_LOCATE_CACHE_LOCK:
+        cached = dict(WEEK_LOCATE_CACHE)
+
+    cached_at = cached.get("fetched_at")
+    if isinstance(cached_at, datetime) and _week_anchor(cached_at) == _week_anchor(now):
+        return _format_teaching_week_context(cached.get("week"), cached.get("year"), cached.get("term"))
+
+    try:
+        fresh = _fetch_jwch_locate_date()
+    except Exception:
+        if isinstance(cached_at, datetime):
+            weeks_delta = max(((_week_anchor(now) - _week_anchor(cached_at)).days // 7), 0)
+            return _format_teaching_week_context(
+                int(cached.get("week") or 1) + weeks_delta,
+                cached.get("year"),
+                cached.get("term"),
+            )
+        return ""
+
+    with WEEK_LOCATE_CACHE_LOCK:
+        WEEK_LOCATE_CACHE.clear()
+        WEEK_LOCATE_CACHE.update(fresh)
+    return _format_teaching_week_context(fresh.get("week"), fresh.get("year"), fresh.get("term"))
 
 
 def get_result_source_label(url: str) -> str:
@@ -583,6 +662,10 @@ def _build_query_or_respond(edu_tools, user_memory_tools):
         now = datetime.now()
         weekday_names = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
         current_time = f"{now.strftime('%Y年%m月%d日')} {weekday_names[now.weekday()]}"
+        current_teaching_week = get_current_teaching_week_context()
+        current_context = f"当前时间：{current_time}。"
+        if current_teaching_week:
+            current_context += f"当前教学周：{current_teaching_week}。"
         sys_prompt = f"""作为福大灵犀，你是一个温暖亲切的福州大学AI助手。请用以下风格与用户交流：
 
 1. 开场、结尾与身份：
@@ -674,7 +757,7 @@ def _build_query_or_respond(edu_tools, user_memory_tools):
    - 回答后自然引导相关话题
    - 适时表达关心和鼓励
 
-当前时间：{current_time}。1-4节在上午，5-8节在下午，9-11节在晚上。请注意校内知识库可能不包含最新信息哦～
+{current_context}1-4节在上午，5-8节在下午，9-11节在晚上。请注意校内知识库可能不包含最新信息哦～
 
 工具使用要求：
 - 若有现成工具可完成任务，则应直接使用工具，而非要求用户手动操作
