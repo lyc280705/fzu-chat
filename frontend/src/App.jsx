@@ -1379,8 +1379,9 @@ function App() {
   const [input, setInput] = useState('')
   const [selModel, setSelModel] = useState('glm-5.1')
   const [thinkingEnabled, setThinkingEnabled] = useState(() => {
-    if (typeof window === 'undefined') return false
-    return window.localStorage.getItem(THINKING_STORAGE_KEY) === '1'
+    if (typeof window === 'undefined') return true
+    const stored = window.localStorage.getItem(THINKING_STORAGE_KEY)
+    return stored === null ? true : stored === '1'
   })
   const [streamingConversations, setStreamingConversations] = useState({})
   const [stopPendingConversations, setStopPendingConversations] = useState({})
