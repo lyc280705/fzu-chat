@@ -9,6 +9,10 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
+Current tagged release: [v2.0](CHANGELOG.md)
+
+Release notes: [CHANGELOG.md](CHANGELOG.md)
+
 ## Overview
 
 FZU-Chat provides a ChatGPT-style conversation experience for Fuzhou University students. Each student logs in with their student ID to get isolated conversations and access to educational system tools (grade queries, course schedules, etc.).
