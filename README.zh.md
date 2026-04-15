@@ -9,6 +9,10 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
+当前已标记版本：[v2.0](CHANGELOG.md)
+
+版本记录：[CHANGELOG.md](CHANGELOG.md)
+
 ## 概述
 
 福大灵犀为福州大学学生提供类 ChatGPT 的对话体验。每个学生使用学号登录后，拥有独立的对话记录，并可通过 AI 助手查询成绩、课表等教务信息。
