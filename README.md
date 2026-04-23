@@ -23,7 +23,7 @@ FZU-Chat provides a ChatGPT-style conversation experience for Fuzhou University 
 - **Educational system tools**: Query grades, courses, exam scores, and student info via the FZU academic affairs system (based on [west2-online/jwch](https://github.com/west2-online/jwch))
 - **ChatGPT-style interface**: Modern dark UI with sidebar history, quick actions, and streaming replies
 - **Rich tool cards**: Visual display of tool calls with structured data tables for grades and courses
-- **Multi-model support**: Huawei Cloud MaaS GLM-5.1 and DeepSeek-V3.2 selection, with Qwen3-32B for title summarization
+- **Multi-model support**: Huawei Cloud MaaS GLM-5.1, Kimi K2.6, and DeepSeek-V3.2 selection, with Qwen3-32B for title summarization
 - **Knowledge + web search**: FAISS retrieval plus Bocha web search fallback
 - **Docker deployment**: Multi-stage build for React frontend + Python backend
 
@@ -52,7 +52,7 @@ fzu-chat/
 
 ## Required API Keys
 
-- `HUAWEICLOUD_MAAS_API_KEY` – Huawei Cloud MaaS OpenAI-compatible API for GLM-5.1, DeepSeek-V3.2, and Qwen3-32B title summarization
+- `HUAWEICLOUD_MAAS_API_KEY` – Huawei Cloud MaaS OpenAI-compatible API for GLM-5.1, Kimi K2.6, DeepSeek-V3.2, and Qwen3-32B title summarization
 - `DASHSCOPE_API_KEY` – Alibaba Cloud DashScope embeddings for the local knowledge base
 - `BOCHA_API_KEY` – Bocha web search
 - `LANGSMITH_API_KEY` – LangSmith tracing

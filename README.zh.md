@@ -23,7 +23,7 @@
 - **教务系统工具**：查询成绩、课表、考试成绩、学生信息（基于 [west2-online/jwch](https://github.com/west2-online/jwch) 对接教务系统）
 - **ChatGPT 风格界面**：现代暗色主题，侧边栏历史记录、快捷操作、流式回复
 - **丰富的工具卡片**：可视化工具调用过程，结构化展示成绩表格和课表
-- **多模型支持**：华为云 MaaS 的 GLM-5.1、DeepSeek-V3.2 可选，标题总结内部使用 Qwen3-32B
+- **多模型支持**：华为云 MaaS 的 GLM-5.1、Kimi K2.6、DeepSeek-V3.2 可选，标题总结内部使用 Qwen3-32B
 - **知识库 + 网络搜索**：FAISS 本地检索 + 博查网络搜索兜底
 - **Docker 部署**：多阶段构建，React 前端 + Python 后端
 
@@ -52,7 +52,7 @@ fzu-chat/
 
 ## 必需的 API 密钥
 
-- `HUAWEICLOUD_MAAS_API_KEY` – 华为云 MaaS OpenAI 兼容接口，用于 GLM-5.1、DeepSeek-V3.2 与 Qwen3-32B 标题总结
+- `HUAWEICLOUD_MAAS_API_KEY` – 华为云 MaaS OpenAI 兼容接口，用于 GLM-5.1、Kimi K2.6、DeepSeek-V3.2 与 Qwen3-32B 标题总结
 - `DASHSCOPE_API_KEY` – 阿里云 DashScope 向量化，用于本地知识库 embedding
 - `BOCHA_API_KEY` – 博查网络搜索
 - `LANGSMITH_API_KEY` – LangSmith 追踪
