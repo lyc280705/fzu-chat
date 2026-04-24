@@ -1944,10 +1944,11 @@ function App() {
     const cv = msgStore[cid]; const tm = cv?.messages.find((m) => m.id === mid)
     if (!tm || !canFeedback(tm)) return
     const prev = tm.feedback ?? null
+    const next = prev === fb ? null : fb
     setFbPending((p) => [...p, mid])
-    setMsgStore((s) => ({ ...s, [cid]: { ...s[cid], messages: s[cid].messages.map((m) => (m.id === mid ? { ...m, feedback: fb } : m)) } }))
+    setMsgStore((s) => ({ ...s, [cid]: { ...s[cid], messages: s[cid].messages.map((m) => (m.id === mid ? { ...m, feedback: next } : m)) } }))
     try {
-      const r = await api(`/api/conversations/${cid}/feedback`, { method: 'POST', body: JSON.stringify({ message_id: mid, feedback: fb }) })
+      const r = await api(`/api/conversations/${cid}/feedback`, { method: 'POST', body: JSON.stringify({ message_id: mid, feedback: next }) })
       if (!r.ok) throw new Error()
     } catch {
       setMsgStore((s) => {

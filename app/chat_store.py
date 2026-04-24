@@ -284,7 +284,7 @@ class ChatStore:
             cur.execute("DELETE FROM conversations WHERE id = ? AND user_id = ?", (conversation_id, user_id))
             return payload
 
-    def update_feedback(self, user_id: str, conversation_id: str, message_id: str, feedback: str) -> bool:
+    def update_feedback(self, user_id: str, conversation_id: str, message_id: str, feedback: str | None) -> bool:
         with self._cursor() as cur:
             row = self._get_conversation_row(cur, user_id, conversation_id)
             if row is None:

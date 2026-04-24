@@ -1856,6 +1856,8 @@ body {
 
   .sidebar-toggle {
     display: block;
+    top: calc(env(safe-area-inset-top, 0px) + 1rem);
+    left: calc(env(safe-area-inset-left, 0px) + 1rem);
   }
 
   .sidebar-desktop-toggle {
@@ -1875,6 +1877,10 @@ body {
 
   .sidebar--open {
     transform: translateX(0);
+  }
+
+  .sidebar-top {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 4.75rem);
   }
 
   .chat-header {

@@ -229,7 +229,7 @@ class MessageCreateRequest(BaseModel):
 
 class FeedbackUpdateRequest(BaseModel):
     message_id: str
-    feedback: Literal["up", "down"]
+    feedback: Literal["up", "down"] | None = None
 
 
 class MemoryProposalActionRequest(BaseModel):
