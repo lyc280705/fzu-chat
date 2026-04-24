@@ -10,7 +10,6 @@ import './App.css'
 const EMPTY_MSG = '你好呀！我是福大灵犀，你可以向我提问关于福州大学的任何问题，也可以查询你的成绩和课表哦～'
 const AUTO_SCROLL_THRESHOLD = 80
 const THINKING_INDICATOR_DELAY = 1000
-const TITLE_REFRESH_DELAYS = [900, 1500, 2500, 4000, 6000, 8000]
 const THINKING_STORAGE_KEY = 'fzu_thinking_enabled'
 
 const TOOL_ICONS = {
@@ -1362,6 +1361,14 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
   )
 }
 
+function PendingTitle({ compact = false }) {
+  return (
+    <span className={`title-skeleton ${compact ? 'title-skeleton--compact' : ''}`} aria-hidden="true">
+      <span className="title-skeleton__bar title-skeleton__bar--primary" />
+    </span>
+  )
+}
+
 /* ================================================================== */
 /*  Main App                                                           */
 /* ================================================================== */
@@ -1385,6 +1392,7 @@ function App() {
   })
   const [streamingConversations, setStreamingConversations] = useState({})
   const [stopPendingConversations, setStopPendingConversations] = useState({})
+  const [pendingTitles, setPendingTitles] = useState({})
   const [error, setError] = useState('')
   const [fbPending, setFbPending] = useState([])
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -1395,7 +1403,7 @@ function App() {
   const msgListRef = useRef(null)
   const shouldAutoScrollRef = useRef(true)
   const draftThinkingTimersRef = useRef(new Map())
-  const titleRefreshTimersRef = useRef(new Map())
+  const conversationEventsRef = useRef(null)
 
   const activeConv = useMemo(() => conversations.find((c) => c.id === activeId) ?? null, [activeId, conversations])
   const activeMsgs = useMemo(() => normMsgs(msgStore[activeId]?.messages ?? []), [activeId, msgStore])
@@ -1447,6 +1455,20 @@ function App() {
     })
   }, [])
 
+  const setConversationTitlePending = useCallback((cid, nextValue) => {
+    if (!cid) return
+    setPendingTitles((prev) => {
+      if (nextValue) {
+        if (prev[cid]) return prev
+        return { ...prev, [cid]: true }
+      }
+      if (!prev[cid]) return prev
+      const next = { ...prev }
+      delete next[cid]
+      return next
+    })
+  }, [])
+
   const clearConversationStreamState = useCallback((cid) => {
     if (!cid) return
     setConversationStreaming(cid, false)
@@ -1454,14 +1476,14 @@ function App() {
   }, [setConversationStopPending, setConversationStreaming])
 
   const resetAuthState = useCallback(() => {
+    if (conversationEventsRef.current) {
+      conversationEventsRef.current.close()
+      conversationEventsRef.current = null
+    }
     for (const timerId of draftThinkingTimersRef.current.values()) {
       clearTimeout(timerId)
     }
     draftThinkingTimersRef.current.clear()
-    for (const timerId of titleRefreshTimersRef.current.values()) {
-      clearTimeout(timerId)
-    }
-    titleRefreshTimersRef.current.clear()
     setUser(null)
     setEduError('')
     setConversations([])
@@ -1469,6 +1491,7 @@ function App() {
     setActiveId(null)
     setStreamingConversations({})
     setStopPendingConversations({})
+    setPendingTitles({})
     setError('')
   }, [])
 
@@ -1514,14 +1537,14 @@ function App() {
   }, [activeId])
 
   useEffect(() => () => {
+    if (conversationEventsRef.current) {
+      conversationEventsRef.current.close()
+      conversationEventsRef.current = null
+    }
     for (const timerId of draftThinkingTimersRef.current.values()) {
       clearTimeout(timerId)
     }
     draftThinkingTimersRef.current.clear()
-    for (const timerId of titleRefreshTimersRef.current.values()) {
-      clearTimeout(timerId)
-    }
-    titleRefreshTimersRef.current.clear()
   }, [])
 
   // --- Check existing token on mount ---
@@ -1541,12 +1564,64 @@ function App() {
         const [mp, cp] = await Promise.all([mr.json(), cr.json()])
         setModels(mp)
         if (mp.length) setSelModel(mp[0].id)
+        setPendingTitles({})
         setConversations(cp)
         if (cp.length) setActiveId(cp[0].id)
       } catch (e) { setError(e.message) }
     }
     go()
   }, [userId])
+
+  const applyConversationSummary = useCallback((cid, summary) => {
+    if (!cid || !summary) return
+    setMsgStore((state) => {
+      const conversation = state[cid]
+      if (!conversation) return state
+      return {
+        ...state,
+        [cid]: {
+          ...conversation,
+          title: summary.title,
+          updated_at: summary.updated_at,
+          model: summary.model,
+        },
+      }
+    })
+    setConversations((prev) => (
+      prev.some((item) => item.id === cid)
+        ? prev.map((item) => (item.id === cid ? { ...item, ...summary } : item))
+        : prev
+    ))
+    setConversationTitlePending(cid, false)
+  }, [setConversationTitlePending])
+
+  useEffect(() => {
+    if (!userId || typeof EventSource === 'undefined') return undefined
+    const source = new EventSource('/api/conversations/events', { withCredentials: true })
+    conversationEventsRef.current = source
+
+    const handleTitle = (event) => {
+      try {
+        const payload = JSON.parse(event.data)
+        const conversation = payload?.conversation
+        if (conversation?.id) {
+          applyConversationSummary(conversation.id, conversation)
+        }
+      } catch {
+        // Ignore malformed conversation events and allow the stream to continue.
+      }
+    }
+
+    source.addEventListener('title', handleTitle)
+
+    return () => {
+      source.removeEventListener('title', handleTitle)
+      source.close()
+      if (conversationEventsRef.current === source) {
+        conversationEventsRef.current = null
+      }
+    }
+  }, [applyConversationSummary, userId])
 
   // --- Load conversation messages on select ---
   useEffect(() => {
@@ -1649,48 +1724,12 @@ function App() {
     setConversations((p) => [sm, ...p.filter((c) => c.id !== sm.id)])
   }, [])
 
-  const refreshConversation = useCallback(async (cid) => {
-    const response = await api(`/api/conversations/${cid}`)
-    if (!response.ok) throw new Error('刷新对话失败')
-    const conversation = await response.json()
-    setMsgStore((prev) => ({ ...prev, [cid]: conversation }))
-    updateSummary(makeConversationSummary(conversation))
-    return conversation
-  }, [updateSummary])
-
-  const clearScheduledTitleRefresh = useCallback((cid) => {
-    const timerId = titleRefreshTimersRef.current.get(cid)
-    if (timerId === undefined) return
-    clearTimeout(timerId)
-    titleRefreshTimersRef.current.delete(cid)
-  }, [])
-
   const clearDraftThinkingTimer = useCallback((cid) => {
     const timerId = draftThinkingTimersRef.current.get(cid)
     if (timerId === undefined) return
     clearTimeout(timerId)
     draftThinkingTimersRef.current.delete(cid)
   }, [])
-
-  const scheduleTitleRefresh = useCallback((cid, attempt = 0) => {
-    if (typeof window === 'undefined' || !cid) return
-    clearScheduledTitleRefresh(cid)
-    const delay = TITLE_REFRESH_DELAYS[Math.min(attempt, TITLE_REFRESH_DELAYS.length - 1)]
-    const timerId = window.setTimeout(async () => {
-      titleRefreshTimersRef.current.delete(cid)
-      try {
-        const conversation = await refreshConversation(cid)
-        if (conversation.title === '新对话' && attempt < TITLE_REFRESH_DELAYS.length - 1) {
-          scheduleTitleRefresh(cid, attempt + 1)
-        }
-      } catch {
-        if (attempt < TITLE_REFRESH_DELAYS.length - 1) {
-          scheduleTitleRefresh(cid, attempt + 1)
-        }
-      }
-    }, delay)
-    titleRefreshTimersRef.current.set(cid, timerId)
-  }, [clearScheduledTitleRefresh, refreshConversation])
 
   const handleDelete = useCallback(async (id) => {
     setError('')
@@ -1699,13 +1738,13 @@ function App() {
       if (!r.ok) throw new Error('删除对话失败')
       clearConversationStreamState(id)
       clearDraftThinkingTimer(id)
-      clearScheduledTitleRefresh(id)
+      setConversationTitlePending(id, false)
       const nextConversations = conversations.filter((c) => c.id !== id)
       setConversations(nextConversations)
       setMsgStore((p) => { const n = { ...p }; delete n[id]; return n })
       if (activeId === id) setActiveId(nextConversations[0]?.id ?? null)
     } catch (e) { setError(e.message) }
-  }, [activeId, clearConversationStreamState, clearDraftThinkingTimer, clearScheduledTitleRefresh, conversations])
+  }, [activeId, clearConversationStreamState, clearDraftThinkingTimer, conversations, setConversationTitlePending])
 
   const updateDraft = useCallback((cid, fn) => {
     setMsgStore((s) => {
@@ -1727,7 +1766,7 @@ function App() {
     draftThinkingTimersRef.current.set(cid, timerId)
   }, [clearDraftThinkingTimer, updateDraft])
 
-  const replaceDraft = useCallback((cid, msg, sm) => {
+  const replaceDraft = useCallback((cid, msg, sm, titlePending = false) => {
     clearDraftThinkingTimer(cid)
     setMsgStore((s) => {
       const cv = s[cid]; if (!cv) return s
@@ -1736,9 +1775,8 @@ function App() {
       return { ...s, [cid]: { ...cv, title: sm.title, updated_at: sm.updated_at, model: sm.model, messages: ms } }
     })
     updateSummary(sm)
-    if (sm.title === '新对话') scheduleTitleRefresh(cid)
-    else clearScheduledTitleRefresh(cid)
-  }, [clearDraftThinkingTimer, clearScheduledTitleRefresh, scheduleTitleRefresh, updateSummary])
+    setConversationTitlePending(cid, titlePending)
+  }, [clearDraftThinkingTimer, setConversationTitlePending, updateSummary])
 
   const replaceMessageToolPart = useCallback((cid, mid, part) => {
     setMsgStore((s) => {
@@ -1814,7 +1852,8 @@ function App() {
           }))
           scheduleDraftThinkingIndicator(cid)
         }
-        if (ev === 'done') replaceDraft(cid, d.message, d.conversation)
+        if (ev === 'done') replaceDraft(cid, d.message, d.conversation, d.title_pending === true)
+        if (ev === 'title') applyConversationSummary(cid, d.conversation)
         if (ev === 'error') {
           throw Object.assign(new Error(d.message || '生成回复失败'), {
             fallback: d.fallback,
@@ -1823,7 +1862,7 @@ function App() {
         }
       }
     }
-  }, [replaceDraft, scheduleDraftThinkingIndicator, updateDraft])
+  }, [applyConversationSummary, replaceDraft, scheduleDraftThinkingIndicator, updateDraft])
 
   const handleStop = useCallback(async () => {
     const cid = activeId
@@ -1995,7 +2034,9 @@ function App() {
                 <div key={c.id} className={`convo-item ${c.id === activeId ? 'convo-item--active' : ''}`}>
                   <button type="button" className="convo-select" onClick={() => { setActiveId(c.id); setSidebarOpen(false) }}>
                     <div className="convo-item-body">
-                      <strong>{c.title}</strong>
+                      <strong className={`convo-title ${pendingTitles[c.id] ? 'convo-title--pending' : ''}`.trim()} aria-label={pendingTitles[c.id] ? '正在生成标题' : c.title}>
+                        {pendingTitles[c.id] ? <PendingTitle compact /> : c.title}
+                      </strong>
                       <span>{c.preview || '等待第一条消息…'}</span>
                     </div>
                   </button>
@@ -2020,7 +2061,9 @@ function App() {
               {sidebarCollapsed ? '☰' : '⟨'}
             </button>
             <div className="chat-header-copy">
-              <h2>{activeConv?.title ?? '新的对话'}</h2>
+              <h2 className={`chat-header-title ${activeConv && pendingTitles[activeConv.id] ? 'chat-header-title--pending' : ''}`.trim()} aria-label={activeConv && pendingTitles[activeConv.id] ? '正在生成标题' : (activeConv?.title ?? '新的对话')}>
+                {activeConv && pendingTitles[activeConv.id] ? <PendingTitle /> : (activeConv?.title ?? '新的对话')}
+              </h2>
               <p>福州大学知识库 · 联网搜索 · 教务系统</p>
             </div>
           </div>

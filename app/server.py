@@ -74,6 +74,8 @@ active_stream_stops: Dict[tuple[str, str], Event] = {}
 active_stream_stops_lock = Lock()
 pending_title_updates: Dict[tuple[str, str], asyncio.Task[None]] = {}
 pending_title_updates_lock = Lock()
+conversation_event_subscribers: Dict[str, List[asyncio.Queue[Dict[str, Any]]]] = {}
+conversation_event_subscribers_lock = Lock()
 
 
 class SecurityHeadersMiddleware:
@@ -757,26 +759,78 @@ def clear_active_stream_stop(user_id: str, conversation_id: str, stop_event: Eve
             active_stream_stops.pop(stream_key, None)
 
 
+def register_conversation_event_subscriber(user_id: str) -> asyncio.Queue[Dict[str, Any]]:
+    queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue(maxsize=8)
+    with conversation_event_subscribers_lock:
+        conversation_event_subscribers.setdefault(user_id, []).append(queue)
+    return queue
+
+
+def unregister_conversation_event_subscriber(user_id: str, queue: asyncio.Queue[Dict[str, Any]]) -> None:
+    with conversation_event_subscribers_lock:
+        queues = conversation_event_subscribers.get(user_id)
+        if not queues:
+            return
+        conversation_event_subscribers[user_id] = [item for item in queues if item is not queue]
+        if not conversation_event_subscribers[user_id]:
+            conversation_event_subscribers.pop(user_id, None)
+
+
+def publish_conversation_event(user_id: str, event: str, data: Dict[str, Any]) -> None:
+    with conversation_event_subscribers_lock:
+        queues = list(conversation_event_subscribers.get(user_id, []))
+    if not queues:
+        return
+    payload = {"event": event, "data": data}
+    for queue in queues:
+        try:
+            queue.put_nowait(payload)
+        except asyncio.QueueFull:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                queue.put_nowait(payload)
+            except asyncio.QueueFull:
+                logger.debug("Dropping conversation event for %s due to a full subscriber queue", user_id)
+
+
 async def update_conversation_title_in_background(
     user_id: str,
     conversation_id: str,
     messages: List[Dict[str, Any]],
 ) -> None:
+    summary: Dict[str, Any] | None = None
     try:
-        next_title = await summarize_title(messages)
         conversation = chat_store.get_conversation(user_id, conversation_id)
-        if conversation is None or conversation.get("title") != "新对话":
+        if conversation is None:
             return
-        updated = chat_store.update_conversation(
-            user_id,
-            conversation_id,
-            title=next_title,
-            updated_at=conversation["updated_at"],
-        )
-        if updated is None:
-            logger.warning("Conversation disappeared before title update completed: %s", conversation_id)
+        if conversation.get("title") != "新对话":
+            summary = make_conversation_summary(conversation)
+            return
+
+        next_title = await summarize_title(messages)
+        if next_title != "新对话":
+            updated = chat_store.update_conversation(
+                user_id,
+                conversation_id,
+                title=next_title,
+                updated_at=conversation["updated_at"],
+            )
+            if updated is None:
+                logger.warning("Conversation disappeared before title update completed: %s", conversation_id)
+            else:
+                summary = make_conversation_summary(updated)
     except Exception:
         logger.exception("Async title update failed for %s", conversation_id)
+    finally:
+        if summary is None:
+            conversation = chat_store.get_conversation(user_id, conversation_id)
+            if conversation is not None:
+                summary = make_conversation_summary(conversation)
+        if summary is not None:
+            publish_conversation_event(user_id, "title", {"conversation": summary})
 
 
 def schedule_conversation_title_update(
@@ -832,7 +886,7 @@ async def persist_assistant_message(
     model: str,
     content: str,
     parts: List[Dict[str, Any]],
-) -> tuple[Dict[str, Any], Dict[str, Any]]:
+) -> tuple[Dict[str, Any], Dict[str, Any], bool]:
     normalized_parts = [dict(part) for part in parts]
     normalized_content = content.strip()
     if not normalized_content and not normalized_parts:
@@ -848,9 +902,10 @@ async def persist_assistant_message(
     c2 = chat_store.append_message(user_id, conversation_id, amsg, model=model)
     if c2 is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    if c2["title"] == "新对话":
+    title_pending = c2["title"] == "新对话"
+    if title_pending:
         schedule_conversation_title_update(user_id, conversation_id, c2["messages"])
-    return amsg, make_conversation_summary(c2)
+    return amsg, make_conversation_summary(c2), title_pending
 
 
 def refresh_edu_session_status(token: str) -> Dict[str, Any] | None:
@@ -1061,6 +1116,27 @@ def list_models() -> List[Dict[str, str]]:
 @app.get("/api/conversations", response_model=List[ConversationSummary])
 def list_conversations(user: AuthUser = Depends(require_auth)):
     return chat_store.list_conversations(user.user_id)
+
+
+@app.get("/api/conversations/events")
+async def stream_conversation_events(request: Request, user: AuthUser = Depends(require_auth)):
+    queue = register_conversation_event_subscriber(user.user_id)
+
+    async def event_stream() -> AsyncIterator[bytes]:
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield b": keep-alive\n\n"
+                    continue
+                yield serialize_event(payload["event"], payload["data"])
+        finally:
+            unregister_conversation_event_subscriber(user.user_id, queue)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.post("/api/conversations", response_model=ConversationRecord)
@@ -1303,8 +1379,13 @@ async def create_message(
             atxt = finalize_stream_text(atxt, final_ai_text, parts)
             if stopped:
                 mark_running_tool_parts_stopped(parts)
-            amsg, summary = await persist_assistant_message(user.user_id, cid, sel, atxt, parts)
-            final_payload = {"message": amsg, "conversation": summary, "stopped": stopped}
+            amsg, summary, title_pending = await persist_assistant_message(user.user_id, cid, sel, atxt, parts)
+            final_payload = {
+                "message": amsg,
+                "conversation": summary,
+                "stopped": stopped,
+                "title_pending": title_pending,
+            }
             return final_payload
 
         try:
