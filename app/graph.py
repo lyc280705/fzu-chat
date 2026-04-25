@@ -12,10 +12,13 @@
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 import json
+import logging
 import os
 from pathlib import Path
 import re
 import requests
+import ssl
+import tempfile
 from threading import Lock
 from typing import Any, Dict, List
 from urllib.parse import urlparse
@@ -35,6 +38,14 @@ from langgraph.graph import END, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from .security_utils import ensure_private_dir, ensure_private_file, env_flag
+
+try:
+    import certifi
+except ImportError:  # pragma: no cover - requests normally installs certifi.
+    certifi = None
+
+
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 FAISS_DIR = BASE_DIR / "faiss" / "fzu_chat"
@@ -66,8 +77,11 @@ JWCH_LOCATE_DATE_RE = re.compile(
     r'var\s+week\s*=\s*"(?P<week>\d+)".*?var\s+xn\s*=\s*"(?P<year>\d{4})".*?var\s+xq\s*=\s*"(?P<term>\d{2})"',
     re.S,
 )
+JWCH_LOCATE_DATE_EXTRA_CA_PATH = BASE_DIR / "certs" / "digicert_basic_ov_g2_tls_cn_rsa4096_sha256_2022_ca1.pem"
+JWCH_LOCATE_DATE_CA_BUNDLE_PATH = Path(tempfile.gettempdir()) / "fzu_chat_jwch_locate_date_ca_bundle.pem"
 WEEK_LOCATE_CACHE: Dict[str, Any] = {}
 WEEK_LOCATE_CACHE_LOCK = Lock()
+JWCH_LOCATE_DATE_CA_BUNDLE_LOCK = Lock()
 
 
 def reset_search_citation_counter() -> None:
@@ -109,8 +123,48 @@ def _format_teaching_week_context(week: Any, year: Any, term: Any) -> str:
     return f"第{normalized_week}周"
 
 
+def _resolve_jwch_locate_date_verify_path() -> str | bool:
+    source_paths: List[Path] = []
+
+    if certifi is not None:
+        certifi_path = Path(certifi.where())
+        if certifi_path.is_file():
+            source_paths.append(certifi_path)
+
+    default_verify_paths = ssl.get_default_verify_paths()
+    if default_verify_paths.cafile:
+        default_cafile_path = Path(default_verify_paths.cafile)
+        if default_cafile_path.is_file() and default_cafile_path not in source_paths:
+            source_paths.append(default_cafile_path)
+
+    if JWCH_LOCATE_DATE_EXTRA_CA_PATH.is_file() and JWCH_LOCATE_DATE_EXTRA_CA_PATH not in source_paths:
+        source_paths.append(JWCH_LOCATE_DATE_EXTRA_CA_PATH)
+
+    if not source_paths:
+        if default_verify_paths.capath and Path(default_verify_paths.capath).is_dir():
+            return default_verify_paths.capath
+        return True
+
+    if len(source_paths) == 1:
+        return str(source_paths[0])
+
+    with JWCH_LOCATE_DATE_CA_BUNDLE_LOCK:
+        if not JWCH_LOCATE_DATE_CA_BUNDLE_PATH.exists():
+            with JWCH_LOCATE_DATE_CA_BUNDLE_PATH.open("wb") as bundle_file:
+                for source_path in source_paths:
+                    cert_bytes = source_path.read_bytes()
+                    bundle_file.write(cert_bytes)
+                    if not cert_bytes.endswith(b"\n"):
+                        bundle_file.write(b"\n")
+        return str(JWCH_LOCATE_DATE_CA_BUNDLE_PATH)
+
+
 def _fetch_jwch_locate_date() -> Dict[str, Any]:
-    response = requests.get(JWCH_LOCATE_DATE_URL, timeout=JWCH_LOCATE_DATE_TIMEOUT)
+    response = requests.get(
+        JWCH_LOCATE_DATE_URL,
+        timeout=JWCH_LOCATE_DATE_TIMEOUT,
+        verify=_resolve_jwch_locate_date_verify_path(),
+    )
     response.raise_for_status()
     match = JWCH_LOCATE_DATE_RE.search(response.text)
     if not match:
@@ -135,6 +189,7 @@ def get_current_teaching_week_context() -> str:
     try:
         fresh = _fetch_jwch_locate_date()
     except Exception:
+        logger.warning("Failed to refresh JWCH locate date; falling back to cached teaching week when available.", exc_info=True)
         if isinstance(cached_at, datetime):
             weeks_delta = max(((_week_anchor(now) - _week_anchor(cached_at)).days // 7), 0)
             return _format_teaching_week_context(
