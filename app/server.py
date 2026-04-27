@@ -19,6 +19,7 @@ from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Re
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -32,7 +33,7 @@ from .auth import (
 )
 from .chat_store import chat_store
 from .edu_tools import set_current_edu_session
-from .graph import CHAT_MODEL_OPTIONS, DEFAULT_CHAT_MODEL, build_graph, reset_search_citation_counter, summary_chain
+from .graph import CHAT_MODEL_OPTIONS, DEFAULT_CHAT_MODEL, KIMI_CHAT_MODEL, build_graph, reset_search_citation_counter, summary_chain
 from .jwch_client import JwchClient, JwchLoginError, JwchSessionError
 from .memory_store import user_memory_store
 from .security_utils import mask_user_id
@@ -345,6 +346,7 @@ class MessageRecord(BaseModel):
     content: str
     timestamp: str
     parts: List[Dict[str, Any]] = Field(default_factory=list)
+    reasoning_content: str | None = None
     feedback: Literal["up", "down"] | None = None
     is_error_fallback: bool = False
 
@@ -809,14 +811,32 @@ def iter_update_messages(update: Any) -> List[Any]:
     return messages
 
 
-def build_graph_input_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-    history: List[Dict[str, str]] = []
+def extract_reasoning_content(message: Any) -> str:
+    additional_kwargs = getattr(message, "additional_kwargs", None)
+    if not isinstance(additional_kwargs, dict) or "reasoning_content" not in additional_kwargs:
+        return ""
+    value = additional_kwargs.get("reasoning_content")
+    if isinstance(value, (str, list)):
+        return extract_text_content(value)
+    return str(value or "")
+
+
+def build_graph_input_messages(messages: List[Dict[str, Any]], model: str) -> List[Any]:
+    history: List[Any] = []
     for msg in messages:
         role = msg.get("role")
         content = (msg.get("content") or "").strip()
         if role not in ("user", "assistant") or not content or msg.get("is_error_fallback"):
             continue
-        history.append({"role": role, "content": content})
+        if role == "user":
+            history.append(HumanMessage(content=content))
+            continue
+
+        reasoning_content = msg.get("reasoning_content")
+        additional_kwargs: Dict[str, Any] = {}
+        if reasoning_content is not None or model == KIMI_CHAT_MODEL:
+            additional_kwargs["reasoning_content"] = str(reasoning_content or "")
+        history.append(AIMessage(content=content, additional_kwargs=additional_kwargs))
     return history
 
 
@@ -999,9 +1019,11 @@ async def persist_assistant_message(
     model: str,
     content: str,
     parts: List[Dict[str, Any]],
+    reasoning_content: str = "",
 ) -> tuple[Dict[str, Any], Dict[str, Any], bool]:
     normalized_parts = [dict(part) for part in parts]
     normalized_content = content.strip()
+    normalized_reasoning_content = reasoning_content.strip() or None
     if not normalized_content and not normalized_parts:
         normalized_content = "已停止响应。"
         normalized_parts = [{"type": "text", "content": normalized_content}]
@@ -1010,6 +1032,7 @@ async def persist_assistant_message(
         "id": str(uuid4()), "role": "assistant", "content": normalized_content,
         "timestamp": now_iso(),
         "parts": normalized_parts,
+        "reasoning_content": normalized_reasoning_content,
         "feedback": None,
     }
     c2 = chat_store.append_message(user_id, conversation_id, amsg, model=model)
@@ -1515,7 +1538,7 @@ async def create_message(
     conv = chat_store.append_message(user.user_id, cid, umsg, model=sel)
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    graph_messages = build_graph_input_messages(conv["messages"])
+    graph_messages = build_graph_input_messages(conv["messages"], sel)
 
     sess = refresh_edu_session_status(user.token) or get_session(user.token)
     edu_ctx = {
@@ -1540,6 +1563,7 @@ async def create_message(
         reset_search_citation_counter()
         atxt = ""
         final_ai_text = ""
+        final_reasoning_text = ""
         pending: Dict[str, Dict[str, Any]] = {}
         parts: List[Dict[str, Any]] = []
         final_payload: Dict[str, Any] | None = None
@@ -1553,7 +1577,14 @@ async def create_message(
             atxt = finalize_stream_text(atxt, final_ai_text, parts)
             if stopped:
                 mark_running_tool_parts_stopped(parts)
-            amsg, summary, title_pending = await persist_assistant_message(user.user_id, cid, sel, atxt, parts)
+            amsg, summary, title_pending = await persist_assistant_message(
+                user.user_id,
+                cid,
+                sel,
+                atxt,
+                parts,
+                reasoning_content=final_reasoning_text,
+            )
             final_payload = {
                 "message": amsg,
                 "conversation": summary,
@@ -1592,6 +1623,9 @@ async def create_message(
                         atxt += delta
                         append_text_part(parts, delta)
                         yield serialize_event("chunk", {"delta": delta})
+                    reasoning_delta = unseen_text(final_reasoning_text, extract_reasoning_content(mc))
+                    if reasoning_delta:
+                        final_reasoning_text += reasoning_delta
                     continue
 
                 if mode != "updates":
@@ -1644,6 +1678,10 @@ async def create_message(
                     candidate = extract_text_content(getattr(mc, "content", ""))
                     if len(candidate) > len(final_ai_text):
                         final_ai_text = candidate
+                    candidate_reasoning = extract_reasoning_content(mc)
+                    reasoning_delta = unseen_text(final_reasoning_text, candidate_reasoning)
+                    if reasoning_delta:
+                        final_reasoning_text += reasoning_delta
 
                 if stop_event.is_set():
                     stream_stopped = True

@@ -74,8 +74,17 @@ class ChatStore:
                 ON messages (conversation_id, position);
                 """
             )
+            self._ensure_message_columns()
             self.conn.commit()
             self._harden_storage_files()
+
+    def _ensure_message_columns(self) -> None:
+        columns = {
+            row["name"]
+            for row in self.conn.execute("PRAGMA table_info(messages)").fetchall()
+        }
+        if "reasoning_content" not in columns:
+            self.conn.execute("ALTER TABLE messages ADD COLUMN reasoning_content TEXT")
 
     def _clear_legacy_json(self) -> None:
         for path in STORAGE_DIR.glob("**/conversations.json*"):
@@ -104,6 +113,7 @@ class ChatStore:
             "content": row["content"],
             "timestamp": row["timestamp"],
             "parts": json.loads(row["parts"] or "[]"),
+            "reasoning_content": row["reasoning_content"] if "reasoning_content" in row.keys() else None,
             "feedback": row["feedback"],
             "is_error_fallback": bool(row["is_error_fallback"]),
         }
@@ -122,7 +132,7 @@ class ChatStore:
     def _get_messages(self, cur: sqlite3.Cursor, conversation_id: str) -> List[Dict[str, Any]]:
         cur.execute(
             """
-            SELECT id, role, content, timestamp, parts, feedback, is_error_fallback
+            SELECT id, role, content, timestamp, parts, reasoning_content, feedback, is_error_fallback
             FROM messages
             WHERE conversation_id = ?
             ORDER BY position ASC
@@ -176,8 +186,8 @@ class ChatStore:
         cur.execute(
             """
             INSERT INTO messages (
-                id, conversation_id, position, role, content, timestamp, parts, feedback, is_error_fallback
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, conversation_id, position, role, content, timestamp, parts, reasoning_content, feedback, is_error_fallback
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message["id"],
@@ -187,6 +197,7 @@ class ChatStore:
                 message["content"],
                 message["timestamp"],
                 json.dumps(message.get("parts", []), ensure_ascii=False),
+                message.get("reasoning_content"),
                 message.get("feedback"),
                 int(bool(message.get("is_error_fallback", False))),
             ),

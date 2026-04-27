@@ -28,12 +28,13 @@ from langchain_classic.retrievers.multi_vector import MultiVectorRetriever
 from langchain_classic.storage import LocalFileStore
 from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain_core.messages import SystemMessage, ToolMessage, trim_messages
+from langchain_core.messages import AIMessage, AIMessageChunk, SystemMessage, ToolMessage, trim_messages
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
+import langchain_openai.chat_models.base as langchain_openai_base
 from langgraph.graph import END, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
@@ -46,6 +47,10 @@ except ImportError:  # pragma: no cover - requests normally installs certifi.
 
 
 logger = logging.getLogger(__name__)
+
+_ORIGINAL_CONVERT_DICT_TO_MESSAGE = langchain_openai_base._convert_dict_to_message
+_ORIGINAL_CONVERT_MESSAGE_TO_DICT = langchain_openai_base._convert_message_to_dict
+_ORIGINAL_CONVERT_DELTA_TO_MESSAGE_CHUNK = langchain_openai_base._convert_delta_to_message_chunk
 
 BASE_DIR = Path(__file__).resolve().parent
 FAISS_DIR = BASE_DIR / "faiss" / "fzu_chat"
@@ -82,6 +87,56 @@ JWCH_LOCATE_DATE_CA_BUNDLE_PATH = Path(tempfile.gettempdir()) / "fzu_chat_jwch_l
 WEEK_LOCATE_CACHE: Dict[str, Any] = {}
 WEEK_LOCATE_CACHE_LOCK = Lock()
 JWCH_LOCATE_DATE_CA_BUNDLE_LOCK = Lock()
+
+
+def _normalize_reasoning_content(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: List[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if isinstance(item, dict):
+                text = item.get("text") or item.get("content")
+                if text:
+                    parts.append(str(text))
+        return "".join(parts)
+    return str(value)
+
+
+def _patch_langchain_openai_reasoning_support() -> None:
+    if getattr(langchain_openai_base, "_fzu_reasoning_content_patch_applied", False):
+        return
+
+    def patched_convert_dict_to_message(_dict: Any) -> Any:
+        message = _ORIGINAL_CONVERT_DICT_TO_MESSAGE(_dict)
+        if isinstance(message, AIMessage) and isinstance(_dict, dict) and "reasoning_content" in _dict:
+            message.additional_kwargs["reasoning_content"] = _normalize_reasoning_content(_dict.get("reasoning_content"))
+        return message
+
+    def patched_convert_message_to_dict(message: Any, api: str = "chat/completions") -> Dict[str, Any]:
+        message_dict = _ORIGINAL_CONVERT_MESSAGE_TO_DICT(message, api=api)
+        if isinstance(message, AIMessage) and "reasoning_content" in message.additional_kwargs:
+            message_dict["reasoning_content"] = _normalize_reasoning_content(message.additional_kwargs.get("reasoning_content"))
+        return message_dict
+
+    def patched_convert_delta_to_message_chunk(_dict: Any, default_class: Any) -> Any:
+        chunk = _ORIGINAL_CONVERT_DELTA_TO_MESSAGE_CHUNK(_dict, default_class)
+        if isinstance(chunk, AIMessageChunk) and isinstance(_dict, dict) and "reasoning_content" in _dict:
+            chunk.additional_kwargs["reasoning_content"] = _normalize_reasoning_content(_dict.get("reasoning_content"))
+        return chunk
+
+    langchain_openai_base._convert_dict_to_message = patched_convert_dict_to_message
+    langchain_openai_base._convert_message_to_dict = patched_convert_message_to_dict
+    langchain_openai_base._convert_delta_to_message_chunk = patched_convert_delta_to_message_chunk
+    langchain_openai_base._fzu_reasoning_content_patch_applied = True
+
+
+_patch_langchain_openai_reasoning_support()
 
 
 def reset_search_citation_counter() -> None:
@@ -632,6 +687,7 @@ def build_chat_llm(
     }
     if stop:
         init_kwargs["stop_sequences"] = stop
+
     extra_body = build_thinking_config(thinking_enabled)
     if thinking_type:
         extra_body["thinking"] = {"type": thinking_type}

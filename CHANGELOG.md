@@ -3,6 +3,60 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v3.1] - 2026-04-27
+
+FZU-Chat v3.1 focuses on Kimi K2.6 compatibility and release-quality follow-up after v3.0. This release restores true multi-turn thinking support for Kimi on Huawei MaaS by preserving provider-specific reasoning metadata across storage, streaming, and history replay, and also moves conversation title summarization to qwen3-30b-a3b for more stable short titles.
+
+### Highlights
+
+- True Kimi K2.6 thinking-mode support. The backend now preserves `reasoning_content` from Kimi responses, replays it in later assistant history messages, and patches the current LangChain OpenAI adapter gap so Huawei MaaS no longer rejects multi-turn conversations with missing reasoning metadata.
+- Compatible history persistence. Assistant messages can now store reasoning metadata alongside normal content and tool-card parts, allowing new Kimi conversations to continue across turns without losing the model's required context.
+- Safer backward compatibility. Older conversations that do not yet contain stored reasoning metadata are replayed with an empty `reasoning_content` field for Kimi, preventing the previous `ModelArts.81001` validation error on follow-up turns.
+- Updated title model. Conversation title summarization now uses `qwen3-30b-a3b`, improving stability while keeping the existing short-title prompt behavior.
+
+### Included in this release
+
+- A compatibility patch for `langchain_openai` message conversion so `reasoning_content` is parsed from MaaS responses, kept on streamed assistant chunks, and serialized back into later Kimi requests.
+- Message-store schema evolution and server-side persistence for assistant reasoning metadata.
+- History replay logic that sends `AIMessage` objects with `reasoning_content` back to Kimi instead of flattening every prior assistant message to plain text.
+- Title-summary model update from the earlier qwen3 title route to `qwen3-30b-a3b`.
+
+### Validation
+
+- python3 -m py_compile app/graph.py app/chat_store.py app/server.py
+- docker compose up -d --build
+- curl -sS http://127.0.0.1/api/health
+- docker exec fzu-chat python -c "from app.graph import KIMI_CHAT_MODEL, build_chat_llm; from langchain_core.messages import HumanMessage; llm=build_chat_llm(KIMI_CHAT_MODEL, temperature=0.1, streaming=False, thinking_enabled=True); first=llm.invoke([HumanMessage(content='请只用一句话回答：1+1等于几？')]); second=llm.invoke([HumanMessage(content='请只用一句话回答：1+1等于几？'), first, HumanMessage(content='继续只用一句话说明原因。')]); print(bool((first.additional_kwargs.get('reasoning_content') or '').strip())); print(second.content)"
+
+---
+
+## 福大灵犀 v3.1
+
+福大灵犀 v3.1 重点修复了 Kimi K2.6 在华为云 MaaS 上的思考模式兼容性问题，并补齐了 v3.0 后的版本跟进。本次版本让 Kimi 的多轮思考模式真正可用：系统会保存并回放 `reasoning_content`，不再因为缺少推理字段而在后续轮次被 MaaS 拒绝；同时将对话标题总结模型切换为 `qwen3-30b-a3b`。
+
+### 版本亮点
+
+- 真正支持 Kimi K2.6 思考模式。后端现在会保留 Kimi 返回的 `reasoning_content`，在后续轮次把它重新带回 assistant 历史消息，并补齐当前 LangChain OpenAI 适配层缺失的字段传递，使 MaaS 不再因缺少推理元数据而拒绝多轮对话。
+- 历史消息兼容持久化。assistant 消息除了正文和工具卡片外，现在还能存储推理元数据，新生成的 Kimi 对话可以在多轮之间持续保留模型所需上下文。
+- 旧会话兼容兜底。对于还没有保存过推理字段的旧会话，系统会在回放给 Kimi 时补一个空的 `reasoning_content`，避免再次触发 `ModelArts.81001` 这类参数校验错误。
+- 标题模型更新。对话标题总结模型已切换到 `qwen3-30b-a3b`，在保留现有短标题提示词行为的前提下提高稳定性。
+
+### 本次发布包含
+
+- 为 `langchain_openai` 增加兼容补丁，使 `reasoning_content` 能从 MaaS 响应中被解析、在流式 assistant chunk 中保留，并在后续 Kimi 请求里重新序列化。
+- 消息存储结构演进，以及服务端对 assistant 推理元数据的持久化能力。
+- 历史回放逻辑改为向 Kimi 发送带 `reasoning_content` 的 `AIMessage`，而不是把所有 assistant 历史都压平成普通文本。
+- 标题总结模型更新为 `qwen3-30b-a3b`。
+
+### 验证
+
+- python3 -m py_compile app/graph.py app/chat_store.py app/server.py
+- docker compose up -d --build
+- curl -sS http://127.0.0.1/api/health
+- docker exec fzu-chat python -c "from app.graph import KIMI_CHAT_MODEL, build_chat_llm; from langchain_core.messages import HumanMessage; llm=build_chat_llm(KIMI_CHAT_MODEL, temperature=0.1, streaming=False, thinking_enabled=True); first=llm.invoke([HumanMessage(content='请只用一句话回答：1+1等于几？')]); second=llm.invoke([HumanMessage(content='请只用一句话回答：1+1等于几？'), first, HumanMessage(content='继续只用一句话说明原因。')]); print(bool((first.additional_kwargs.get('reasoning_content') or '').strip())); print(second.content)"
+
+---
+
 ## [v3.0] - 2026-04-27
 
 FZU-Chat v3.0 focuses on privacy controls, security hardening, and more explicit user-facing state management. This release adds legal-document acceptance during login, a dedicated privacy and data-management area, stronger protection for educational-system sessions and browser write requests, and clearer rate-limit feedback for expensive chat actions.

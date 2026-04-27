@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-当前已标记版本：[v3.0](CHANGELOG.md)
+当前已标记版本：[v3.1](CHANGELOG.md)
 
 版本记录：[CHANGELOG.md](CHANGELOG.md)
 
