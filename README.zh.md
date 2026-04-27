@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-当前已标记版本：[v3.1](CHANGELOG.md)
+当前已标记版本：[v3.2](CHANGELOG.md)
 
 版本记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -24,7 +24,7 @@
 - **教务会话安全清理**：登录时仅在服务端暂存教务系统会话 Cookie，不保存教务密码；退出登录会同时清除站点登录态和暂存的教务会话 Cookie
 - **ChatGPT 风格界面**：现代暗色主题，侧边栏历史记录、快捷操作、流式回复
 - **丰富的工具卡片**：可视化工具调用过程，结构化展示成绩表格和课表
-- **多模型支持**：华为云 MaaS 的 GLM-5.1、Kimi K2.6、DeepSeek-V3.2 可选，标题总结内部使用 Qwen3-32B
+- **多模型支持**：华为云 MaaS 的 GLM-5.1、Kimi K2.6、DeepSeek-V3.2 可选，标题总结内部使用 qwen3-30b-a3b
 - **知识库 + 网络搜索**：FAISS 本地检索 + 博查网络搜索兜底
 - **Docker 部署**：多阶段构建，React 前端 + Python 后端
 

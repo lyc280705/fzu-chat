@@ -772,6 +772,14 @@ def append_text_part(parts: List[Dict[str, Any]], delta: str) -> None:
     parts.append({"type": "text", "content": delta})
 
 
+def should_emit_stream_delta(existing: str, delta: str) -> bool:
+    if not delta:
+        return False
+    if delta.strip():
+        return True
+    return bool(existing.strip())
+
+
 def unseen_text(existing: str, incoming: str) -> str:
     if not incoming:
         return ""
@@ -994,11 +1002,13 @@ def schedule_conversation_title_update(
 def finalize_stream_text(atxt: str, final_ai_text: str, parts: List[Dict[str, Any]]) -> str:
     if final_ai_text:
         if not atxt:
+            if not should_emit_stream_delta(atxt, final_ai_text):
+                return atxt
             atxt = final_ai_text
             append_text_part(parts, final_ai_text)
         elif final_ai_text.startswith(atxt):
             suffix = final_ai_text[len(atxt):]
-            if suffix:
+            if should_emit_stream_delta(atxt, suffix):
                 atxt += suffix
                 append_text_part(parts, suffix)
     return atxt
@@ -1619,7 +1629,7 @@ async def create_message(
                     if mc_type == "ToolMessage" or not mc_type.startswith("AIMessage"):
                         continue
                     delta = unseen_text(atxt, extract_text_content(getattr(mc, "content", "")))
-                    if delta:
+                    if should_emit_stream_delta(atxt, delta):
                         atxt += delta
                         append_text_part(parts, delta)
                         yield serialize_event("chunk", {"delta": delta})

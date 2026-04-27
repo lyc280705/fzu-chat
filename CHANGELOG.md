@@ -3,6 +3,58 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v3.2] - 2026-04-28
+
+FZU-Chat v3.2 focuses on polishing post-v3.1 chat behavior. This release fixes a model-selection regression when users start a new conversation while another one is still streaming, and moves the blank pre-tool-call chunk fix fully into the backend so Kimi's leading whitespace deltas are suppressed at the source instead of being hidden in the frontend.
+
+### Highlights
+
+- Backend-first Kimi stream cleanup. The server now ignores leading whitespace-only assistant deltas before any visible reply text has been emitted, preventing empty markdown containers ahead of tool cards without relying on frontend filtering.
+- Stable model switching during concurrent streams. Creating or opening a new conversation while another conversation is still streaming no longer resets the model selector to the active stream's model.
+- Cleaner responsibility split. The blank pre-tool-call rendering issue is now solved in the streaming pipeline itself, while the frontend keeps rendering ordinary whitespace and markdown content normally.
+
+### Included in this release
+
+- A server-side stream-delta gate that suppresses meaningless leading whitespace chunks but preserves normal spaces and newlines once visible assistant text has started.
+- A narrower model-sync effect in the chat composer so only the active conversation's model can update the current selector.
+- Removal of the temporary frontend whitespace workaround that had been added while diagnosing the Kimi tool-call issue.
+
+### Validation
+
+- cd frontend && npm run build
+- python3 -m py_compile app/server.py
+- docker compose up -d --build
+- docker exec fzu-chat python -c "from app.server import should_emit_stream_delta; assert should_emit_stream_delta('', '你好'); assert not should_emit_stream_delta('', '  \\n\\t'); assert should_emit_stream_delta('已输出正文', '  \\n'); print('ok')"
+- curl -sS http://127.0.0.1/api/health
+
+---
+
+## 福大灵犀 v3.2
+
+福大灵犀 v3.2 继续收敛 v3.1 之后的对话体验问题。本次版本修复了“有对话正在流式输出时，新建对话无法稳定切换模型”的前端状态回退问题，并把 Kimi 在工具调用前出现空白块的问题彻底下沉到后端处理，从源头抑制无意义的前导空白 chunk，而不是继续依赖前端兜底隐藏。
+
+### 版本亮点
+
+- 后端根修复 Kimi 空白 chunk。服务端现在会在 assistant 还没输出任何可见正文前，忽略纯空白的流式增量，避免工具卡片前再出现空白 markdown 容器，同时不影响正常正文中的空格和换行。
+- 并发流式场景下模型切换恢复稳定。当一个旧对话仍在流式输出时，新建或切换到其他对话不再被旧对话的模型回写覆盖。
+- 前后端职责重新收敛。空白块问题已经在流式管线根上解决，前端恢复普通渲染逻辑，不再承担专门掩盖这类异常 chunk 的职责。
+
+### 本次发布包含
+
+- 服务端新增流式 delta 判定，抑制无意义的前导纯空白 chunk，同时保留已开始输出正文后的正常空格和换行。
+- 聊天输入区的模型同步 effect 收窄为只响应当前活动对话的模型变化。
+- 删除排查 Kimi 工具调用问题时临时加入的前端空白过滤兜底。
+
+### 验证
+
+- cd frontend && npm run build
+- python3 -m py_compile app/server.py
+- docker compose up -d --build
+- docker exec fzu-chat python -c "from app.server import should_emit_stream_delta; assert should_emit_stream_delta('', '你好'); assert not should_emit_stream_delta('', '  \\n\\t'); assert should_emit_stream_delta('已输出正文', '  \\n'); print('ok')"
+- curl -sS http://127.0.0.1/api/health
+
+---
+
 ## [v3.1] - 2026-04-27
 
 FZU-Chat v3.1 focuses on Kimi K2.6 compatibility and release-quality follow-up after v3.0. This release restores true multi-turn thinking support for Kimi on Huawei MaaS by preserving provider-specific reasoning metadata across storage, streaming, and history replay, and also moves conversation title summarization to qwen3-30b-a3b for more stable short titles.

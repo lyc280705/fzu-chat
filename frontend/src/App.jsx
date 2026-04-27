@@ -1680,6 +1680,10 @@ function App() {
 
   const activeConv = useMemo(() => conversations.find((c) => c.id === activeId) ?? null, [activeId, conversations])
   const activeMsgs = useMemo(() => normMsgs(msgStore[activeId]?.messages ?? []), [activeId, msgStore])
+  const activeConversationModel = useMemo(
+    () => (activeId ? (msgStore[activeId]?.model ?? activeConv?.model ?? '') : ''),
+    [activeConv, activeId, msgStore],
+  )
   const userId = user?.user_id ?? ''
   const needsEduRelogin = user?.student_type === 'undergraduate' && !user?.edu_authenticated
   const isActiveConversationStreaming = Boolean(activeId && streamingConversations[activeId])
@@ -1937,15 +1941,14 @@ function App() {
   // --- Sync model from active conversation ---
   useEffect(() => {
     if (!activeId) return
-    const m = msgStore[activeId]?.model ?? activeConv?.model
-    if (m && models.some((model) => model.id === m)) {
-      setSelModel(m)
+    if (activeConversationModel && models.some((model) => model.id === activeConversationModel)) {
+      setSelModel(activeConversationModel)
       return
     }
     if (models.length > 0) {
       setSelModel(models[0].id)
     }
-  }, [activeConv, activeId, models, msgStore])
+  }, [activeConversationModel, activeId, models])
 
   // --- Handlers ---
   const handleLogin = useCallback((u, eduErr) => { setUser(u); setEduError(eduErr); setError('') }, [])
