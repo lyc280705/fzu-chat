@@ -8,9 +8,11 @@ import logging
 import os
 from pathlib import Path
 import re
+import time
 from threading import Lock
 from threading import Event
 from typing import Any, AsyncIterator, Dict, Iterable, List, Literal
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
@@ -42,11 +44,35 @@ ASSETS_DIR = BASE_DIR / "png"
 MAX_TITLE_LENGTH = int(os.getenv("FZU_CHAT_MAX_TITLE_LENGTH", "20"))
 AUTH_COOKIE_NAME = os.getenv("FZU_CHAT_AUTH_COOKIE_NAME", "fzu_session")
 AUTH_COOKIE_SECURE_MODE = os.getenv("FZU_CHAT_AUTH_COOKIE_SECURE", "auto").strip().lower()
-AUTH_COOKIE_SAMESITE = os.getenv("FZU_CHAT_AUTH_COOKIE_SAMESITE", "lax").strip().lower()
+AUTH_COOKIE_SAMESITE = os.getenv("FZU_CHAT_AUTH_COOKIE_SAMESITE", "strict").strip().lower()
+EDU_SESSION_TTL = max(300, int(os.getenv("FZU_CHAT_EDU_SESSION_TTL", "14400")))
+LOGIN_RATE_LIMIT_WINDOW_SECONDS = max(60, int(os.getenv("FZU_CHAT_LOGIN_RATE_LIMIT_WINDOW", "900")))
+LOGIN_RATE_LIMIT_MAX_ATTEMPTS = max(1, int(os.getenv("FZU_CHAT_LOGIN_RATE_LIMIT_ATTEMPTS", "8")))
+EDU_RELOGIN_RATE_LIMIT_WINDOW_SECONDS = max(60, int(os.getenv("FZU_CHAT_EDU_RELOGIN_RATE_LIMIT_WINDOW", "600")))
+EDU_RELOGIN_RATE_LIMIT_MAX_ATTEMPTS = max(1, int(os.getenv("FZU_CHAT_EDU_RELOGIN_RATE_LIMIT_ATTEMPTS", "6")))
+CONVERSATION_CREATE_RATE_LIMIT_WINDOW_SECONDS = max(60, int(os.getenv("FZU_CHAT_CONVERSATION_CREATE_RATE_LIMIT_WINDOW", "300")))
+CONVERSATION_CREATE_RATE_LIMIT_MAX_ATTEMPTS = max(1, int(os.getenv("FZU_CHAT_CONVERSATION_CREATE_RATE_LIMIT_ATTEMPTS", "20")))
+MESSAGE_RATE_LIMIT_WINDOW_SECONDS = max(10, int(os.getenv("FZU_CHAT_MESSAGE_RATE_LIMIT_WINDOW", "60")))
+MESSAGE_RATE_LIMIT_MAX_ATTEMPTS = max(1, int(os.getenv("FZU_CHAT_MESSAGE_RATE_LIMIT_ATTEMPTS", "12")))
 API_NO_STORE = "no-store, no-cache, must-revalidate, max-age=0, private"
+BROWSER_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+CONTENT_SECURITY_POLICY = "; ".join(
+    [
+        "default-src 'self'",
+        "script-src 'self'",
+        "connect-src 'self'",
+        "img-src 'self' data:",
+        "style-src 'self' 'unsafe-inline'",
+        "font-src 'self' data:",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    ]
+)
 
 if AUTH_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
-    AUTH_COOKIE_SAMESITE = "lax"
+    AUTH_COOKIE_SAMESITE = "strict"
 
 MODEL_OPTIONS = dict(CHAT_MODEL_OPTIONS)
 
@@ -76,6 +102,8 @@ pending_title_updates: Dict[tuple[str, str], asyncio.Task[None]] = {}
 pending_title_updates_lock = Lock()
 conversation_event_subscribers: Dict[str, List[asyncio.Queue[Dict[str, Any]]]] = {}
 conversation_event_subscribers_lock = Lock()
+rate_limit_buckets: Dict[str, List[float]] = {}
+rate_limit_buckets_lock = Lock()
 
 
 class SecurityHeadersMiddleware:
@@ -94,8 +122,12 @@ class SecurityHeadersMiddleware:
                 headers = MutableHeaders(scope=message)
                 headers.setdefault("X-Content-Type-Options", "nosniff")
                 headers.setdefault("X-Frame-Options", "DENY")
-                headers.setdefault("Referrer-Policy", "no-referrer")
+                headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
                 headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+                headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+                headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+                headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
+                headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
                 if path.startswith("/api/"):
                     headers["Cache-Control"] = API_NO_STORE
                     headers["Pragma"] = "no-cache"
@@ -110,6 +142,66 @@ def _request_is_secure(request: Request) -> bool:
     if forwarded_proto:
         return forwarded_proto.split(",", 1)[0].strip().lower() == "https"
     return request.url.scheme == "https"
+
+
+def _request_origin(request: Request) -> str:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    scheme = forwarded_proto.split(",", 1)[0].strip().lower() if forwarded_proto else request.url.scheme
+    forwarded_host = request.headers.get("x-forwarded-host", "")
+    host = forwarded_host.split(",", 1)[0].strip() if forwarded_host else request.headers.get("host", request.url.netloc)
+    return f"{scheme}://{host}"
+
+
+def _is_same_origin_url(candidate: str, request: Request) -> bool:
+    parsed = urlparse(candidate)
+    expected = urlparse(_request_origin(request))
+    if not parsed.scheme or not parsed.netloc:
+        return False
+    return parsed.scheme.lower() == expected.scheme.lower() and parsed.netloc.lower() == expected.netloc.lower()
+
+
+def _enforce_browser_request_integrity(request: Request) -> None:
+    if request.method.upper() not in BROWSER_UNSAFE_METHODS:
+        return
+    if not request.url.path.startswith("/api/"):
+        return
+
+    sec_fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
+    if sec_fetch_site and sec_fetch_site not in {"same-origin", "same-site", "none"}:
+        raise HTTPException(status_code=403, detail="检测到跨站写操作，请从本站页面重试。")
+
+    origin = request.headers.get("origin", "").strip()
+    if origin and not _is_same_origin_url(origin, request):
+        raise HTTPException(status_code=403, detail="请求来源无效，请从本站页面重试。")
+
+    referer = request.headers.get("referer", "").strip()
+    if referer and not _is_same_origin_url(referer, request):
+        raise HTTPException(status_code=403, detail="请求来源无效，请从本站页面重试。")
+
+
+def _client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip() or "unknown"
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _rate_limit_key(prefix: str, request: Request, subject: str = "") -> str:
+    normalized_subject = re.sub(r"\s+", "", subject).strip()[:64] or "-"
+    return f"{prefix}:{_client_ip(request)}:{normalized_subject}"
+
+
+def _enforce_rate_limit(key: str, limit: int, window_seconds: int, detail: str) -> None:
+    now = time.time()
+    with rate_limit_buckets_lock:
+        recent = [ts for ts in rate_limit_buckets.get(key, []) if now - ts < window_seconds]
+        if len(recent) >= limit:
+            rate_limit_buckets[key] = recent
+            raise HTTPException(status_code=429, detail=detail)
+        recent.append(now)
+        rate_limit_buckets[key] = recent
 
 
 def _use_secure_cookie(request: Request) -> bool:
@@ -167,6 +259,15 @@ app.add_middleware(
 app.add_middleware(SecurityHeadersMiddleware)
 
 
+@app.middleware("http")
+async def enforce_browser_write_guards(request: Request, call_next):
+    try:
+        _enforce_browser_request_integrity(request)
+    except HTTPException as exc:
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    return await call_next(request)
+
+
 # ---------------------------------------------------------------------------
 # Auth dependency
 # ---------------------------------------------------------------------------
@@ -206,6 +307,7 @@ class LoginRequest(BaseModel):
     student_id: str = Field(min_length=1, max_length=30)
     password: str = Field(min_length=1, max_length=100)
     student_type: str = "undergraduate"
+    accepted_legal: bool = False
 
 
 class EduReloginRequest(BaseModel):
@@ -265,6 +367,17 @@ class ConversationSummary(BaseModel):
     updated_at: str
     preview: str
     message_count: int
+
+
+class UserDataSummary(BaseModel):
+    conversation_count: int
+    message_count: int
+    memory_count: int
+
+
+class UserDataResetResponse(BaseModel):
+    ok: bool = True
+    cleared: UserDataSummary
 
 
 # ---------------------------------------------------------------------------
@@ -917,17 +1030,15 @@ def refresh_edu_session_status(token: str) -> Dict[str, Any] | None:
     if not session.get("edu_authenticated"):
         return session
 
+    expires_at = float(session.get("edu_session_expires_at") or 0)
+    if expires_at and expires_at <= time.time():
+        logger.info("Edu session timed out for %s", mask_user_id(session.get("user_id", "")))
+        clear_edu_session(token, "教务连接已超时，请在侧栏重新连接教务。")
+        return get_session(token)
+
     cookies = session.get("edu_cookies") or []
     if not cookies:
-        update_session(
-            token,
-            {
-                "edu_authenticated": False,
-                "edu_cookies": None,
-                "edu_identifier": "",
-                "edu_status_message": "教务登录已过期，请在侧栏重新连接教务。",
-            },
-        )
+        clear_edu_session(token, "教务登录已过期，请在侧栏重新连接教务。")
         return get_session(token)
 
     try:
@@ -937,25 +1048,43 @@ def refresh_edu_session_status(token: str) -> Dict[str, Any] | None:
             session.get("edu_identifier", ""),
         )
         client.validate_session()
+        if not expires_at:
+            update_session(token, {"edu_session_expires_at": int(time.time()) + EDU_SESSION_TTL})
+            session = get_session(token) or session
         if session.get("edu_status_message"):
             update_session(token, {"edu_status_message": ""})
             return get_session(token)
         return session
     except JwchSessionError:
         logger.info("Edu session expired for %s", mask_user_id(session.get("user_id", "")))
-        update_session(
-            token,
-            {
-                "edu_authenticated": False,
-                "edu_cookies": None,
-                "edu_identifier": "",
-                "edu_status_message": "教务登录已过期，请在侧栏重新连接教务。",
-            },
-        )
+        clear_edu_session(token, "教务登录已过期，请在侧栏重新连接教务。")
         return get_session(token)
     except Exception as exc:
         logger.warning("Edu session validation failed: %s", type(exc).__name__)
         return session
+
+
+def _build_edu_session_state(client: JwchClient) -> Dict[str, Any]:
+    return {
+        "edu_authenticated": True,
+        "edu_cookies": [{"name": c.name, "value": c.value} for c in client.session.cookies],
+        "edu_identifier": client.identifier,
+        "edu_status_message": "",
+        "edu_session_expires_at": int(time.time()) + EDU_SESSION_TTL,
+    }
+
+
+def clear_edu_session(token: str, status_message: str = "") -> None:
+    update_session(
+        token,
+        {
+            "edu_authenticated": False,
+            "edu_cookies": None,
+            "edu_identifier": "",
+            "edu_status_message": status_message,
+            "edu_session_expires_at": None,
+        },
+    )
 
 
 def _resolve_memory_proposal(
@@ -992,6 +1121,16 @@ def healthcheck() -> Dict[str, str]:
 
 @app.post("/api/auth/login")
 def login(req: LoginRequest, request: Request) -> JSONResponse:
+    _enforce_rate_limit(
+        _rate_limit_key("auth-login", request, req.student_id),
+        LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
+        LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+        "登录尝试过于频繁，请稍后再试。",
+    )
+
+    if not req.accepted_legal:
+        raise HTTPException(status_code=400, detail="请先阅读并同意用户协议与隐私政策。")
+
     if req.student_type != "undergraduate":
         raise HTTPException(status_code=403, detail="当前仅支持本科生通过教务系统登录，研究生登录暂未开放。")
 
@@ -1016,8 +1155,7 @@ def login(req: LoginRequest, request: Request) -> JSONResponse:
         edu_authenticated=True,
         edu_cookies=[{"name": c.name, "value": c.value} for c in client.session.cookies],
     )
-    if client.identifier:
-        update_session(token, {"edu_identifier": client.identifier, "edu_status_message": ""})
+    update_session(token, _build_edu_session_state(client))
 
     response = JSONResponse(
         {
@@ -1035,7 +1173,14 @@ def login(req: LoginRequest, request: Request) -> JSONResponse:
 
 
 @app.post("/api/auth/edu-login")
-def relogin_edu(req: EduReloginRequest, user: AuthUser = Depends(require_auth)) -> JSONResponse:
+def relogin_edu(req: EduReloginRequest, request: Request, user: AuthUser = Depends(require_auth)) -> JSONResponse:
+    _enforce_rate_limit(
+        _rate_limit_key("edu-relogin", request, user.user_id),
+        EDU_RELOGIN_RATE_LIMIT_MAX_ATTEMPTS,
+        EDU_RELOGIN_RATE_LIMIT_WINDOW_SECONDS,
+        "教务重新连接尝试过于频繁，请稍后再试。",
+    )
+
     if user.student_type != "undergraduate":
         raise HTTPException(status_code=403, detail="当前账号不支持重新连接教务。")
 
@@ -1049,15 +1194,7 @@ def relogin_edu(req: EduReloginRequest, user: AuthUser = Depends(require_auth)) 
         logger.warning("Edu relogin unavailable for %s: %s", mask_user_id(user.user_id), type(exc).__name__)
         raise HTTPException(status_code=503, detail="教务系统连接失败，请稍后重试。") from exc
 
-    update_session(
-        user.token,
-        {
-            "edu_authenticated": True,
-            "edu_cookies": [{"name": c.name, "value": c.value} for c in client.session.cookies],
-            "edu_identifier": client.identifier,
-            "edu_status_message": "",
-        },
-    )
+    update_session(user.token, _build_edu_session_state(client))
 
     session = get_session(user.token) or {}
     return JSONResponse(
@@ -1081,6 +1218,7 @@ def logout(
 ) -> JSONResponse:
     token = _extract_auth_token(authorization, session_cookie)
     if token:
+        clear_edu_session(token)
         invalidate_session(token)
     response = JSONResponse({"ok": True})
     _clear_auth_cookie(response, request)
@@ -1106,6 +1244,28 @@ def auth_me(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
 @app.get("/api/models")
 def list_models() -> List[Dict[str, str]]:
     return [{"id": mid, "label": lbl} for mid, lbl in MODEL_OPTIONS.items()]
+
+
+@app.get("/api/user-data", response_model=UserDataSummary)
+def get_user_data_summary(user: AuthUser = Depends(require_auth)):
+    summary = chat_store.get_user_data_summary(user.user_id)
+    return {
+        **summary,
+        "memory_count": user_memory_store.count_active_memories(user.user_id),
+    }
+
+
+@app.delete("/api/user-data", response_model=UserDataResetResponse)
+def reset_user_data(user: AuthUser = Depends(require_auth)):
+    cleared_conversations = chat_store.delete_all_conversations(user.user_id)
+    cleared_memories = user_memory_store.purge_all_memories(user.user_id)
+    return {
+        "ok": True,
+        "cleared": {
+            **cleared_conversations,
+            "memory_count": cleared_memories,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1140,7 +1300,14 @@ async def stream_conversation_events(request: Request, user: AuthUser = Depends(
 
 
 @app.post("/api/conversations", response_model=ConversationRecord)
-def create_conversation(req: ConversationCreateRequest, user: AuthUser = Depends(require_auth)):
+def create_conversation(req: ConversationCreateRequest, request: Request, user: AuthUser = Depends(require_auth)):
+    _enforce_rate_limit(
+        _rate_limit_key("conversation-create", request, user.user_id),
+        CONVERSATION_CREATE_RATE_LIMIT_MAX_ATTEMPTS,
+        CONVERSATION_CREATE_RATE_LIMIT_WINDOW_SECONDS,
+        "创建对话过于频繁，请稍后再试。",
+    )
+
     reusable = chat_store.find_reusable_conversation(user.user_id)
     if reusable is not None:
         requested_model = normalize_model_id(req.model)
@@ -1331,6 +1498,13 @@ async def create_message(
     conv = chat_store.get_conversation(user.user_id, cid)
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
+
+    _enforce_rate_limit(
+        _rate_limit_key("conversation-message", request, user.user_id),
+        MESSAGE_RATE_LIMIT_MAX_ATTEMPTS,
+        MESSAGE_RATE_LIMIT_WINDOW_SECONDS,
+        "发送消息过于频繁，请稍后再试。",
+    )
 
     sel = normalize_model_id(req.model if req.model is not None else conv.get("model"))
     umsg = {

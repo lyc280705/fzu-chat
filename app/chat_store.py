@@ -206,6 +206,28 @@ class ChatStore:
             rows = cur.fetchall()
             return [self._summary_from_row(cur, row) for row in rows]
 
+    def get_user_data_summary(self, user_id: str) -> Dict[str, int]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM conversations WHERE user_id = ?",
+                (user_id,),
+            )
+            conversation_count = int(cur.fetchone()[0])
+            cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                WHERE c.user_id = ?
+                """,
+                (user_id,),
+            )
+            message_count = int(cur.fetchone()[0])
+        return {
+            "conversation_count": conversation_count,
+            "message_count": message_count,
+        }
+
     def find_reusable_conversation(self, user_id: str, title: str = "新对话") -> Dict[str, Any] | None:
         with self._cursor() as cur:
             cur.execute(
@@ -283,6 +305,12 @@ class ChatStore:
             }
             cur.execute("DELETE FROM conversations WHERE id = ? AND user_id = ?", (conversation_id, user_id))
             return payload
+
+    def delete_all_conversations(self, user_id: str) -> Dict[str, int]:
+        summary = self.get_user_data_summary(user_id)
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM conversations WHERE user_id = ?", (user_id,))
+        return summary
 
     def update_feedback(self, user_id: str, conversation_id: str, message_id: str, feedback: str | None) -> bool:
         with self._cursor() as cur:

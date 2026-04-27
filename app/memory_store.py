@@ -228,6 +228,14 @@ class UserMemoryStore:
             )
             return [self._row_to_memory(row) for row in cur.fetchall()]
 
+    def count_active_memories(self, user_id: str) -> int:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM user_memories WHERE user_id = ? AND is_active = 1",
+                (user_id,),
+            )
+            return int(cur.fetchone()[0])
+
     def save_memory(
         self,
         user_id: str,
@@ -320,6 +328,19 @@ class UserMemoryStore:
                 [timestamp, user_id, *active_ids],
             )
             return self._fetch_memories_by_ids(cur, user_id, active_ids, include_inactive=True)
+
+    def purge_all_memories(self, user_id: str) -> int:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM user_memories WHERE user_id = ? AND is_active = 1",
+                (user_id,),
+            )
+            active_count = int(cur.fetchone()[0])
+            cur.execute(
+                "DELETE FROM user_memories WHERE user_id = ?",
+                (user_id,),
+            )
+            return active_count
 
 
 user_memory_store = UserMemoryStore(MEMORY_DB_PATH)

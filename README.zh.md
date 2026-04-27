@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-当前已标记版本：[v2.0](CHANGELOG.md)
+当前已标记版本：[v3.0](CHANGELOG.md)
 
 版本记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -21,6 +21,7 @@
 
 - **学生登录认证**：基于学号的登录系统，每个学生对话完全隔离
 - **教务系统工具**：查询成绩、课表、考试成绩、学生信息（基于 [west2-online/jwch](https://github.com/west2-online/jwch) 对接教务系统）
+- **教务会话安全清理**：登录时仅在服务端暂存教务系统会话 Cookie，不保存教务密码；退出登录会同时清除站点登录态和暂存的教务会话 Cookie
 - **ChatGPT 风格界面**：现代暗色主题，侧边栏历史记录、快捷操作、流式回复
 - **丰富的工具卡片**：可视化工具调用过程，结构化展示成绩表格和课表
 - **多模型支持**：华为云 MaaS 的 GLM-5.1、Kimi K2.6、DeepSeek-V3.2 可选，标题总结内部使用 Qwen3-32B
@@ -97,7 +98,7 @@ docker compose up -d --build
 
 ### 认证
 - `POST /api/auth/login` – 学号 + 密码登录
-- `POST /api/auth/logout` – 退出登录
+- `POST /api/auth/logout` – 退出登录，同时清除站点登录态和服务端暂存的教务会话 Cookie
 - `GET /api/auth/me` – 当前用户信息
 
 ### 聊天

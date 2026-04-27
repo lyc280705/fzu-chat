@@ -3,6 +3,66 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v3.0] - 2026-04-27
+
+FZU-Chat v3.0 focuses on privacy controls, security hardening, and more explicit user-facing state management. This release adds legal-document acceptance during login, a dedicated privacy and data-management area, stronger protection for educational-system sessions and browser write requests, and clearer rate-limit feedback for expensive chat actions.
+
+### Highlights
+
+- Privacy and legal onboarding. The frontend now exposes dedicated privacy-policy and user-agreement pages, requires explicit acceptance before login, and adds a privacy dashboard for reviewing stored-data scope and clearing saved data in one step.
+- Stronger session and request protection. Logging out now clears cached educational-system session cookies, educational sessions expire independently, auth cookies default to a stricter SameSite mode, and unsafe browser write requests are checked for same-origin integrity.
+- Security hardening for the API surface. The backend now sends a tighter Content Security Policy and additional browser security headers, while authentication, educational relogin, conversation creation, and message sending are all rate-limited.
+- Clearer UX for costly operations. The frontend now distinguishes between creating conversations too quickly and sending messages too quickly, improving recovery guidance when users hit server-side rate limits.
+- Ongoing conversation and model polish. This release line also carries forward unified thinking-mode control, richer title-generation behavior, improved feedback toggling, mobile login/legal-page refinements, and the expanded chat model lineup including Kimi K2.6.
+
+### Included in this release
+
+- Privacy-policy and user-agreement content, login-time consent gating, and a dedicated privacy/data page with per-user data summary plus one-click purge.
+- Server-side helpers for counting and deleting saved conversations and active long-term memories.
+- Logout-time educational-session cleanup, educational-session TTL handling, and relogin guidance when the educational connection expires.
+- Browser write-request integrity checks, stricter cookie defaults, CSP and related hardening headers, plus rate limits for login, educational relogin, conversation creation, and message sending.
+- Frontend error handling refinements so rate-limited create/send actions surface distinct, readable messages.
+- Title-summary prompt tuning for shorter, more stable conversation titles.
+
+### Validation
+
+- cd frontend && npm run build
+- python3 -m py_compile app/server.py app/chat_store.py app/memory_store.py app/graph.py
+- docker compose up -d --build
+- curl -sS http://127.0.0.1/api/health
+
+---
+
+## 福大灵犀 v3.0
+
+福大灵犀 v3.0 重点提升隐私管理、安全加固和高成本操作的状态提示。本次版本加入了登录前协议确认、独立的隐私与数据管理入口、更严格的教务会话与浏览器写请求保护，以及更明确的限流反馈文案。
+
+### 版本亮点
+
+- 隐私与协议接入完善。前端新增隐私政策和用户协议页面，登录前必须显式勾选同意，并提供统一的隐私与数据页，用于查看已保存数据范围和一键清空。
+- 会话与请求保护增强。退出登录时会同步清理服务端暂存的教务会话 Cookie；教务会话支持独立超时；认证 Cookie 默认使用更严格的 SameSite；浏览器发起的危险写操作会校验同源来源。
+- API 安全面进一步收紧。后端新增更严格的 Content Security Policy 及其他安全响应头，并对登录、教务重新连接、创建对话和发送消息增加限流保护。
+- 高成本操作提示更清晰。前端现在会明确区分“创建对话过快”和“发送消息过快”，用户命中后端限流时能看到更准确的恢复提示。
+- 对话与模型体验继续打磨。该版本同时纳入统一思考模式开关、标题生成体验优化、反馈可取消、移动端登录与协议页适配，以及 Kimi K2.6 等模型能力扩展。
+
+### 本次发布包含
+
+- 隐私政策与用户协议正文、登录时强制确认、隐私与数据页、按用户统计已保存会话/消息/长期记忆，以及一键清空入口。
+- 服务端会话与长期记忆的计数、批量删除能力。
+- 退出登录时的教务会话清理、教务会话 TTL 控制，以及教务失效后的重新连接提示。
+- 浏览器写请求同源校验、更严格的 Cookie 默认配置、CSP 与相关安全响应头，以及登录、教务重连、创建对话、发送消息的限流机制。
+- 前端错误处理优化，使创建对话和发送消息在限流时展示不同的可读提示。
+- 标题总结提示词与采样参数调整，使生成标题更短、更稳定。
+
+### 验证
+
+- cd frontend && npm run build
+- python3 -m py_compile app/server.py app/chat_store.py app/memory_store.py app/graph.py
+- docker compose up -d --build
+- curl -sS http://127.0.0.1/api/health
+
+---
+
 ## [v2.0] - 2026-04-14
 
 FZU-Chat v2.0 focuses on answer quality, runtime resilience, and conversation usability. This release adds teaching-week-aware academic context, improves multi-model behavior and thinking controls, and hardens streaming and tool-call handling across both the backend and frontend.

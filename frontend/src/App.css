@@ -24,6 +24,7 @@ body {
   display: grid;
   place-items: center;
   min-height: 100vh;
+  min-height: 100dvh;
   overflow: auto;
   background: radial-gradient(ellipse at 30% 20%, rgba(34, 197, 94, 0.12), transparent 50%),
               radial-gradient(ellipse at 70% 80%, rgba(37, 99, 235, 0.08), transparent 50%),
@@ -98,6 +99,74 @@ body {
   border-color: #22c55e;
 }
 
+.login-consent {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.18rem;
+  padding: 0;
+  border: none;
+  background: none;
+  white-space: nowrap;
+  color: #dbe4f0;
+  font-family: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.login-consent__input {
+  width: 0.96rem;
+  height: 0.96rem;
+  margin: 0 0.04rem 0 0;
+  accent-color: #22c55e;
+  flex: 0 0 auto;
+}
+
+.login-consent .login-consent__prefix,
+.login-consent .login-consent__sep,
+.login-consent .login-link-btn {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+
+.login-consent .login-consent__prefix {
+  color: inherit;
+  cursor: pointer;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.login-consent .login-consent__sep {
+  color: inherit;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.login-consent .login-link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #7dd3fc;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.login-consent .login-link-btn:hover,
+.login-consent .login-link-btn:focus-visible {
+  color: #bae6fd;
+  outline: none;
+}
+
 .login-btn {
   margin-top: 0.5rem;
   padding: 0.95rem;
@@ -129,6 +198,44 @@ body {
   text-align: center;
   color: #64748b;
   font-size: 0.8rem;
+}
+
+.login-page--legal {
+  place-items: start stretch;
+  align-content: start;
+  height: 100vh;
+  height: 100dvh;
+  padding: 1rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.legal-page {
+  width: min(920px, 100%);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding-bottom: 1rem;
+}
+
+.legal-page__toolbar {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.legal-page__back {
+  width: fit-content;
+  background: #162235;
+  color: #d8f3ff;
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  box-shadow: 0 10px 24px rgba(2, 8, 23, 0.24);
+}
+
+.legal-page__back:hover,
+.legal-page__back:focus-visible {
+  background: #1b2b43;
+  outline: none;
 }
 
 /* ================================================================== */
@@ -411,6 +518,34 @@ body {
   border-color: rgba(34, 197, 94, 0.5);
 }
 
+.sidebar-link-btn {
+  padding: 0.78rem 0.9rem;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.42);
+  color: #cbd5e1;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.sidebar-link-btn:hover,
+.sidebar-link-btn:focus-visible {
+  border-color: rgba(56, 189, 248, 0.26);
+  background: rgba(56, 189, 248, 0.08);
+  color: #e0f2fe;
+  outline: none;
+}
+
+.sidebar-link-btn--active {
+  border-color: rgba(56, 189, 248, 0.34);
+  background: rgba(56, 189, 248, 0.12);
+  color: #e0f2fe;
+}
+
 .plus-icon {
   font-size: 1.15rem;
 }
@@ -673,10 +808,11 @@ body {
   height: 0.92em;
   width: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(71, 85, 105, 0.42), rgba(100, 116, 139, 0.48));
-  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.06);
-  opacity: 0.64;
-  animation: title-skeleton-breathe 2.8s ease-in-out infinite;
+  background: linear-gradient(90deg, rgba(100, 116, 139, 0.48), rgba(148, 163, 184, 0.64));
+  box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.08);
+  opacity: 0.72;
+  animation: title-skeleton-breathe 2.2s ease-in-out infinite;
+  will-change: opacity, filter;
 }
 
 .title-skeleton__bar--primary {
@@ -690,11 +826,13 @@ body {
 @keyframes title-skeleton-breathe {
   0%,
   100% {
-    opacity: 0.56;
+    opacity: 0.48;
+    filter: brightness(0.9) saturate(0.92);
   }
 
   50% {
-    opacity: 0.7;
+    opacity: 0.9;
+    filter: brightness(1.18) saturate(1.04);
   }
 }
 
@@ -803,6 +941,318 @@ body {
 .chat-header-badge--thinking-on {
   background: rgba(14, 165, 233, 0.14);
   color: #7dd3fc;
+}
+
+.privacy-page {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2rem 0 2.5rem;
+}
+
+.privacy-shell {
+  width: min(820px, calc(100% - 2rem));
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.privacy-card {
+  padding: 1.2rem 1.25rem;
+  border: 1px solid rgba(148, 163, 184, 0.08);
+  border-radius: 20px;
+  background: rgba(15, 23, 42, 0.58);
+}
+
+.privacy-card h3 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 1rem;
+}
+
+.privacy-card p {
+  margin: 0.5rem 0 0;
+  color: #94a3b8;
+  line-height: 1.7;
+  font-size: 0.9rem;
+}
+
+.privacy-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.privacy-hero__copy {
+  flex: 1;
+}
+
+.privacy-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 0.55rem;
+  padding: 0.26rem 0.58rem;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.12);
+  color: #7dd3fc;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.privacy-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.privacy-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.privacy-stat__label {
+  color: #94a3b8;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.privacy-stat__value {
+  color: #f8fafc;
+  font-size: 1.9rem;
+  line-height: 1;
+}
+
+.privacy-stat__hint {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.privacy-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.privacy-doc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  margin-top: 0.75rem;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.privacy-doc-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 0.95rem;
+}
+
+.privacy-subsection h4 {
+  margin: 0;
+  color: #e2e8f0;
+  font-size: 0.92rem;
+}
+
+.privacy-subsection .privacy-policy-list {
+  margin-top: 0.55rem;
+}
+
+@media (max-width: 768px) {
+  .login-page {
+    place-items: center;
+    padding: 1rem;
+  }
+
+  .login-card {
+    width: min(100%, 32rem);
+    padding: 1.5rem 1.1rem;
+    border-radius: 20px;
+  }
+
+  .login-brand {
+    margin-bottom: 1.35rem;
+  }
+
+  .login-logo {
+    width: 56px;
+    height: 56px;
+    border-radius: 16px;
+    margin-bottom: 0.6rem;
+  }
+
+  .login-brand h1 {
+    font-size: 1.32rem;
+  }
+
+  .login-brand p {
+    font-size: 0.84rem;
+  }
+
+  .login-form {
+    gap: 1rem;
+  }
+
+  .login-form label {
+    font-size: 0.84rem;
+  }
+
+  .login-form input,
+  .login-form select {
+    padding: 0.78rem 0.9rem;
+    border-radius: 13px;
+  }
+
+  .login-btn {
+    margin-top: 0.25rem;
+    padding: 0.88rem;
+    font-size: 0.95rem;
+  }
+
+  .login-footer {
+    margin-top: 1.1rem;
+    font-size: 0.76rem;
+    line-height: 1.65;
+  }
+
+  .login-page--legal {
+    place-items: start stretch;
+    align-content: start;
+    padding: 0.85rem;
+  }
+
+  .legal-page {
+    gap: 0.85rem;
+    padding-bottom: 0.6rem;
+  }
+}
+
+@media (max-width: 520px) {
+  .login-consent {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.18rem 0.28rem;
+    white-space: normal;
+    text-align: center;
+    font-size: 0.73rem;
+  }
+
+  .login-consent__input {
+    margin-right: 0;
+  }
+
+  .privacy-card {
+    padding: 1rem 0.95rem;
+    border-radius: 18px;
+  }
+
+  .privacy-card h3 {
+    font-size: 0.95rem;
+    line-height: 1.45;
+  }
+
+  .privacy-card p,
+  .privacy-policy-list,
+  .privacy-doc-meta {
+    font-size: 0.82rem;
+    line-height: 1.7;
+  }
+
+  .privacy-subsection h4 {
+    font-size: 0.86rem;
+    line-height: 1.45;
+  }
+
+  .legal-page__toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    align-self: flex-start;
+    width: fit-content;
+    padding-bottom: 0;
+    background: none;
+  }
+}
+
+.secondary-btn,
+.danger-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 0.72rem 1.05rem;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease, background 0.15s ease;
+}
+
+.secondary-btn {
+  background: rgba(56, 189, 248, 0.14);
+  color: #bae6fd;
+}
+
+.secondary-btn:hover,
+.secondary-btn:focus-visible {
+  background: rgba(56, 189, 248, 0.2);
+  outline: none;
+}
+
+.secondary-btn.legal-page__back {
+  background: #162235;
+  color: #d8f3ff;
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  box-shadow: 0 10px 24px rgba(2, 8, 23, 0.24);
+}
+
+.secondary-btn.legal-page__back:hover,
+.secondary-btn.legal-page__back:focus-visible {
+  background: #1b2b43;
+  outline: none;
+}
+
+.danger-btn {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fecaca;
+}
+
+.danger-btn:hover,
+.danger-btn:focus-visible {
+  background: rgba(239, 68, 68, 0.24);
+  outline: none;
+}
+
+.secondary-btn:disabled,
+.danger-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.privacy-card--danger {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  border-color: rgba(239, 68, 68, 0.18);
+  background: linear-gradient(180deg, rgba(69, 10, 10, 0.3), rgba(15, 23, 42, 0.6));
+}
+
+.privacy-policy-list {
+  margin: 0.7rem 0 0;
+  padding-left: 1.1rem;
+  color: #cbd5e1;
+  display: grid;
+  gap: 0.55rem;
+  line-height: 1.65;
 }
 
 /* ================================================================== */
@@ -1900,9 +2350,19 @@ body {
     display: none;
   }
 
+  .privacy-hero,
+  .privacy-card--danger {
+    flex-direction: column;
+  }
+
+  .privacy-stats {
+    grid-template-columns: 1fr;
+  }
+
   .msg-row,
   .empty-state,
-  .composer-area {
+  .composer-area,
+  .privacy-shell {
     width: min(100%, calc(100% - 1.5rem));
   }
 

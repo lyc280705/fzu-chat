@@ -879,7 +879,7 @@ def build_graph(edu_session: Dict[str, Any] | None = None, use_checkpointer: boo
 graph = build_graph()
 
 
-prompt = "请概括用户的问题作为对话的标题，标题需要简短概括，不多于20个字。注意你的输出直接作为标题，所以不要有其他输出，不要输出标题二字。请输出标题"
+prompt = "请概括对话内容作为对话的标题，标题需要简短概括，不多于15个字。注意你的输出直接作为标题，所以不要有其他输出，不要输出标题二字。请输出标题"
 summary_prompt = ChatPromptTemplate.from_messages(
     [
         ("system", prompt),
@@ -888,6 +888,6 @@ summary_prompt = ChatPromptTemplate.from_messages(
 )
 summary_chain = (
     summary_prompt
-    | build_chat_llm(TITLE_SUMMARY_MODEL, temperature=0.3, streaming=False, thinking_type="disabled")
+    | build_chat_llm(TITLE_SUMMARY_MODEL, temperature=0.1, streaming=False, thinking_type="disabled")
     | StrOutputParser()
 )

@@ -11,6 +11,7 @@ const EMPTY_MSG = '你好呀！我是福大灵犀，你可以向我提问关于�
 const AUTO_SCROLL_THRESHOLD = 80
 const THINKING_INDICATOR_DELAY = 1000
 const THINKING_STORAGE_KEY = 'fzu_thinking_enabled'
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'fzu_sidebar_collapsed'
 
 const TOOL_ICONS = {
   retrieve: '📚',
@@ -47,6 +48,148 @@ const EDUCATIONAL_TOOL_NAMES = new Set([
 ])
 
 const FALLBACK_HEX = Array.from({ length: 256 }, (_, index) => index.toString(16).padStart(2, '0'))
+
+const PRIVACY_POLICY_SECTIONS = [
+  {
+    title: '一、适用范围',
+    items: [
+      '本隐私政策适用于你在使用“福大灵犀”过程中产生的个人信息和相关使用数据处理活动。',
+      '本软件的主要功能包括校内知识问答、联网辅助检索、教务系统查询、会话历史保存和个性化长期记忆。',
+      '如某项能力处于未开放、灰度测试或临时维护状态，系统会以界面提示或功能限制方式向你说明。',
+    ],
+  },
+  {
+    title: '二、我们处理的数据类型',
+    items: [
+      '账号与认证信息：登录时提交的学号、学生类型，以及为保持登录状态而生成的安全 Cookie。',
+      '教务认证信息：你主动输入的教务密码仅用于即时认证与会话续连，前端不会长期保存该密码。',
+      '业务内容数据：包括你的提问内容、助手回复、工具调用结果、消息反馈和会话标题。',
+      '个性化记忆数据：仅在你明确确认后，系统才会保存长期偏好、常用称呼、输出风格等可复用信息。',
+      '本地设备设置：思考模式开关、侧栏折叠状态等界面偏好会保存在当前浏览器本地。',
+    ],
+  },
+  {
+    title: '三、数据处理目的',
+    items: [
+      '用于完成身份识别、教务系统访问控制和持续登录状态维护。',
+      '用于生成问答结果、执行课表成绩等教务查询、展示历史记录并维持会话上下文连续性。',
+      '用于在你授权或确认的范围内提供个性化回答能力，例如称呼偏好、长期习惯和输出风格偏好。',
+      '用于定位系统异常、改善模型效果、控制接口滥用与保障服务稳定运行。',
+    ],
+  },
+  {
+    title: '四、敏感信息与最小化原则',
+    items: [
+      '系统不会将你的教务密码自动写入长期记忆，也不会将密码明文展示在前端页面。',
+      '系统默认不建议保存证件号码、手机号、邮箱地址、银行卡号、精确住址等高敏感信息。',
+      '如你主动在对话中输入敏感信息，应自行评估风险；除完成当前请求所必需外，系统不会主动扩大使用范围。',
+    ],
+  },
+  {
+    title: '五、存储、保留与删除',
+    items: [
+      '已保存的会话历史、消息反馈和长期记忆会存储在与你当前账号关联的服务端数据文件中。',
+      '你可以在侧栏逐条删除历史对话，也可以在“隐私与数据”页面一键清空全部已保存的对话和长期记忆。',
+      '一键清空同时会将本地界面偏好恢复默认；删除操作完成后，相关数据通常无法恢复。',
+    ],
+  },
+  {
+    title: '六、共享、披露与安全措施',
+    items: [
+      '为完成模型推理、联网搜索或教务查询，系统可能将必要的请求内容发送至对应的模型服务、检索服务或教务接口。',
+      '系统采取基于会话隔离、受限存储文件权限和登录鉴权的方式减少未授权访问风险。',
+      '除法律法规要求、主管机关依法要求或为保障系统安全运行所必要外，我们不会无故向无关第三方披露你的数据。',
+    ],
+  },
+  {
+    title: '七、你的权利',
+    items: [
+      '你有权查看本隐私政策、了解系统处理的数据范围，并自主决定是否继续使用本软件。',
+      '你有权删除单条历史对话、拒绝记忆建议、取消反馈，以及在数据管理页面执行一键清空。',
+      '如你不再同意本隐私政策，可以停止使用本软件，并在退出前删除已保存的数据。',
+    ],
+  },
+]
+
+const USER_AGREEMENT_SECTIONS = [
+  {
+    title: '一、协议适用与接受',
+    items: [
+      '本用户协议适用于你对“福大灵犀”全部功能的访问、登录和使用行为。',
+      '当你勾选同意并完成登录，即视为你已经阅读、理解并接受本协议及相关隐私政策。',
+      '如你不同意本协议任何内容，请不要登录或继续使用本软件。',
+    ],
+  },
+  {
+    title: '二、服务内容',
+    items: [
+      '本软件提供福州大学相关知识问答、联网辅助检索、教务数据查询、历史会话管理和个性化辅助能力。',
+      '部分能力依赖第三方模型服务、检索服务或学校教务接口，服务范围可能随实际运行情况调整。',
+      '研究生登录、特定工具或实验性能力如未开放，系统可通过界面提示、禁用按钮或其他限制方式说明。',
+    ],
+  },
+  {
+    title: '三、账号与认证义务',
+    items: [
+      '你应确保所提交的身份信息真实、合法，并仅使用你本人有权使用的账号进行登录与查询。',
+      '你应妥善保管教务账号及相关凭证，不得借用、出租、转让、出售或冒用他人身份使用本软件。',
+      '因你自身保管不善、误操作或主动泄露账号信息造成的风险和损失，应由你自行承担。',
+    ],
+  },
+  {
+    title: '四、合理使用规则',
+    items: [
+      '你不得利用本软件从事违法违规、破坏系统稳定、批量爬取、越权访问、攻击接口或其他滥用行为。',
+      '你不得借助模型输出、工具调用或系统缺陷获取、推断或传播其他用户的数据、凭证或隐私信息。',
+      '你不得将本软件输出内容伪装为学校官方结论、行政决定或未经核验的正式通知进行传播。',
+    ],
+  },
+  {
+    title: '五、结果说明与责任边界',
+    items: [
+      '本软件输出内容基于模型生成、知识库检索、联网搜索和教务系统返回结果综合生成，仅供辅助参考。',
+      '成绩、课表、通知、校历等内容仍应以学校官方系统、公示信息和主管部门说明为准。',
+      '因模型误差、数据延迟、接口异常、网络故障、上游服务中断或学校系统维护导致的不准确、不完整或暂时不可用，不构成平台违约。',
+    ],
+  },
+  {
+    title: '六、服务变更、中断与终止',
+    items: [
+      '基于安全、维护、合规或技术升级需要，平台可以对功能范围、接口依赖、访问频率和服务形态进行调整。',
+      '如发现异常登录、可疑请求、超出合理范围的频繁访问或其他安全风险，平台可暂停或终止相应服务。',
+      '你停止使用本软件或主动清空数据后，系统将不再继续基于已删除内容提供历史连续性服务。',
+    ],
+  },
+  {
+    title: '七、协议更新',
+    items: [
+      '本协议内容可能根据功能变化、合规要求或服务调整进行更新。',
+      '更新后的协议将通过登录页或系统内页面向你展示；如更新内容对权利义务有实质影响，平台可要求你重新确认。',
+      '你在协议更新后继续登录或使用本软件的，视为你接受更新后的协议内容。',
+    ],
+  },
+]
+
+const LEGAL_DOCUMENTS = {
+  privacy: {
+    key: 'privacy',
+    label: '隐私政策',
+    title: '福大灵犀隐私政策',
+    intro: '本政策用于说明本软件在账号登录、教务查询、问答会话、个性化记忆和本地设置等场景下的数据处理方式，以及你可行使的管理与删除权利。',
+    effectiveDate: '2026-04-24',
+    audience: '适用于所有访问、登录或使用本软件的用户',
+    sections: PRIVACY_POLICY_SECTIONS,
+  },
+  terms: {
+    key: 'terms',
+    label: '用户协议',
+    title: '福大灵犀用户协议',
+    intro: '本协议用于说明你在登录和使用本软件时应遵守的规则，以及平台服务范围、责任边界和协议更新机制。',
+    effectiveDate: '2026-04-24',
+    audience: '适用于所有登录并使用本软件功能的用户',
+    sections: USER_AGREEMENT_SECTIONS,
+  },
+}
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -345,20 +488,75 @@ const api = (url, opts = {}) => {
   return fetch(url, { credentials: opts.credentials ?? 'same-origin', ...opts, headers })
 }
 
+const readApiError = async (response, fallback = '请求失败', rateLimitMessage = '') => {
+  const payload = await response.json().catch(() => ({}))
+  if (response.status === 429 && rateLimitMessage) return rateLimitMessage
+  return payload?.detail || payload?.message || fallback
+}
+
 /* ================================================================== */
 /*  Login Page                                                         */
 /* ================================================================== */
+
+function LegalDocumentSections({ document }) {
+  return (
+    <article className="privacy-card">
+      <span className="privacy-eyebrow">{document.label}</span>
+      <h3>{document.title}</h3>
+      <p>{document.intro}</p>
+      <div className="privacy-doc-meta">
+        <span>生效日期：{document.effectiveDate}</span>
+        <span>适用对象：{document.audience}</span>
+      </div>
+      <div className="privacy-doc-sections">
+        {document.sections.map((section) => (
+          <section key={section.title} className="privacy-subsection">
+            <h4>{section.title}</h4>
+            <ul className="privacy-policy-list">
+              {section.items.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </section>
+        ))}
+      </div>
+    </article>
+  )
+}
+
+function LegalDocumentPage({ documentKey, onBack }) {
+  const document = LEGAL_DOCUMENTS[documentKey] ?? LEGAL_DOCUMENTS.privacy
+
+  return (
+    <div className="login-page login-page--legal">
+      <div className="legal-page">
+        <div className="legal-page__toolbar">
+          <button type="button" className="secondary-btn legal-page__back" onClick={onBack}>返回登录</button>
+        </div>
+        <LegalDocumentSections document={document} />
+      </div>
+    </div>
+  )
+}
 
 function LoginPage({ onLogin }) {
   const [studentId, setStudentId] = useState('')
   const [password, setPassword] = useState('')
   const [studentType, setStudentType] = useState('undergraduate')
+  const [acceptedLegal, setAcceptedLegal] = useState(false)
+  const [legalDocumentKey, setLegalDocumentKey] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  if (legalDocumentKey) {
+    return <LegalDocumentPage documentKey={legalDocumentKey} onBack={() => setLegalDocumentKey(null)} />
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!studentId.trim() || !password.trim()) return
+    if (!acceptedLegal) {
+      setError('请先阅读并勾选同意《用户协议》和《隐私政策》。')
+      return
+    }
     setLoading(true)
     setError('')
     try {
@@ -366,7 +564,7 @@ function LoginPage({ onLogin }) {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ student_id: studentId.trim(), password: password.trim(), student_type: studentType }),
+        body: JSON.stringify({ student_id: studentId.trim(), password: password.trim(), student_type: studentType, accepted_legal: true }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
@@ -406,11 +604,29 @@ function LoginPage({ onLogin }) {
               <option value="graduate" disabled>研究生（暂未开放）</option>
             </select>
           </label>
-          <button type="submit" className="login-btn" disabled={loading || !studentId.trim() || !password.trim()}>
+
+          <div className="login-consent">
+            <input
+              id="login-legal-consent"
+              className="login-consent__input"
+              type="checkbox"
+              checked={acceptedLegal}
+              onChange={(event) => {
+                setAcceptedLegal(event.target.checked)
+                if (event.target.checked) setError('')
+              }}
+            />
+            <label htmlFor="login-legal-consent" className="login-consent__prefix">我已阅读并同意</label>
+            <button type="button" className="login-link-btn" onClick={() => setLegalDocumentKey('terms')}>《用户协议》</button>
+            <span className="login-consent__sep">和</span>
+            <button type="button" className="login-link-btn" onClick={() => setLegalDocumentKey('privacy')}>《隐私政策》</button>
+          </div>
+
+          <button type="submit" className="login-btn" disabled={loading || !studentId.trim() || !password.trim() || !acceptedLegal}>
             {loading ? '登录中…' : '登 录'}
           </button>
         </form>
-        <p className="login-footer">密码仅用于即时教务认证，登录态通过站点安全 Cookie 保存</p>
+        <p className="login-footer">密码仅用于即时教务认证，登录态通过站点安全 Cookie 保存；登录前请先阅读并同意相关协议。</p>
       </div>
     </div>
   )
@@ -1369,6 +1585,59 @@ function PendingTitle({ compact = false }) {
   )
 }
 
+function PrivacyPolicyView({ summary, loading, clearing, resetDisabled, onReload, onReset, error }) {
+  const stats = [
+    { label: '历史对话', value: summary?.conversation_count ?? 0, hint: '包含侧栏中的全部已保存会话' },
+    { label: '消息总数', value: summary?.message_count ?? 0, hint: '包括你的提问与助手回复' },
+    { label: '长期记忆', value: summary?.memory_count ?? 0, hint: '仅统计已确认保存的个性化记忆' },
+  ]
+
+  return (
+    <section className="privacy-page">
+      <div className="privacy-shell">
+        {error && <div className="err-banner">{error}</div>}
+
+        <div className="privacy-hero privacy-card">
+          <div className="privacy-hero__copy">
+            <span className="privacy-eyebrow">隐私、协议与数据</span>
+            <h3>查看使用规则，并管理你已保存的数据</h3>
+            <p>这里集中展示隐私政策、用户协议、当前账号数据统计，以及一键清空入口。</p>
+          </div>
+          <div className="privacy-card__actions">
+            <button type="button" className="secondary-btn" onClick={onReload} disabled={loading || clearing}>
+              {loading ? '刷新中…' : '刷新统计'}
+            </button>
+          </div>
+        </div>
+
+        <div className="privacy-stats">
+          {stats.map((item) => (
+            <article key={item.label} className="privacy-stat privacy-card">
+              <span className="privacy-stat__label">{item.label}</span>
+              <strong className="privacy-stat__value">{loading ? '…' : item.value}</strong>
+              <p className="privacy-stat__hint">{item.hint}</p>
+            </article>
+          ))}
+        </div>
+
+        <div className="privacy-card privacy-card--danger">
+          <div>
+            <h3>数据管理</h3>
+            <p>一键清空会删除服务器上已保存的会话历史、消息反馈、长期记忆，并把当前浏览器里的界面设置恢复为默认值。此操作不可撤销。</p>
+          </div>
+          <div className="privacy-card__actions">
+            <button type="button" className="danger-btn" onClick={onReset} disabled={resetDisabled}>
+              {clearing ? '清空中…' : '一键清空已保存数据'}
+            </button>
+          </div>
+        </div>
+
+        {Object.values(LEGAL_DOCUMENTS).map((document) => <LegalDocumentSections key={document.key} document={document} />)}
+      </div>
+    </section>
+  )
+}
+
 /* ================================================================== */
 /*  Main App                                                           */
 /* ================================================================== */
@@ -1377,6 +1646,7 @@ function App() {
   const [user, setUser] = useState(null)
   const [eduError, setEduError] = useState('')
   const [authChecked, setAuthChecked] = useState(false)
+  const [viewMode, setViewMode] = useState('chat')
 
   // Chat state
   const [models, setModels] = useState([])
@@ -1393,12 +1663,15 @@ function App() {
   const [streamingConversations, setStreamingConversations] = useState({})
   const [stopPendingConversations, setStopPendingConversations] = useState({})
   const [pendingTitles, setPendingTitles] = useState({})
+  const [userDataSummary, setUserDataSummary] = useState(null)
+  const [userDataLoading, setUserDataLoading] = useState(false)
+  const [userDataClearing, setUserDataClearing] = useState(false)
   const [error, setError] = useState('')
   const [fbPending, setFbPending] = useState([])
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false
-    return window.localStorage.getItem('fzu_sidebar_collapsed') === '1'
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1'
   })
   const msgListRef = useRef(null)
   const shouldAutoScrollRef = useRef(true)
@@ -1411,6 +1684,8 @@ function App() {
   const needsEduRelogin = user?.student_type === 'undergraduate' && !user?.edu_authenticated
   const isActiveConversationStreaming = Boolean(activeId && streamingConversations[activeId])
   const isActiveConversationStopPending = Boolean(activeId && stopPendingConversations[activeId])
+  const hasStreamingConversation = Object.keys(streamingConversations).length > 0
+  const isPrivacyView = viewMode === 'privacy'
 
   const syncAutoScrollState = useCallback(() => {
     const list = msgListRef.current
@@ -1486,12 +1761,16 @@ function App() {
     draftThinkingTimersRef.current.clear()
     setUser(null)
     setEduError('')
+    setViewMode('chat')
     setConversations([])
     setMsgStore({})
     setActiveId(null)
     setStreamingConversations({})
     setStopPendingConversations({})
     setPendingTitles({})
+    setUserDataSummary(null)
+    setUserDataLoading(false)
+    setUserDataClearing(false)
     setError('')
   }, [])
 
@@ -1519,7 +1798,7 @@ function App() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    window.localStorage.setItem('fzu_sidebar_collapsed', sidebarCollapsed ? '1' : '0')
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? '1' : '0')
   }, [sidebarCollapsed])
 
   useEffect(() => {
@@ -1571,6 +1850,29 @@ function App() {
     }
     go()
   }, [userId])
+
+  const loadUserDataSummary = useCallback(async () => {
+    setUserDataLoading(true)
+    try {
+      const response = await api('/api/user-data')
+      if (response.status === 401) {
+        resetAuthState()
+        return
+      }
+      if (!response.ok) throw new Error('加载数据统计失败')
+      const payload = await response.json()
+      setUserDataSummary(payload)
+    } catch (err) {
+      setError(err.message || '加载数据统计失败')
+    } finally {
+      setUserDataLoading(false)
+    }
+  }, [resetAuthState])
+
+  useEffect(() => {
+    if (!userId || viewMode !== 'privacy') return
+    void loadUserDataSummary()
+  }, [loadUserDataSummary, userId, viewMode])
 
   const applyConversationSummary = useCallback((cid, summary) => {
     if (!cid || !summary) return
@@ -1687,6 +1989,7 @@ function App() {
   const createConv = useCallback(async () => {
     const activeConversation = activeId ? (msgStore[activeId] ?? activeConv) : null
     if (isReusableDraftConversation(activeConversation)) {
+      setViewMode('chat')
       setActiveId(activeConversation.id)
       return activeConversation
     }
@@ -1701,20 +2004,28 @@ function App() {
       }
       setConversations((prev) => [makeConversationSummary(reusableConversation), ...prev.filter((item) => item.id !== reusableConversation.id)])
       setMsgStore((prev) => ({ ...prev, [reusableConversation.id]: reusableConversation }))
+      setViewMode('chat')
       setActiveId(reusableConversation.id)
       return reusableConversation
     }
 
     const r = await api('/api/conversations', { method: 'POST', body: JSON.stringify({ model: selModel }) })
-    if (!r.ok) throw new Error('创建对话失败')
+    if (!r.ok) throw new Error(await readApiError(r, '创建对话失败', '创建对话过快，请稍后再试。'))
     const c = await r.json()
     setConversations((p) => [makeConversationSummary(c), ...p.filter((item) => item.id !== c.id)])
     setMsgStore((p) => ({ ...p, [c.id]: c }))
+    setViewMode('chat')
     setActiveId(c.id)
     return c
   }, [activeConv, activeId, conversations, msgStore, selModel])
 
   const handleNew = useCallback(async () => { setError(''); try { await createConv() } catch (e) { setError(e.message) } }, [createConv])
+
+  const handleOpenPrivacyView = useCallback(() => {
+    setError('')
+    setViewMode('privacy')
+    setSidebarOpen(false)
+  }, [])
 
   const toggleDesktopSidebar = useCallback(() => {
     setSidebarCollapsed((value) => !value)
@@ -1745,6 +2056,46 @@ function App() {
       if (activeId === id) setActiveId(nextConversations[0]?.id ?? null)
     } catch (e) { setError(e.message) }
   }, [activeId, clearConversationStreamState, clearDraftThinkingTimer, conversations, setConversationTitlePending])
+
+  const handleResetUserData = useCallback(async () => {
+    if (userDataClearing) return
+    if (hasStreamingConversation) {
+      setError('请先等待当前回复结束，再执行一键清空。')
+      return
+    }
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm('这会删除已保存的对话历史、长期记忆，并恢复本地界面设置默认值。此操作不可撤销，是否继续？')
+      if (!confirmed) return
+    }
+
+    setError('')
+    setUserDataClearing(true)
+    try {
+      const response = await api('/api/user-data', { method: 'DELETE' })
+      const payload = await response.json().catch(() => ({}))
+      if (response.status === 401) {
+        resetAuthState()
+        return
+      }
+      if (!response.ok) throw new Error(payload.detail || '清空数据失败')
+
+      setConversations([])
+      setMsgStore({})
+      setActiveId(null)
+      setStreamingConversations({})
+      setStopPendingConversations({})
+      setPendingTitles({})
+      setFbPending([])
+      setInput('')
+      setThinkingEnabled(true)
+      setSidebarCollapsed(false)
+      setUserDataSummary({ conversation_count: 0, message_count: 0, memory_count: 0 })
+    } catch (err) {
+      setError(err.message || '清空数据失败')
+    } finally {
+      setUserDataClearing(false)
+    }
+  }, [hasStreamingConversation, resetAuthState, userDataClearing])
 
   const updateDraft = useCallback((cid, fn) => {
     setMsgStore((s) => {
@@ -1916,7 +2267,8 @@ function App() {
         method: 'POST',
         body: JSON.stringify({ content: prompt, model: selModel, thinking_enabled: thinkingEnabled }),
       })
-      if (!r.ok || !r.body) throw new Error('发送消息失败')
+      if (!r.ok) throw new Error(await readApiError(r, '发送消息失败', '发送消息过快，请稍后再试。'))
+      if (!r.body) throw new Error('响应流不可用，请稍后再试。')
       await readSSE(r, cid)
     } catch (err) {
       setError(err.message)
@@ -1924,7 +2276,7 @@ function App() {
         replaceDraft(cid, err.fallback, err.conversation)
       } else if (cid) {
         clearDraftThinkingTimer(cid)
-        const fallback = localError()
+        const fallback = localError(err.message || '暂时无法生成回复，请稍后再试。')
         updateDraft(cid, (m) => ({ ...fallback, id: m.id, timestamp: m.timestamp }))
       }
     } finally {
@@ -1999,6 +2351,14 @@ function App() {
           <button className="new-chat-btn" onClick={handleNew} type="button">
             <span className="plus-icon">+</span> 新建对话
           </button>
+
+          <button
+            className={`sidebar-link-btn ${isPrivacyView ? 'sidebar-link-btn--active' : ''}`}
+            onClick={handleOpenPrivacyView}
+            type="button"
+          >
+            隐私与数据
+          </button>
         </div>
 
         <div className="sidebar-model">
@@ -2033,7 +2393,7 @@ function App() {
               ? <div className="empty-hint">暂无历史对话</div>
               : conversations.map((c) => (
                 <div key={c.id} className={`convo-item ${c.id === activeId ? 'convo-item--active' : ''}`}>
-                  <button type="button" className="convo-select" onClick={() => { setActiveId(c.id); setSidebarOpen(false) }}>
+                  <button type="button" className="convo-select" onClick={() => { setViewMode('chat'); setActiveId(c.id); setSidebarOpen(false) }}>
                     <div className="convo-item-body">
                       <strong className={`convo-title ${pendingTitles[c.id] ? 'convo-title--pending' : ''}`.trim()} aria-label={pendingTitles[c.id] ? '正在生成标题' : c.title}>
                         {pendingTitles[c.id] ? <PendingTitle compact /> : c.title}
@@ -2062,20 +2422,34 @@ function App() {
               {sidebarCollapsed ? '☰' : '⟨'}
             </button>
             <div className="chat-header-copy">
-              <h2 className={`chat-header-title ${activeConv && pendingTitles[activeConv.id] ? 'chat-header-title--pending' : ''}`.trim()} aria-label={activeConv && pendingTitles[activeConv.id] ? '正在生成标题' : (activeConv?.title ?? '新的对话')}>
-                {activeConv && pendingTitles[activeConv.id] ? <PendingTitle /> : (activeConv?.title ?? '新的对话')}
+              <h2 className={`chat-header-title ${!isPrivacyView && activeConv && pendingTitles[activeConv.id] ? 'chat-header-title--pending' : ''}`.trim()} aria-label={isPrivacyView ? '隐私与数据' : (activeConv && pendingTitles[activeConv.id] ? '正在生成标题' : (activeConv?.title ?? '新的对话'))}>
+                {isPrivacyView ? '隐私与数据' : (activeConv && pendingTitles[activeConv.id] ? <PendingTitle /> : (activeConv?.title ?? '新的对话'))}
               </h2>
-              <p>福州大学知识库 · 联网搜索 · 教务系统</p>
+              <p>{isPrivacyView ? '查看隐私政策、数据统计和一键清空入口' : '福州大学知识库 · 联网搜索 · 教务系统'}</p>
             </div>
           </div>
-          <div className="chat-header-badges">
-            <div className="chat-header-badge">{models.find((m) => m.id === selModel)?.label ?? selModel}</div>
-            <div className={`chat-header-badge chat-header-badge--thinking ${thinkingEnabled ? 'chat-header-badge--thinking-on' : ''}`}>
-              {thinkingEnabled ? '思考开启' : '思考关闭'}
+          {!isPrivacyView && (
+            <div className="chat-header-badges">
+              <div className="chat-header-badge">{models.find((m) => m.id === selModel)?.label ?? selModel}</div>
+              <div className={`chat-header-badge chat-header-badge--thinking ${thinkingEnabled ? 'chat-header-badge--thinking-on' : ''}`}>
+                {thinkingEnabled ? '思考开启' : '思考关闭'}
+              </div>
             </div>
-          </div>
+          )}
         </header>
 
+        {isPrivacyView ? (
+          <PrivacyPolicyView
+            summary={userDataSummary}
+            loading={userDataLoading}
+            clearing={userDataClearing}
+            resetDisabled={userDataLoading || userDataClearing || hasStreamingConversation}
+            onReload={() => void loadUserDataSummary()}
+            onReset={() => void handleResetUserData()}
+            error={error}
+          />
+        ) : (
+          <>
         <section className="msg-list" ref={msgListRef} onScroll={syncAutoScrollState} onWheel={handleMsgListWheel}>
           {activeMsgs.length === 0 ? (
             <div className="empty-state">
@@ -2170,6 +2544,8 @@ function App() {
             </button>
           </form>
         </footer>
+          </>
+        )}
       </main>
     </div>
   )
