@@ -3,6 +3,70 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v4.0] - 2026-05-16
+
+FZU-Chat v4.0 upgrades long-term memory from a simple confirmed note list into an FZU-aware personalization layer. The assistant now distinguishes durable user preferences from volatile academic facts, ranks memories by relevance and usefulness, blocks sensitive or short-lived data, and injects only high-value confirmed memory into the conversation context.
+
+### Highlights
+
+- FZU-aware personalized memory. Long-term memory now focuses on reusable campus scenarios such as name preferences, answer style, course-selection habits, academic-query presentation preferences, campus-life needs, dining preferences, and campus-location preferences.
+- Clear boundary between memory and live educational data. Grades, GPA, rankings, credits, schedules, exam rooms, selected-course results, student profile facts, program-plan text, and calendar dates are kept out of memory and should be queried live through educational tools.
+- Smarter memory retrieval and deduplication. Memory storage now keeps normalized text, keywords, importance, access counts, and last-access timestamps, then ranks matches by relevance, importance, recent usage, and recency.
+- Safer memory proposals. Save requests are validated for long-term value, sensitive data, short-lived facts, and near-duplicate content before the user sees a confirmation card.
+- Better memory management UX. Memory cards now show importance, match scores, duplicate similarity, and validation reasons so users can understand why a memory was suggested or rejected.
+- Model lineup refresh. The selectable DeepSeek route is now DeepSeek V4 Pro, with title summarization continuing on `qwen3-30b-a3b`.
+
+### Included in this release
+
+- SQLite schema migration for `normalized_content`, `keywords`, `importance`, `access_count`, and `last_accessed_at`.
+- Chinese-aware tokenization and similarity matching for memory search, duplicate detection, and deletion-by-content suggestions.
+- FZU-specific category aliases and validation rules for course, selection, academic-query, campus-life, campus, and dining preferences.
+- Prompt updates that instruct the agent to use confirmed memory only when relevant and to keep volatile academic facts in live educational-tool queries.
+- Frontend memory-card improvements for importance, match score, similarity, and validation messaging.
+- API and documentation version updates for v4.0.
+
+### Validation
+
+- python -m compileall app
+- temporary SQLite memory-policy smoke test for save, confirm, dedupe, invalid academic facts, identity-fact blocking, retrieval ranking, and delete-by-similar-content
+- cd frontend && npm run build
+- cd frontend && npm run lint
+- git diff --check
+
+---
+
+## 福大灵犀 v4.0
+
+福大灵犀 v4.0 将长期记忆从“确认后保存的简单备注”升级为面向福大场景的个性化能力。系统现在会区分可长期复用的用户偏好和应实时查询的教务事实，并根据相关性、重要度、使用痕迹与更新时间综合检索记忆。
+
+### 版本亮点
+
+- 福大场景个性化记忆。长期记忆现在重点服务称呼偏好、回答风格、选课习惯、教务查询展示偏好、校园生活需求、餐饮偏好和校区偏好等可复用场景。
+- 明确区分记忆与实时教务数据。成绩、绩点、排名、学分、课表、考场、考试安排、选课结果、学生身份事实、培养方案正文和校历日期不会写入长期记忆，应通过教务工具实时查询。
+- 更智能的记忆检索与去重。记忆存储新增规范化文本、关键词、重要度、访问次数和最近访问时间，并按相关性、重要度、最近使用与更新时间综合排序。
+- 更安全的记忆建议。保存建议会先经过长期价值、敏感信息、临时事实和相似重复检测，再展示给用户确认。
+- 更清楚的记忆管理卡片。前端会展示重要度、匹配分、相似度和校验失败原因，用户能更直观看懂系统为什么建议保存或拒绝保存。
+- 模型列表更新。DeepSeek 路由更新为 DeepSeek V4 Pro，标题总结继续使用 `qwen3-30b-a3b`。
+
+### 本次发布包含
+
+- 为长期记忆 SQLite 表增加 `normalized_content`、`keywords`、`importance`、`access_count`、`last_accessed_at` 的兼容迁移。
+- 面向中文表达的分词与相似度匹配，用于记忆搜索、重复检测和按内容删除建议。
+- 针对课程、选课、教务查询、校园生活、校区和餐饮偏好的福大专属分类别名与校验规则。
+- 提示词更新：只在相关时使用已确认记忆，并要求成绩、课表、考场等易变事实继续实时调用教务工具。
+- 前端记忆卡片补充重要度、匹配分、相似度和校验原因展示。
+- API 与说明文档版本更新到 v4.0。
+
+### 验证
+
+- python -m compileall app
+- 临时 SQLite 记忆策略测试：保存建议、确认写入、相似去重、教务事实拒绝、身份事实拦截、检索排序、按相似内容删除建议
+- cd frontend && npm run build
+- cd frontend && npm run lint
+- git diff --check
+
+---
+
 ## [v3.2] - 2026-04-28
 
 FZU-Chat v3.2 focuses on polishing post-v3.1 chat behavior. This release fixes a model-selection regression when users start a new conversation while another one is still streaming, and moves the blank pre-tool-call chunk fix fully into the backend so Kimi's leading whitespace deltas are suppressed at the source instead of being hidden in the frontend.

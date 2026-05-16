@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-当前已标记版本：[v3.2](CHANGELOG.md)
+当前已标记版本：[v4.0](CHANGELOG.md)
 
 版本记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -24,7 +24,8 @@
 - **教务会话安全清理**：登录时仅在服务端暂存教务系统会话 Cookie，不保存教务密码；退出登录会同时清除站点登录态和暂存的教务会话 Cookie
 - **ChatGPT 风格界面**：现代暗色主题，侧边栏历史记录、快捷操作、流式回复
 - **丰富的工具卡片**：可视化工具调用过程，结构化展示成绩表格和课表
-- **多模型支持**：华为云 MaaS 的 GLM-5.1、Kimi K2.6、DeepSeek-V3.2 可选，标题总结内部使用 qwen3-30b-a3b
+- **多模型支持**：华为云 MaaS 的 GLM-5.1、Kimi K2.6、DeepSeek V4 Pro 可选，标题总结内部使用 qwen3-30b-a3b
+- **福大场景个性化记忆**：在用户确认后保存称呼、回答风格、选课习惯、教务查询展示、校园生活、餐饮与校区等长期偏好；成绩、绩点、课表、考场等易变教务事实仍通过工具实时查询
 - **知识库 + 网络搜索**：FAISS 本地检索 + 博查网络搜索兜底
 - **Docker 部署**：多阶段构建，React 前端 + Python 后端
 
@@ -38,6 +39,8 @@ fzu-chat/
 │   ├── auth.py            # Token 认证与会话管理
 │   ├── jwch_client.py     # 福大本科教务系统客户端（Python 实现）
 │   ├── edu_tools.py       # LangGraph 教务查询工具
+│   ├── user_memory_tools.py # 需用户确认的个性化记忆工具
+│   ├── memory_store.py    # SQLite 长期记忆存储
 │   ├── data/              # 知识库文档
 │   ├── faiss/             # FAISS 向量数据库
 │   ├── png/               # 静态资源
@@ -53,7 +56,7 @@ fzu-chat/
 
 ## 必需的 API 密钥
 
-- `HUAWEICLOUD_MAAS_API_KEY` – 华为云 MaaS OpenAI 兼容接口，用于 GLM-5.1、Kimi K2.6、DeepSeek-V3.2 与 Qwen3-32B 标题总结
+- `HUAWEICLOUD_MAAS_API_KEY` – 华为云 MaaS OpenAI 兼容接口，用于 GLM-5.1、Kimi K2.6、DeepSeek V4 Pro 与 qwen3-30b-a3b 标题总结
 - `DASHSCOPE_API_KEY` – 阿里云 DashScope 向量化，用于本地知识库 embedding
 - `BOCHA_API_KEY` – 博查网络搜索
 - `LANGSMITH_API_KEY` – LangSmith 追踪
@@ -109,6 +112,7 @@ docker compose up -d --build
 - `DELETE /api/conversations/{id}` – 删除对话
 - `POST /api/conversations/{id}/messages` – 流式生成回复（SSE）
 - `POST /api/conversations/{id}/feedback` – 提交反馈
+- `POST /api/conversations/{id}/memory-proposals/{tool_id}` – 确认或忽略记忆保存/删除建议
 
 ### 教务工具（Agent 自动调用）
 AI 助手在学生询问教务数据时自动调用：

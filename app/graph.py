@@ -38,6 +38,7 @@ import langchain_openai.chat_models.base as langchain_openai_base
 from langgraph.graph import END, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
+from .memory_store import user_memory_store
 from .security_utils import ensure_private_dir, ensure_private_file, env_flag
 
 try:
@@ -64,12 +65,12 @@ HUAWEICLOUD_OPENAI_BASE_URL = os.getenv(
 )
 DEFAULT_CHAT_MODEL = "glm-5.1"
 KIMI_CHAT_MODEL = "kimi-k2.6"
-DEEPSEEK_V4_FLASH_CHAT_MODEL = "deepseek-v4-flash"
+DEEPSEEK_V4_PRO_CHAT_MODEL = "deepseek-v4-pro"
 TITLE_SUMMARY_MODEL = "qwen3-30b-a3b"
 CHAT_MODEL_OPTIONS = {
     DEFAULT_CHAT_MODEL: "GLM-5.1",
     KIMI_CHAT_MODEL: "Kimi K2.6",
-    DEEPSEEK_V4_FLASH_CHAT_MODEL: "DeepSeek V4 Flash"
+    DEEPSEEK_V4_PRO_CHAT_MODEL: "DeepSeek V4 Pro"
 }
 SEARCH_RESULT_TOOL_NAMES = {"retrieve", "bocha_websearch_tool"}
 SEARCH_RESULT_CITATION_RE = re.compile(r"^\[(\d+)\]$")
@@ -754,7 +755,33 @@ def retrieve(query: str):
     serialized = "\n\n".join(format_retrieve_citation_item(item) for item in citation_items)
     return serialized, citation_items
 
-def _build_query_or_respond(edu_tools, user_memory_tools):
+
+def build_confirmed_user_memory_context(user_id: str, limit: int = 8) -> str:
+    if not user_id:
+        return ""
+    try:
+        memories = user_memory_store.get_context_memories(user_id, limit=limit)
+    except Exception:
+        logger.warning("Failed to load user memory context.", exc_info=True)
+        return ""
+    if not memories:
+        return ""
+
+    lines = [
+        "已确认的福大灵犀个性化长期记忆（仅在与当前问题相关时使用；教务事实仍应以教务工具实时查询为准；如果与用户本轮消息冲突，以用户本轮消息为准）：",
+    ]
+    for index, memory_item in enumerate(memories, start=1):
+        category = memory_item.get("category") or "未分类"
+        content = memory_item.get("content") or ""
+        importance = memory_item.get("importance", 50)
+        lines.append(f"{index}. [{category}] {content}（重要度 {importance}/100）")
+    return "\n".join(lines)
+
+
+def _build_query_or_respond(edu_tools, user_memory_tools, request_context: Dict[str, Any] | None = None):
+    request_context = request_context or {}
+    user_id = str(request_context.get("user_id") or "").strip()
+
     def query_or_respond(state: MessagesState, config: RunnableConfig | None = None):
         """Generate tool call for retrieval or respond."""
         config = config or {}
@@ -779,6 +806,7 @@ def _build_query_or_respond(edu_tools, user_memory_tools):
         current_context = f"当前时间：{current_time}。"
         if current_teaching_week:
             current_context += f"当前教学周：{current_teaching_week}。"
+        user_memory_context = build_confirmed_user_memory_context(user_id)
         sys_prompt = f"""作为福大灵犀，你是一个温暖亲切的福州大学AI助手。请用以下风格与用户交流：
 
 1. 开场、结尾与身份：
@@ -820,15 +848,23 @@ def _build_query_or_respond(edu_tools, user_memory_tools):
 
 3.1 个性化记忆工具：
     你拥有以下用户个性化记忆工具：
-    - query_user_memory: 查询当前用户已确认保存的长期偏好、背景和习惯，也可在 query 为空时列出最近保存的全部记忆
-    - save_user_memory: 生成一条待确认保存的记忆建议，只有用户在前端卡片点击确认后才会真正写入数据库
+    - query_user_memory: 智能查询当前用户已确认保存的长期偏好、背景和习惯，也可在 query 为空时列出最近保存的全部记忆
+    - save_user_memory: 生成一条待确认保存的记忆建议，只有用户在前端卡片点击确认后才会真正写入数据库；系统会进行敏感信息、临时信息和相似重复检测
     - delete_user_memory: 生成一条待确认删除的记忆建议，只有用户在前端卡片点击确认后才会真正删除
 
     使用规则：
-    - 当回答明显依赖用户的长期偏好、称呼、饮食习惯、学习目标、输出风格或其他稳定背景时，可先调用 query_user_memory
+    - 福大灵犀的记忆重点是让校内问答、教务查询解释、选课建议、学习规划和校园生活推荐更贴合用户；不是替代教务系统数据库
+    - 推荐保存的高价值类别：称呼偏好、输出风格、沟通偏好、餐饮偏好、校区偏好、校园生活偏好、学习目标、学业规划、课程偏好、选课偏好、教务查询偏好、时间展示偏好
+    - 下面若出现“已确认的福大灵犀个性化长期记忆”，可直接作为背景参考；只有与当前问题相关时才使用，不要为了展示记忆而生硬提及
+    - 当回答明显依赖用户的长期偏好、称呼、餐饮习惯、校区偏好、学习目标、课程/选课偏好、输出风格或其他稳定背景，但下方记忆不足或需要精确 ID 时，先调用 query_user_memory
     - 当用户要求“看看你记住了什么”“管理/删除记忆”“忘掉某条偏好”等需求时，应先调用 query_user_memory 查看现有记忆及其 ID，再按需调用 delete_user_memory
-    - 只有当用户在对话中明确表达了长期稳定、未来复用价值高的信息时，才调用 save_user_memory
-    - 不要保存临时安排、一次性需求、短期情绪、教务账号密码、证件号、手机号、邮箱等敏感或易变信息
+    - 保存前先问自己：未来回答会因为保存这条信息而明显更贴合用户吗？如果答案是否定的，不要调用 save_user_memory
+    - 只有当用户消息本身明确表达了长期稳定、未来复用价值高的信息时，才调用 save_user_memory；不要把助手自己的猜测、一次性任务过程或临时状态保存为记忆
+    - 记忆应是单条、原子化、可复用的事实或偏好，例如“用户选课推荐优先无早八”“用户查成绩时希望先看绩点和排名变化”“用户更关注旗山校区餐饮推荐”；内容要短而准确
+    - 不要保存临时安排、一次性需求、短期情绪、教务账号密码、证件号、手机号、邮箱、准考证号等敏感或易变信息
+    - 不要把成绩、绩点、排名、学分、课表、考场、考试安排、选课结果、培养方案正文、校历日期、学院/专业/班级/年级等教务事实写入长期记忆；这类信息应调用教务工具实时查询
+    - 可以保存“如何展示或推荐教务信息”的长期偏好，例如默认按周几排序课表、成绩解释先给结论、选课推荐避开早八；但不能保存具体课表/成绩/考场数值本身
+    - 用户本轮明确表达的偏好优先级高于旧记忆；如果用户纠正旧记忆，应查询旧记忆并发起删除或更新建议
     - 调用 save_user_memory 后，只能表述为“已发起保存建议，等待确认”，不能说成已经保存成功
     - 调用 delete_user_memory 后，只能表述为“已发起删除建议，等待确认”，不能说成已经删除成功
     - 如果用户要删除全部或一批记忆，可以多次调用 delete_user_memory 逐条发起删除建议
@@ -872,6 +908,8 @@ def _build_query_or_respond(edu_tools, user_memory_tools):
 
 {current_context}1-4节在上午，5-8节在下午，9-11节在晚上。请注意校内知识库可能不包含最新信息哦～
 
+{user_memory_context}
+
 工具使用要求：
 - 若有现成工具可完成任务，则应直接使用工具，而非要求用户手动操作
 - 若你已声明将执行某项操作，便应直接调用工具完成，无需再征求用户许可
@@ -907,7 +945,7 @@ def build_graph(edu_session: Dict[str, Any] | None = None, use_checkpointer: boo
 
     edu_tools = build_edu_tools(edu_session)
     user_memory_tools = build_user_memory_tools(edu_session)
-    query_or_respond = _build_query_or_respond(edu_tools, user_memory_tools)
+    query_or_respond = _build_query_or_respond(edu_tools, user_memory_tools, edu_session)
     raw_tools = ToolNode([retrieve, bocha_websearch_tool] + edu_tools + user_memory_tools)
 
     def tools(state: MessagesState, config: RunnableConfig | None = None):

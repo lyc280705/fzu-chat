@@ -248,7 +248,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="FZU Chat API", version="3.0.0", lifespan=lifespan)
+app = FastAPI(title="FZU Chat API", version="4.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
@@ -736,6 +736,7 @@ def summarize_tool_args(args: Any) -> str:
         category = str(args.get("category", "") or "").strip()
         content = str(args.get("content", "") or "").strip()
         reason = str(args.get("reason", "") or "").strip()
+        importance = str(args.get("importance", "") or "").strip()
         if category:
             parts.append(f"分类：{category}")
         if content:
@@ -744,6 +745,8 @@ def summarize_tool_args(args: Any) -> str:
         if reason:
             preview = reason[:24] + ("…" if len(reason) > 24 else "")
             parts.append(f"原因：{preview}")
+        if importance and importance != "0":
+            parts.append(f"重要度：{importance}")
         if parts:
             return "；".join(parts)
 
@@ -1439,6 +1442,7 @@ def update_memory_proposal(
                 category=str(data.get("category") or "").strip(),
                 reason=str(data.get("reason") or "").strip(),
                 source="assistant",
+                importance=data.get("importance") or 50,
             )
             updated_part = {
                 **part,

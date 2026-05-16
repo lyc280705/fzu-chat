@@ -1187,6 +1187,10 @@ function UserMemoryListCard({ data }) {
   if (!data || typeof data !== 'object') return null
   const items = Array.isArray(data.items) ? data.items : []
   const hasFilter = Boolean(data.query || data.category)
+  const showScore = items.some((item) => item.score !== undefined && item.score !== null)
+  const headers = showScore
+    ? ['分类', '内容', '备注', '重要度', '匹配分', '更新时间']
+    : ['分类', '内容', '备注', '重要度', '更新时间']
 
   return (
     <div className="tool-sections">
@@ -1197,8 +1201,13 @@ function UserMemoryListCard({ data }) {
       </div>
       {items.length > 0 ? (
         <StructuredTable
-          headers={['分类', '内容', '备注', '更新时间']}
-          rows={items.map((item) => [item.category || '未分类', item.content || '—', item.reason || '—', fmt(item.updated_at) || '—'])}
+          headers={headers}
+          rows={items.map((item) => {
+            const base = [item.category || '未分类', item.content || '—', item.reason || '—', item.importance ? `${item.importance}/100` : '—']
+            if (showScore) base.push(item.score !== undefined && item.score !== null ? String(item.score) : '—')
+            base.push(fmt(item.updated_at) || '—')
+            return base
+          })}
         />
       ) : (
         <div className="memory-empty-state">{hasFilter ? '没有找到匹配的个性化记忆' : '当前还没有可用的个性化记忆'}</div>
@@ -1236,6 +1245,8 @@ function UserMemorySaveCard({ part, data, conversationId, messageId, onAction })
       分类: data?.category || '未分类',
       内容: data?.content || '—',
       原因: data?.reason || '—',
+      重要度: data?.importance ? `${data.importance}/100` : '',
+      相似度: data?.duplicate_similarity ? `${Math.round(Number(data.duplicate_similarity) * 100)}%` : '',
     }).filter(([, value]) => value),
   )
 
@@ -1274,8 +1285,8 @@ function UserMemorySaveCard({ part, data, conversationId, messageId, onAction })
 
         {status === 'saved' && <div className="memory-proposal-note">{savedAt ? `已于 ${fmt(savedAt)} 保存到个性化记忆` : '这条信息已保存到个性化记忆'}</div>}
         {status === 'dismissed' && <div className="memory-proposal-note">这条记忆建议已忽略，不会被保存。</div>}
-        {status === 'already_saved' && <div className="memory-proposal-note">相同内容已存在，无需重复保存。</div>}
-        {status === 'invalid' && <div className="memory-proposal-note">这条内容不适合保存为长期个性化记忆。</div>}
+        {status === 'already_saved' && <div className="memory-proposal-note">相同或相似内容已存在，无需重复保存。</div>}
+        {status === 'invalid' && <div className="memory-proposal-note">{data?.validation || '这条内容不适合保存为长期个性化记忆。'}</div>}
         {status === 'unavailable' && <div className="memory-proposal-note">当前无法写入个性化记忆，请稍后重试。</div>}
         {actionError && <div className="memory-proposal-error">{actionError}</div>}
       </section>
@@ -1324,8 +1335,8 @@ function UserMemoryDeleteCard({ part, data, conversationId, messageId, onAction 
 
         {items.length > 0 ? (
           <StructuredTable
-            headers={['分类', '内容', '备注', '更新时间']}
-            rows={items.map((item) => [item.category || '未分类', item.content || '—', item.reason || '—', fmt(item.updated_at) || '—'])}
+            headers={['分类', '内容', '备注', '重要度', '更新时间']}
+            rows={items.map((item) => [item.category || '未分类', item.content || '—', item.reason || '—', item.importance ? `${item.importance}/100` : '—', fmt(item.updated_at) || '—'])}
           />
         ) : (
           <div className="memory-empty-state">当前没有可展示的目标记忆</div>

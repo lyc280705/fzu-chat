@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v3.2](CHANGELOG.md)
+Current tagged release: [v4.0](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -24,7 +24,8 @@ FZU-Chat provides a ChatGPT-style conversation experience for Fuzhou University 
 - **Educational session cleanup**: The app only keeps educational-system session cookies on the server side and never stores the raw password; logging out clears both the site login state and the cached educational-session cookies
 - **ChatGPT-style interface**: Modern dark UI with sidebar history, quick actions, and streaming replies
 - **Rich tool cards**: Visual display of tool calls with structured data tables for grades and courses
-- **Multi-model support**: Huawei Cloud MaaS GLM-5.1, Kimi K2.6, and DeepSeek-V3.2 selection, with qwen3-30b-a3b for title summarization
+- **Multi-model support**: Huawei Cloud MaaS GLM-5.1, Kimi K2.6, and DeepSeek V4 Pro selection, with qwen3-30b-a3b for title summarization
+- **FZU-aware personalized memory**: Confirmed long-term preferences for names, answer style, course-selection habits, academic-query presentation, campus-life needs, and dining/campus preferences, while volatile educational facts remain live tool queries
 - **Knowledge + web search**: FAISS retrieval plus Bocha web search fallback
 - **Docker deployment**: Multi-stage build for React frontend + Python backend
 
@@ -38,6 +39,8 @@ fzu-chat/
 │   ├── auth.py            # Token-based authentication & session management
 │   ├── jwch_client.py     # FZU undergraduate system client (Python port)
 │   ├── edu_tools.py       # LangGraph tools for educational queries
+│   ├── user_memory_tools.py # Confirmed personalized-memory tools
+│   ├── memory_store.py    # SQLite-backed long-term memory store
 │   ├── data/              # Knowledge base documents
 │   ├── faiss/             # FAISS vector database
 │   ├── png/               # Static assets
@@ -53,7 +56,7 @@ fzu-chat/
 
 ## Required API Keys
 
-- `HUAWEICLOUD_MAAS_API_KEY` – Huawei Cloud MaaS OpenAI-compatible API for GLM-5.1, Kimi K2.6, DeepSeek-V3.2, and Qwen3-32B title summarization
+- `HUAWEICLOUD_MAAS_API_KEY` – Huawei Cloud MaaS OpenAI-compatible API for GLM-5.1, Kimi K2.6, DeepSeek V4 Pro, and qwen3-30b-a3b title summarization
 - `DASHSCOPE_API_KEY` – Alibaba Cloud DashScope embeddings for the local knowledge base
 - `BOCHA_API_KEY` – Bocha web search
 - `LANGSMITH_API_KEY` – LangSmith tracing
@@ -109,6 +112,7 @@ docker compose up -d --build
 - `DELETE /api/conversations/{id}` – Delete conversation
 - `POST /api/conversations/{id}/messages` – Stream assistant response (SSE)
 - `POST /api/conversations/{id}/feedback` – Save feedback
+- `POST /api/conversations/{id}/memory-proposals/{tool_id}` – Confirm or dismiss a memory save/delete proposal
 
 ### Educational Tools (via Agent)
 The LLM agent can automatically call these tools when students ask about their academic data:
