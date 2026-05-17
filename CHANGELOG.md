@@ -14,6 +14,7 @@ FZU-Chat v5.0 is a full interaction-experience release. It tightens the main cha
 - Branch-safe rerun behavior. `POST /api/conversations/{id}/messages` accepts `rerun_message_id` to truncate later history, optionally update the original user message, and stream a replacement assistant response without changing the SSE event format.
 - Accessibility improvements. The UI now includes a skip link, clearer focus handling, screen-reader status announcements, a live chat log, dialog focus management, explicit composer labels, and stronger keyboard affordances.
 - Mobile and visual polish. The mobile sidebar button no longer overlaps the chat title, the stop button uses a softer pause affordance, message action buttons are always visible, icon-only, and tooltip-backed, the scroll-to-bottom button sits farther to the right, and message/tool states are easier to scan.
+- Localized tool states. Memory and tool-card status summaries now translate persisted states such as `saved`, `submitted`, and `success` into Chinese labels, including older conversation cards.
 - Local key-file fallback. Development servers can read root-level `*_api_key.txt` files when container secrets and environment variables are unavailable.
 
 ### Included in this release
@@ -45,6 +46,7 @@ FZU-Chat v5.0 is a full interaction-experience release. It tightens the main cha
 - 分支安全的重跑行为。`POST /api/conversations/{id}/messages` 支持 `rerun_message_id`，可截断后续历史、按需更新原始用户消息，并沿用原 SSE 事件格式流式返回新回复。
 - 无障碍增强。界面补充跳过链接、清晰焦点、屏幕阅读器状态播报、聊天日志 live region、弹窗焦点管理、输入框显式标签和更稳定的键盘操作。
 - 移动端与视觉打磨。移动端侧栏按钮不再遮挡标题，停止按钮改为更柔和的暂停图标，消息操作按钮常显、统一为纯图标并保留悬浮提示，“回到底部”按钮进一步右移，消息与工具状态更易扫读。
+- 工具状态中文化。记忆和工具卡片摘要会把 `saved`、`submitted`、`success` 等已持久化状态映射为中文，也能覆盖旧会话卡片。
 - 本地密钥文件兜底。开发环境在没有容器 secret 或环境变量时，可读取项目根目录的 `*_api_key.txt` 文件启动。
 
 ### 本次发布包含

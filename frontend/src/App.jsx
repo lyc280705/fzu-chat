@@ -581,6 +581,32 @@ const previousUserMessage = (messages = [], messageId) => {
 const canFeedback = (m) => m.role === 'assistant' && !m.isDraft && !m.isLocalOnly && !m.isErrorFallback
 const isStoppedMessage = (m) => Boolean(m?.isStopped ?? m?.is_stopped ?? m?.stream_stopped)
 
+const STATUS_LABELS = {
+  pending_confirmation: '等待确认',
+  saved: '已保存',
+  deleted: '已删除',
+  dismissed: '已忽略',
+  already_saved: '已存在',
+  already_deleted: '已删除',
+  not_found: '未找到',
+  invalid: '无效',
+  unavailable: '不可用',
+  error: '失败',
+  success: '已成功',
+  submitted: '已提交',
+  open: '开放中',
+  closed: '未开放',
+  upcoming: '未开始',
+  unknown: '状态未知',
+}
+
+const statusLabel = (status, fallback = '状态未知') => {
+  const value = String(status || '').trim()
+  if (!value) return fallback
+  if (STATUS_LABELS[value]) return STATUS_LABELS[value]
+  return /[\u4e00-\u9fff]/.test(value) ? value : fallback
+}
+
 const toolResultSummary = (part = {}) => {
   const data = part.data
   if (!data) return ''
@@ -593,9 +619,42 @@ const toolResultSummary = (part = {}) => {
   if (part.tool_name === 'query_exam_scores' && Array.isArray(data)) return `${data.length} 条成绩`
   if (part.tool_name === 'query_exam_rooms' && Array.isArray(data.exams)) return `${data.exams.length} 场考试`
   if (part.tool_name === 'query_user_memory' && Array.isArray(data.memories)) return `${data.memories.length} 条记忆`
-  if (data.status === 'pending_confirmation') return '等待确认'
-  if (data.status) return String(data.status)
+  if (data.status) return statusLabel(data.status)
   return ''
+}
+
+const memoryToolTitle = (part = {}) => {
+  const status = part.data?.status
+  if (part.tool_name === 'save_user_memory') {
+    return {
+      pending_confirmation: '记忆保存待确认',
+      saved: '记忆已保存',
+      dismissed: '已忽略保存建议',
+      already_saved: '记忆已存在',
+      invalid: '记忆建议无效',
+      unavailable: '暂时无法保存记忆',
+      error: '记忆保存失败',
+    }[status] || '记忆建议已生成'
+  }
+  if (part.tool_name === 'delete_user_memory') {
+    return {
+      pending_confirmation: '记忆删除待确认',
+      deleted: '记忆已删除',
+      dismissed: '已忽略删除建议',
+      already_deleted: '记忆已不存在',
+      not_found: '未找到待删除记忆',
+      invalid: '删除建议无效',
+      unavailable: '暂时无法删除记忆',
+      error: '记忆删除失败',
+    }[status] || '记忆删除建议已生成'
+  }
+  return ''
+}
+
+const toolCardTitle = (part = {}) => {
+  const memoryTitle = memoryToolTitle(part)
+  if (memoryTitle) return memoryTitle
+  return part.status_label || '工具调用'
 }
 
 const normMsgs = (msgs = []) =>
@@ -1367,20 +1426,9 @@ function CourseSelectionCard({ data }) {
 }
 
 function MemoryStatusBadge({ status }) {
-  const labelMap = {
-    pending_confirmation: '待确认',
-    saved: '已保存',
-    deleted: '已删除',
-    dismissed: '已忽略',
-    already_saved: '已存在',
-    already_deleted: '已删除',
-    not_found: '未找到',
-    invalid: '无效',
-    unavailable: '不可用',
-    error: '失败',
-  }
+  const label = status === 'pending_confirmation' ? '待确认' : statusLabel(status, '不可用')
 
-  return <span className={`memory-status-badge memory-status-badge--${status || 'unavailable'}`}>{labelMap[status] || '不可用'}</span>
+  return <span className={`memory-status-badge memory-status-badge--${status || 'unavailable'}`}>{label}</span>
 }
 
 function UserMemoryListCard({ data }) {
@@ -1699,6 +1747,7 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
   const needsConfirmation = part.data?.status === 'pending_confirmation'
   const isFailed = part.status === 'error' || ['invalid', 'unavailable', 'error'].includes(part.data?.status)
   const statusClass = isRunning ? 'running' : isStopped ? 'stopped' : isFailed ? 'error' : needsConfirmation ? 'action' : 'done'
+  const title = toolCardTitle(part)
   const summary = toolResultSummary(part)
   const showRawUrls = !['query_cultivate_plan', 'retrieve', 'bocha_websearch_tool'].includes(part.tool_name)
   const [expanded, setExpanded] = useState(() => !EDUCATIONAL_TOOL_NAMES.has(part.tool_name))
@@ -1762,7 +1811,7 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
       <div className="tool-card-header">
         <div className="tool-card-heading">
           <span className="tool-card-icon">{icon}</span>
-          <span className="tool-card-title">{part.status_label}</span>
+          <span className="tool-card-title">{title}</span>
           {summary && <span className="tool-card-summary">{summary}</span>}
         </div>
         <div className="tool-card-actions">
