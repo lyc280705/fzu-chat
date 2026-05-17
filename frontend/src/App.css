@@ -1757,8 +1757,8 @@ summary:focus-visible {
   flex-wrap: wrap;
   gap: 0.4rem;
   margin-top: 0.45rem;
-  opacity: 0;
-  transform: translateY(-2px);
+  opacity: 1;
+  transform: none;
   transition: opacity 0.15s, transform 0.15s;
 }
 
@@ -2725,7 +2725,7 @@ summary:focus-visible {
 
 .scroll-bottom-btn {
   position: absolute;
-  right: 0;
+  right: -0.6rem;
   top: -2.4rem;
   display: inline-flex;
   align-items: center;
@@ -2993,7 +2993,7 @@ summary:focus-visible {
   }
 
   .scroll-bottom-btn {
-    right: 0.25rem;
+    right: -0.35rem;
   }
 
   .msg-copy-btn {
