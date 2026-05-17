@@ -827,18 +827,6 @@ summary:focus-visible {
   font-size: 0.82rem;
 }
 
-.convo-search__clear {
-  width: 1.55rem;
-  height: 1.55rem;
-  border-radius: 8px;
-  color: #94a3b8;
-}
-
-.convo-search__clear:hover {
-  background: rgba(148, 163, 184, 0.12);
-  color: #e5e7eb;
-}
-
 .section-title {
   color: #64748b;
   font-size: 0.72rem;

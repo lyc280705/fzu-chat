@@ -2929,11 +2929,6 @@ function App() {
               onChange={(event) => setConversationQuery(event.target.value)}
               placeholder="搜索标题或内容"
             />
-            {conversationQuery && (
-              <IconButton label="清空搜索" className="convo-search__clear" onClick={() => setConversationQuery('')}>
-                <X size={14} aria-hidden="true" />
-              </IconButton>
-            )}
           </label>
           <div className="convo-list">
             {conversations.length === 0
