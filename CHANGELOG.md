@@ -3,6 +3,68 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v5.0] - 2026-05-17
+
+FZU-Chat v5.0 is a full interaction-experience release. It tightens the main chat loop with ChatGPT-style edit, copy, and regenerate actions; makes stopped streams preserve already generated content; improves mobile layout and local development startup; and adds accessibility affordances across the chat surface.
+
+### Highlights
+
+- Stopped responses now preserve generated content. If a user stops streaming, visible assistant text and completed tool parts remain available unless the user explicitly regenerates the response or edits the original user message.
+- ChatGPT-style message actions. Users can copy a message with a clipboard fallback, regenerate an assistant response from the previous user prompt, or edit a sent user message and rebuild the following response branch.
+- Branch-safe rerun behavior. `POST /api/conversations/{id}/messages` accepts `rerun_message_id` to truncate later history, optionally update the original user message, and stream a replacement assistant response without changing the SSE event format.
+- Accessibility improvements. The UI now includes a skip link, clearer focus handling, screen-reader status announcements, a live chat log, dialog focus management, explicit composer labels, and stronger keyboard affordances.
+- Mobile and visual polish. The mobile sidebar button no longer overlaps the chat title, the stop button uses a softer pause affordance, message action buttons are icon-only with tooltips, and message/tool states are easier to scan.
+- Local key-file fallback. Development servers can read root-level `*_api_key.txt` files when container secrets and environment variables are unavailable.
+
+### Included in this release
+
+- Frontend safeguards that merge a stopped server response with the current visible draft when needed, preventing already rendered content from being replaced by a generic stopped message.
+- Backend text recovery from persisted message parts before falling back to `已停止响应。`.
+- Conversation-store support for truncating after an existing user message, which powers edit-and-regenerate flows.
+- Login, sidebar, composer, privacy reset, message action, feedback, tool-card, and mobile table UX improvements from the interaction-optimization pass.
+- API and documentation version updates for v5.0.
+
+### Validation
+
+- conda run -n langchain python -m compileall app
+- cd frontend && npm run lint
+- cd frontend && npm run build
+- Temporary SQLite rerun-store smoke test
+- Browser smoke test at 390px mobile width for header layout, stop button, stopped response state, copy, edit, and regenerate actions
+
+---
+
+## 福大灵犀 v5.0
+
+福大灵犀 v5.0 是一次完整的人机交互体验发布。主聊天链路新增类似 ChatGPT 的复制、重新生成和修改已发送消息能力；停止流式响应后会保留已经生成的内容；同时补齐移动端布局、本地开发启动和无障碍体验。
+
+### 版本亮点
+
+- 停止响应后保留已生成内容。用户停止流式输出时，已经可见的助手文本和已完成工具结果会保留下来；只有点击重新生成或修改原始用户消息时，后续回复分支才会被替换。
+- ChatGPT 风格消息操作。用户可以复制消息，复制操作带剪贴板兜底；也可以基于上一条用户问题重新生成助手回复，或修改已发送的问题并重建后续回答。
+- 分支安全的重跑行为。`POST /api/conversations/{id}/messages` 支持 `rerun_message_id`，可截断后续历史、按需更新原始用户消息，并沿用原 SSE 事件格式流式返回新回复。
+- 无障碍增强。界面补充跳过链接、清晰焦点、屏幕阅读器状态播报、聊天日志 live region、弹窗焦点管理、输入框显式标签和更稳定的键盘操作。
+- 移动端与视觉打磨。移动端侧栏按钮不再遮挡标题，停止按钮改为更柔和的暂停图标，消息操作按钮统一为纯图标并保留悬浮提示，消息与工具状态更易扫读。
+- 本地密钥文件兜底。开发环境在没有容器 secret 或环境变量时，可读取项目根目录的 `*_api_key.txt` 文件启动。
+
+### 本次发布包含
+
+- 前端在停止响应时用当前可见草稿兜底合并服务端 stopped 消息，避免已渲染内容被通用“已停止响应”覆盖。
+- 后端在落库前从消息 parts 恢复正文，只有没有任何可保存内容时才使用 `已停止响应。`。
+- 对话存储新增按既有用户消息截断后续历史的能力，用于修改消息和重新生成。
+- 登录、侧栏、输入区、隐私清空、消息操作、反馈、工具卡片和移动端表格等交互优化。
+- API 与说明文档版本更新到 v5.0。
+
+### 验证
+
+- conda run -n langchain python -m compileall app
+- cd frontend && npm run lint
+- cd frontend && npm run build
+- 临时 SQLite 重跑分支存储测试
+- 390px 移动端浏览器冒烟测试：标题布局、停止按钮、停止后的回复状态、复制、修改和重新生成
+
+---
+
 ## [v4.0] - 2026-05-16
 
 FZU-Chat v4.0 upgrades long-term memory from a simple confirmed note list into an FZU-aware personalization layer. The assistant now distinguishes durable user preferences from volatile academic facts, ranks memories by relevance and usefulness, blocks sensitive or short-lived data, and injects only high-value confirmed memory into the conversation context.

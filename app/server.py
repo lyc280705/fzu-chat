@@ -248,7 +248,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="FZU Chat API", version="4.0.0", lifespan=lifespan)
+app = FastAPI(title="FZU Chat API", version="5.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
@@ -328,6 +328,7 @@ class MessageCreateRequest(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
     model: str | None = None
     thinking_enabled: bool | None = None
+    rerun_message_id: str | None = Field(default=None, max_length=80)
 
 
 class FeedbackUpdateRequest(BaseModel):
@@ -1026,6 +1027,14 @@ def mark_running_tool_parts_stopped(parts: List[Dict[str, Any]]) -> None:
         part["status_label"] = f"{label}（已停止）"
 
 
+def text_from_message_parts(parts: List[Dict[str, Any]]) -> str:
+    return "".join(
+        str(part.get("content") or "")
+        for part in parts
+        if part.get("type") == "text"
+    ).strip()
+
+
 async def persist_assistant_message(
     user_id: str,
     conversation_id: str,
@@ -1035,7 +1044,7 @@ async def persist_assistant_message(
     reasoning_content: str = "",
 ) -> tuple[Dict[str, Any], Dict[str, Any], bool]:
     normalized_parts = [dict(part) for part in parts]
-    normalized_content = content.strip()
+    normalized_content = content.strip() or text_from_message_parts(normalized_parts)
     normalized_reasoning_content = reasoning_content.strip() or None
     if not normalized_content and not normalized_parts:
         normalized_content = "已停止响应。"
@@ -1382,11 +1391,25 @@ def get_conversation(cid: str, user: AuthUser = Depends(require_auth)):
 
 @app.patch("/api/conversations/{cid}", response_model=ConversationRecord)
 def update_conversation(cid: str, req: ConversationUpdateRequest, user: AuthUser = Depends(require_auth)):
+    next_title: str | None = None
+    if req.title is not None:
+        next_title = req.title.strip()
+        if not next_title:
+            raise HTTPException(status_code=400, detail="对话标题不能为空。")
+        if len(next_title) > MAX_TITLE_LENGTH:
+            raise HTTPException(status_code=400, detail=f"对话标题最多 {MAX_TITLE_LENGTH} 个字符。")
+
+    next_model: str | None = None
+    if req.model is not None:
+        if req.model not in MODEL_OPTIONS:
+            raise HTTPException(status_code=400, detail="所选模型不可用，请刷新页面后重试。")
+        next_model = req.model
+
     conversation = chat_store.update_conversation(
         user.user_id,
         cid,
-        title=req.title.strip() if req.title is not None else None,
-        model=req.model if req.model in MODEL_OPTIONS else None,
+        title=next_title,
+        model=next_model,
         updated_at=now_iso(),
     )
     if conversation is None:
@@ -1544,14 +1567,37 @@ async def create_message(
     )
 
     sel = normalize_model_id(req.model if req.model is not None else conv.get("model"))
-    umsg = {
-        "id": str(uuid4()), "role": "user", "content": content,
-        "timestamp": now_iso(), "parts": [{"type": "text", "content": content}],
-        "feedback": None,
-    }
-    conv = chat_store.append_message(user.user_id, cid, umsg, model=sel)
-    if conv is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+    rerun_message_id = (req.rerun_message_id or "").strip()
+    if rerun_message_id:
+        target_message = next((msg for msg in conv.get("messages", []) if msg.get("id") == rerun_message_id), None)
+        if target_message is None:
+            raise HTTPException(status_code=404, detail="未找到要重新生成的消息")
+        if target_message.get("role") != "user":
+            raise HTTPException(status_code=400, detail="只能基于已发送的问题重新生成回复")
+        timestamp = now_iso()
+        original_content = str(target_message.get("content") or "").strip()
+        conv = chat_store.truncate_after_user_message(
+            user.user_id,
+            cid,
+            rerun_message_id,
+            content=content if content != original_content else None,
+            model=sel,
+            updated_at=timestamp,
+        )
+        if conv is None:
+            raise HTTPException(status_code=404, detail="未找到要重新生成的消息")
+        umsg = next((msg for msg in conv.get("messages", []) if msg.get("id") == rerun_message_id), None)
+        if umsg is None:
+            raise HTTPException(status_code=404, detail="未找到要重新生成的消息")
+    else:
+        umsg = {
+            "id": str(uuid4()), "role": "user", "content": content,
+            "timestamp": now_iso(), "parts": [{"type": "text", "content": content}],
+            "feedback": None,
+        }
+        conv = chat_store.append_message(user.user_id, cid, umsg, model=sel)
+        if conv is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
     graph_messages = build_graph_input_messages(conv["messages"], sel)
 
     sess = refresh_edu_session_status(user.token) or get_session(user.token)

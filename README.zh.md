@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-当前已标记版本：[v4.0](CHANGELOG.md)
+当前已标记版本：[v5.0](CHANGELOG.md)
 
 版本记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -23,6 +23,8 @@
 - **教务系统工具**：查询成绩、课表、考试成绩、学生信息（基于 [west2-online/jwch](https://github.com/west2-online/jwch) 对接教务系统）
 - **教务会话安全清理**：登录时仅在服务端暂存教务系统会话 Cookie，不保存教务密码；退出登录会同时清除站点登录态和暂存的教务会话 Cookie
 - **ChatGPT 风格界面**：现代暗色主题，侧边栏历史记录、快捷操作、流式回复
+- **消息修改与重新生成**：纯图标操作支持复制回复、重新生成助手回答、修改已发送问题并重建后续回复分支
+- **无障碍交互优化**：补充键盘焦点、跳过链接、屏幕阅读器状态、弹窗焦点管理和聊天日志播报
 - **丰富的工具卡片**：可视化工具调用过程，结构化展示成绩表格和课表
 - **多模型支持**：华为云 MaaS 的 GLM-5.1、Kimi K2.6、DeepSeek V4 Pro 可选，标题总结内部使用 qwen3-30b-a3b
 - **福大场景个性化记忆**：在用户确认后保存称呼、回答风格、选课习惯、教务查询展示、校园生活、餐饮与校区等长期偏好；成绩、绩点、课表、考场等易变教务事实仍通过工具实时查询
@@ -60,6 +62,8 @@ fzu-chat/
 - `DASHSCOPE_API_KEY` – 阿里云 DashScope 向量化，用于本地知识库 embedding
 - `BOCHA_API_KEY` – 博查网络搜索
 - `LANGSMITH_API_KEY` – LangSmith 追踪
+
+本地开发时，如果未配置容器 secret 或环境变量，后端也会读取项目根目录下的 `huaweicloud_maas_api_key.txt`、`dashscope_api_key.txt`、`bocha_api_key.txt` 等密钥文件。
 
 ## 本地开发
 
@@ -111,6 +115,7 @@ docker compose up -d --build
 - `GET /api/conversations/{id}` – 对话详情
 - `DELETE /api/conversations/{id}` – 删除对话
 - `POST /api/conversations/{id}/messages` – 流式生成回复（SSE）
+- `POST /api/conversations/{id}/messages` 携带 `rerun_message_id` – 基于既有用户消息修改或重新生成，SSE 事件格式保持兼容
 - `POST /api/conversations/{id}/feedback` – 提交反馈
 - `POST /api/conversations/{id}/memory-proposals/{tool_id}` – 确认或忽略记忆保存/删除建议
 

@@ -618,15 +618,29 @@ def recover_invalid_tool_calls(message: Any) -> Any:
 
 
 def read_secret_or_env(secret_path: str, *env_names: str) -> str | None:
-    if os.path.exists(secret_path):
-        with open(secret_path, "r") as secret_file:
-            secret_value = secret_file.read().strip()
-            if secret_value:
-                return secret_value
+    secret_file_path = Path(secret_path)
+    if secret_file_path.exists():
+        secret_value = secret_file_path.read_text(encoding="utf-8").strip()
+        if secret_value:
+            return secret_value
+
     for env_name in env_names:
         env_value = os.getenv(env_name)
         if env_value:
             return env_value.strip()
+
+    project_root = BASE_DIR.parent
+    candidate_paths = []
+    for env_name in env_names:
+        normalized_name = env_name.strip().lower()
+        if normalized_name:
+            candidate_paths.append(project_root / f"{normalized_name}.txt")
+
+    for path in candidate_paths:
+        if path.exists():
+            secret_value = path.read_text(encoding="utf-8").strip()
+            if secret_value:
+                return secret_value
     return None
 
 

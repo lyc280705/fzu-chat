@@ -1,6 +1,32 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Eye,
+  EyeOff,
+  LogOut,
+  Menu,
+  MessageSquarePlus,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pencil,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  ThumbsDown,
+  ThumbsUp,
+  Trash2,
+  X,
+} from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { ChatComposer } from './components/ChatComposer.jsx'
+import { EmptyChatState } from './components/EmptyChatState.jsx'
+import { ConfirmDialog, IconButton } from './components/ui.jsx'
+import { useAutoResizeTextarea } from './hooks/useAutoResizeTextarea.js'
+import { useEscapeKey } from './hooks/useEscapeKey.js'
 import './App.css'
 
 /* ------------------------------------------------------------------ */
@@ -12,6 +38,7 @@ const AUTO_SCROLL_THRESHOLD = 80
 const THINKING_INDICATOR_DELAY = 1000
 const THINKING_STORAGE_KEY = 'fzu_thinking_enabled'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'fzu_sidebar_collapsed'
+const MESSAGE_MAX_LENGTH = 4000
 
 const TOOL_ICONS = {
   retrieve: '📚',
@@ -419,6 +446,43 @@ const draftAssistant = () => ({
   showThinkingIndicator: true,
 })
 
+const stoppedAssistant = (message) => ({
+  ...message,
+  isStopped: true,
+  stream_stopped: true,
+})
+
+const STOPPED_FALLBACK_TEXT = '已停止响应。'
+
+const stoppedToolPart = (part) => {
+  if (part?.type !== 'tool' || part.status !== 'running') return part
+  const label = String(part.status_label || part.tool_name || '工具调用')
+  return { ...part, status: 'stopped', status_label: `${label}（已停止）` }
+}
+
+const mergeStoppedAssistantWithDraft = (message, draft) => {
+  const normalizedMessage = stoppedAssistant(message)
+  if (!draft?.isDraft) return normalizedMessage
+
+  const draftText = messageTextContent(draft)
+  const incomingText = messageTextContent(normalizedMessage)
+  const shouldPreserveDraft =
+    Boolean(draftText) &&
+    (!incomingText || incomingText === STOPPED_FALLBACK_TEXT || incomingText.length < draftText.length)
+
+  if (!shouldPreserveDraft) return normalizedMessage
+
+  const draftParts = compactParts(
+    draft.parts?.length ? draft.parts.map(stoppedToolPart) : [{ type: 'text', content: draftText }],
+  )
+  return {
+    ...normalizedMessage,
+    content: draft.content || draftText,
+    parts: draftParts,
+    reasoning_content: normalizedMessage.reasoning_content ?? draft.reasoning_content,
+  }
+}
+
 const previewText = (messages = [], { skipErrorFallback = true } = {}) => {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
@@ -469,12 +533,77 @@ const localError = (c = '暂时无法生成回复，请稍后再试。') => ({
   isLocalOnly: true,
 })
 
+const messageTextContent = (message) =>
+  compactParts(message?.parts?.length ? message.parts : message?.content ? [{ type: 'text', content: message.content }] : [])
+    .filter((part) => part.type === 'text')
+    .map((part) => part.content)
+    .join('\n')
+    .trim()
+
+const copyTextToClipboard = async (text) => {
+  if (!text) return false
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch {
+      // Fall through to the textarea fallback for browsers with stricter clipboard gates.
+    }
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.inset = '0 auto auto 0'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  textarea.setSelectionRange(0, text.length)
+  try {
+    return document.execCommand('copy')
+  } finally {
+    document.body.removeChild(textarea)
+  }
+}
+
+const userTextParts = (content) => [{ type: 'text', content }]
+
+const previousUserMessage = (messages = [], messageId) => {
+  const startIndex = messages.findIndex((message) => message.id === messageId)
+  if (startIndex < 0) return null
+  for (let index = startIndex - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user') return messages[index]
+  }
+  return null
+}
+
 const canFeedback = (m) => m.role === 'assistant' && !m.isDraft && !m.isLocalOnly && !m.isErrorFallback
+const isStoppedMessage = (m) => Boolean(m?.isStopped ?? m?.is_stopped ?? m?.stream_stopped)
+
+const toolResultSummary = (part = {}) => {
+  const data = part.data
+  if (!data) return ''
+  if (part.tool_name === 'retrieve' || part.tool_name === 'bocha_websearch_tool') {
+    const count = Array.isArray(data.items) ? data.items.length : 0
+    return count ? `${count} 条来源` : ''
+  }
+  if (part.tool_name === 'query_grades' && Array.isArray(data)) return `${data.length} 门课程`
+  if (part.tool_name === 'query_courses' && Array.isArray(data)) return `${data.length} 节课程`
+  if (part.tool_name === 'query_exam_scores' && Array.isArray(data)) return `${data.length} 条成绩`
+  if (part.tool_name === 'query_exam_rooms' && Array.isArray(data.exams)) return `${data.exams.length} 场考试`
+  if (part.tool_name === 'query_user_memory' && Array.isArray(data.memories)) return `${data.memories.length} 条记忆`
+  if (data.status === 'pending_confirmation') return '等待确认'
+  if (data.status) return String(data.status)
+  return ''
+}
+
 const normMsgs = (msgs = []) =>
   msgs.map((m) => ({
     ...m,
     isErrorFallback: m.isErrorFallback ?? m.is_error_fallback ?? false,
     isLocalOnly: m.isLocalOnly ?? false,
+    isStopped: isStoppedMessage(m),
     parts: compactParts(m.parts?.length ? m.parts : m.content ? [{ type: 'text', content: m.content }] : []),
   }))
 
@@ -543,8 +672,17 @@ function LoginPage({ onLogin }) {
   const [studentType, setStudentType] = useState('undergraduate')
   const [acceptedLegal, setAcceptedLegal] = useState(false)
   const [legalDocumentKey, setLegalDocumentKey] = useState(null)
+  const [passwordVisible, setPasswordVisible] = useState(false)
+  const [submitted, setSubmitted] = useState(false)
+  const [logoFailed, setLogoFailed] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const studentIdRef = useRef(null)
+  const passwordRef = useRef(null)
+
+  const studentIdError = submitted && !studentId.trim() ? '请输入学号。' : ''
+  const passwordError = submitted && !password.trim() ? '请输入教务系统密码。' : ''
+  const legalError = submitted && !acceptedLegal ? '请先阅读并同意协议。' : ''
 
   if (legalDocumentKey) {
     return <LegalDocumentPage documentKey={legalDocumentKey} onBack={() => setLegalDocumentKey(null)} />
@@ -552,7 +690,15 @@ function LoginPage({ onLogin }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!studentId.trim() || !password.trim()) return
+    setSubmitted(true)
+    if (!studentId.trim()) {
+      studentIdRef.current?.focus()
+      return
+    }
+    if (!password.trim()) {
+      passwordRef.current?.focus()
+      return
+    }
     if (!acceptedLegal) {
       setError('请先阅读并勾选同意《用户协议》和《隐私政策》。')
       return
@@ -574,6 +720,7 @@ function LoginPage({ onLogin }) {
       onLogin(data.user, data.edu_error || '')
     } catch (err) {
       setError(err.message)
+      studentIdRef.current?.focus()
     } finally {
       setLoading(false)
     }
@@ -583,19 +730,59 @@ function LoginPage({ onLogin }) {
     <div className="login-page">
       <div className="login-card">
         <div className="login-brand">
-          <img src="/assets/FZU.png" alt="FZU" className="login-logo" />
+          {logoFailed ? (
+            <div className="login-logo login-logo--fallback" aria-hidden="true">F</div>
+          ) : (
+            <img src="/assets/FZU.png" alt="福州大学" className="login-logo" onError={() => setLogoFailed(true)} />
+          )}
           <h1>福大灵犀</h1>
           <p>福州大学智能问答助手</p>
         </div>
         <form className="login-form" onSubmit={handleSubmit}>
-          {error && <div className="login-error">{error}</div>}
-          <label>
+          {error && <div className="login-error" role="alert">{error}</div>}
+          <label className={studentIdError ? 'field field--error' : 'field'}>
             <span>学号</span>
-            <input type="text" value={studentId} onChange={(e) => setStudentId(e.target.value)} placeholder="请输入学号" autoFocus />
+            <input
+              ref={studentIdRef}
+              type="text"
+              value={studentId}
+              onChange={(e) => {
+                setStudentId(e.target.value)
+                if (error) setError('')
+              }}
+              placeholder="请输入学号"
+              autoComplete="username"
+              aria-invalid={Boolean(studentIdError)}
+              aria-describedby={studentIdError ? 'login-student-id-error' : undefined}
+              autoFocus
+            />
+            {studentIdError && <span id="login-student-id-error" className="field-error">{studentIdError}</span>}
           </label>
-          <label>
+          <label className={passwordError ? 'field field--error' : 'field'}>
             <span>密码</span>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="教务系统密码" />
+            <div className="password-field">
+              <input
+                ref={passwordRef}
+                type={passwordVisible ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value)
+                  if (error) setError('')
+                }}
+                placeholder="教务系统密码"
+                autoComplete="current-password"
+                aria-invalid={Boolean(passwordError)}
+                aria-describedby={passwordError ? 'login-password-error' : undefined}
+              />
+              <IconButton
+                label={passwordVisible ? '隐藏密码' : '显示密码'}
+                className="password-toggle"
+                onClick={() => setPasswordVisible((value) => !value)}
+              >
+                {passwordVisible ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+              </IconButton>
+            </div>
+            {passwordError && <span id="login-password-error" className="field-error">{passwordError}</span>}
           </label>
           <label>
             <span>学生类型</span>
@@ -603,9 +790,10 @@ function LoginPage({ onLogin }) {
               <option value="undergraduate">本科生</option>
               <option value="graduate" disabled>研究生（暂未开放）</option>
             </select>
+            <span className="field-hint">研究生登录入口暂未开放，当前仅支持本科教务认证。</span>
           </label>
 
-          <div className="login-consent">
+          <div className={legalError ? 'login-consent login-consent--error' : 'login-consent'}>
             <input
               id="login-legal-consent"
               className="login-consent__input"
@@ -621,8 +809,9 @@ function LoginPage({ onLogin }) {
             <span className="login-consent__sep">和</span>
             <button type="button" className="login-link-btn" onClick={() => setLegalDocumentKey('privacy')}>《隐私政策》</button>
           </div>
+          {legalError && <span className="field-error field-error--standalone">{legalError}</span>}
 
-          <button type="submit" className="login-btn" disabled={loading || !studentId.trim() || !password.trim() || !acceptedLegal}>
+          <button type="submit" className="login-btn" disabled={loading}>
             {loading ? '登录中…' : '登 录'}
           </button>
         </form>
@@ -701,7 +890,10 @@ function GradeTable({ data }) {
               <tbody>
                 {group.rows.map((r, rowIndex) => (
                   <tr key={`${group.code}-${r.name}-${rowIndex}`}>
-                    <td>{r.name}</td><td>{r.credits}</td><td>{r.score}</td><td>{r.gpa}</td>
+                    <td data-label="课程">{r.name}</td>
+                    <td data-label="学分">{r.credits}</td>
+                    <td data-label="成绩">{r.score}</td>
+                    <td data-label="绩点">{r.gpa}</td>
                   </tr>
                 ))}
               </tbody>
@@ -730,7 +922,11 @@ function CourseTable({ data }) {
         <tbody>
           {data.map((r, i) => (
             <tr key={i}>
-              <td>{r.name}</td><td>{r.teacher}</td><td>{r.credits}</td><td>{r.time}</td><td>{r.location}</td>
+              <td data-label="课程">{r.name}</td>
+              <td data-label="教师">{r.teacher}</td>
+              <td data-label="学分">{r.credits}</td>
+              <td data-label="时间">{r.time}</td>
+              <td data-label="地点">{r.location}</td>
             </tr>
           ))}
         </tbody>
@@ -753,7 +949,11 @@ function ExamTable({ data }) {
         </thead>
         <tbody>
           {data.map((r, i) => (
-            <tr key={i}><td>{r.exam_name}</td><td>{r.score}</td><td>{r.date}</td></tr>
+            <tr key={i}>
+              <td data-label="考试">{r.exam_name}</td>
+              <td data-label="成绩">{r.score}</td>
+              <td data-label="日期">{r.date}</td>
+            </tr>
           ))}
         </tbody>
       </table>
@@ -772,7 +972,7 @@ function StructuredTable({ headers, rows }) {
         <tbody>
           {rows.map((row, rowIndex) => (
             <tr key={rowIndex}>
-              {row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell || '—'}</td>)}
+              {row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`} data-label={headers[cellIndex]}>{cell || '—'}</td>)}
             </tr>
           ))}
         </tbody>
@@ -1495,6 +1695,11 @@ function MessageMarkdown({ content, citationMap = {} }) {
 function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
   const icon = TOOL_ICONS[part.tool_name] || '🔧'
   const isRunning = part.status === 'running'
+  const isStopped = part.status === 'stopped'
+  const needsConfirmation = part.data?.status === 'pending_confirmation'
+  const isFailed = part.status === 'error' || ['invalid', 'unavailable', 'error'].includes(part.data?.status)
+  const statusClass = isRunning ? 'running' : isStopped ? 'stopped' : isFailed ? 'error' : needsConfirmation ? 'action' : 'done'
+  const summary = toolResultSummary(part)
   const showRawUrls = !['query_cultivate_plan', 'retrieve', 'bocha_websearch_tool'].includes(part.tool_name)
   const [expanded, setExpanded] = useState(() => !EDUCATIONAL_TOOL_NAMES.has(part.tool_name))
 
@@ -1553,11 +1758,12 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
   }
 
   return (
-    <div className={`tool-card ${isRunning ? 'tool-card--running' : 'tool-card--done'}`}>
+    <div className={`tool-card tool-card--${statusClass}`}>
       <div className="tool-card-header">
         <div className="tool-card-heading">
           <span className="tool-card-icon">{icon}</span>
           <span className="tool-card-title">{part.status_label}</span>
+          {summary && <span className="tool-card-summary">{summary}</span>}
         </div>
         <div className="tool-card-actions">
           <button
@@ -1565,8 +1771,10 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
             className="tool-card-toggle"
             onClick={() => setExpanded((value) => !value)}
             aria-expanded={expanded}
+            aria-label={expanded ? '收起工具结果' : '展开工具结果'}
           >
-            {expanded ? '收起' : '展开'}
+            {expanded ? <ChevronUp size={15} aria-hidden="true" /> : <ChevronDown size={15} aria-hidden="true" />}
+            <span>{expanded ? '收起' : '展开'}</span>
           </button>
           {isRunning && <span className="tool-spinner" />}
         </div>
@@ -1616,7 +1824,7 @@ function PrivacyPolicyView({ summary, loading, clearing, resetDisabled, onReload
           </div>
           <div className="privacy-card__actions">
             <button type="button" className="secondary-btn" onClick={onReload} disabled={loading || clearing}>
-              {loading ? '刷新中…' : '刷新统计'}
+              <RefreshCw size={16} aria-hidden="true" /> {loading ? '刷新中…' : '刷新统计'}
             </button>
           </div>
         </div>
@@ -1679,15 +1887,28 @@ function App() {
   const [userDataClearing, setUserDataClearing] = useState(false)
   const [error, setError] = useState('')
   const [fbPending, setFbPending] = useState([])
+  const [conversationQuery, setConversationQuery] = useState('')
+  const [renamingId, setRenamingId] = useState(null)
+  const [renamingTitle, setRenamingTitle] = useState('')
+  const [renamePending, setRenamePending] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [resetDialogOpen, setResetDialogOpen] = useState(false)
+  const [copiedMessageId, setCopiedMessageId] = useState(null)
+  const [failedPrompt, setFailedPrompt] = useState(null)
+  const [editingMessage, setEditingMessage] = useState(null)
+  const [screenReaderStatus, setScreenReaderStatus] = useState('')
+  const [showScrollBottom, setShowScrollBottom] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1'
   })
   const msgListRef = useRef(null)
+  const composerRef = useRef(null)
   const shouldAutoScrollRef = useRef(true)
   const draftThinkingTimersRef = useRef(new Map())
   const conversationEventsRef = useRef(null)
+  const copiedMessageTimerRef = useRef(null)
 
   const activeConv = useMemo(() => conversations.find((c) => c.id === activeId) ?? null, [activeId, conversations])
   const activeMsgs = useMemo(() => normMsgs(msgStore[activeId]?.messages ?? []), [activeId, msgStore])
@@ -1695,12 +1916,27 @@ function App() {
     () => (activeId ? (msgStore[activeId]?.model ?? activeConv?.model ?? '') : ''),
     [activeConv, activeId, msgStore],
   )
+  const filteredConversations = useMemo(() => {
+    const query = conversationQuery.trim().toLowerCase()
+    if (!query) return conversations
+    return conversations.filter((conversation) => (
+      `${conversation.title ?? ''} ${conversation.preview ?? ''}`.toLowerCase().includes(query)
+    ))
+  }, [conversationQuery, conversations])
   const userId = user?.user_id ?? ''
   const needsEduRelogin = user?.student_type === 'undergraduate' && !user?.edu_authenticated
   const isActiveConversationStreaming = Boolean(activeId && streamingConversations[activeId])
   const isActiveConversationStopPending = Boolean(activeId && stopPendingConversations[activeId])
   const hasStreamingConversation = Object.keys(streamingConversations).length > 0
   const isPrivacyView = viewMode === 'privacy'
+  const inputLength = input.length
+  const inputNearLimit = inputLength >= MESSAGE_MAX_LENGTH * 0.9
+  const composerStatusText = ''
+
+  useAutoResizeTextarea(composerRef, input)
+  useEscapeKey(sidebarOpen, () => setSidebarOpen(false))
+  useEscapeKey(Boolean(deleteTarget) && !renamePending, () => setDeleteTarget(null))
+  useEscapeKey(resetDialogOpen && !userDataClearing, () => setResetDialogOpen(false))
 
   const syncAutoScrollState = useCallback(() => {
     const list = msgListRef.current
@@ -1708,6 +1944,7 @@ function App() {
     const distanceToBottom = list.scrollHeight - list.scrollTop - list.clientHeight
     const shouldAutoScroll = distanceToBottom <= AUTO_SCROLL_THRESHOLD
     shouldAutoScrollRef.current = shouldAutoScroll
+    setShowScrollBottom(!shouldAutoScroll)
     return shouldAutoScroll
   }, [])
 
@@ -1715,6 +1952,8 @@ function App() {
     const list = msgListRef.current
     if (!list) return
     list.scrollTop = list.scrollHeight
+    shouldAutoScrollRef.current = true
+    setShowScrollBottom(false)
   }, [])
 
   const setConversationStreaming = useCallback((cid, nextValue) => {
@@ -1787,6 +2026,17 @@ function App() {
     setUserDataLoading(false)
     setUserDataClearing(false)
     setError('')
+    setConversationQuery('')
+    setRenamingId(null)
+    setRenamingTitle('')
+    setRenamePending(false)
+    setDeleteTarget(null)
+    setResetDialogOpen(false)
+    setCopiedMessageId(null)
+    setFailedPrompt(null)
+    setEditingMessage(null)
+    setScreenReaderStatus('')
+    setShowScrollBottom(false)
   }, [])
 
   const refreshAuthState = useCallback(async () => {
@@ -1828,6 +2078,8 @@ function App() {
 
   useEffect(() => {
     shouldAutoScrollRef.current = true
+    setShowScrollBottom(false)
+    setEditingMessage(null)
   }, [activeId])
 
   useEffect(() => () => {
@@ -1839,6 +2091,10 @@ function App() {
       clearTimeout(timerId)
     }
     draftThinkingTimersRef.current.clear()
+    if (copiedMessageTimerRef.current) {
+      clearTimeout(copiedMessageTimerRef.current)
+      copiedMessageTimerRef.current = null
+    }
   }, [])
 
   // --- Check existing token on mount ---
@@ -2056,7 +2312,52 @@ function App() {
     draftThinkingTimersRef.current.delete(cid)
   }, [])
 
-  const handleDelete = useCallback(async (id) => {
+  const requestDeleteConversation = useCallback((conversation) => {
+    setDeleteTarget(conversation)
+  }, [])
+
+  const startRenameConversation = useCallback((conversation) => {
+    setRenamingId(conversation.id)
+    setRenamingTitle(conversation.title || '')
+    setError('')
+  }, [])
+
+  const cancelRenameConversation = useCallback(() => {
+    if (renamePending) return
+    setRenamingId(null)
+    setRenamingTitle('')
+  }, [renamePending])
+
+  const submitRenameConversation = useCallback(async (id) => {
+    const title = renamingTitle.trim()
+    if (!id || !title || renamePending) return
+    setRenamePending(true)
+    setError('')
+    try {
+      const response = await api(`/api/conversations/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title }),
+      })
+      const payload = await response.json().catch(() => ({}))
+      if (response.status === 401) {
+        resetAuthState()
+        return
+      }
+      if (!response.ok) throw new Error(payload.detail || '重命名对话失败')
+      const summary = makeConversationSummary(payload)
+      applyConversationSummary(id, summary)
+      setRenamingId(null)
+      setRenamingTitle('')
+    } catch (err) {
+      setError(err.message || '重命名对话失败')
+    } finally {
+      setRenamePending(false)
+    }
+  }, [applyConversationSummary, renamePending, renamingTitle, resetAuthState])
+
+  const handleDelete = useCallback(async () => {
+    const id = deleteTarget?.id
+    if (!id) return
     setError('')
     try {
       const r = await api(`/api/conversations/${id}`, { method: 'DELETE' })
@@ -2068,18 +2369,16 @@ function App() {
       setConversations(nextConversations)
       setMsgStore((p) => { const n = { ...p }; delete n[id]; return n })
       if (activeId === id) setActiveId(nextConversations[0]?.id ?? null)
+      if (activeId === id) setEditingMessage(null)
+      setDeleteTarget(null)
     } catch (e) { setError(e.message) }
-  }, [activeId, clearConversationStreamState, clearDraftThinkingTimer, conversations, setConversationTitlePending])
+  }, [activeId, clearConversationStreamState, clearDraftThinkingTimer, conversations, deleteTarget, setConversationTitlePending])
 
   const handleResetUserData = useCallback(async () => {
     if (userDataClearing) return
     if (hasStreamingConversation) {
       setError('请先等待当前回复结束，再执行一键清空。')
       return
-    }
-    if (typeof window !== 'undefined') {
-      const confirmed = window.confirm('这会删除已保存的对话历史、长期记忆，并恢复本地界面设置默认值。此操作不可撤销，是否继续？')
-      if (!confirmed) return
     }
 
     setError('')
@@ -2101,9 +2400,11 @@ function App() {
       setPendingTitles({})
       setFbPending([])
       setInput('')
+      setEditingMessage(null)
       setThinkingEnabled(true)
       setSidebarCollapsed(false)
       setUserDataSummary({ conversation_count: 0, message_count: 0, memory_count: 0 })
+      setResetDialogOpen(false)
     } catch (err) {
       setError(err.message || '清空数据失败')
     } finally {
@@ -2111,12 +2412,52 @@ function App() {
     }
   }, [hasStreamingConversation, resetAuthState, userDataClearing])
 
+  const handleCopyMessage = useCallback(async (message) => {
+    const text = messageTextContent(message)
+    if (!text) return
+    setError('')
+    try {
+      const copied = await copyTextToClipboard(text)
+      if (!copied) throw new Error('copy failed')
+      setCopiedMessageId(message.id)
+      setScreenReaderStatus(message.role === 'assistant' ? '回复已复制。' : '消息已复制。')
+      if (copiedMessageTimerRef.current) clearTimeout(copiedMessageTimerRef.current)
+      copiedMessageTimerRef.current = window.setTimeout(() => {
+        setCopiedMessageId(null)
+        copiedMessageTimerRef.current = null
+      }, 1600)
+    } catch {
+      setError('复制失败，请检查浏览器剪贴板权限。')
+      setScreenReaderStatus('复制失败，请检查浏览器剪贴板权限。')
+    }
+  }, [])
+
   const updateDraft = useCallback((cid, fn) => {
     setMsgStore((s) => {
       const cv = s[cid]; if (!cv) return s
       const ms = [...cv.messages]; const last = ms.at(-1)
       if (!last?.isDraft) return s
       ms[ms.length - 1] = fn(last)
+      return { ...s, [cid]: { ...cv, messages: ms } }
+    })
+  }, [])
+
+  const replaceProvisionalUserMessage = useCallback((cid, message) => {
+    if (!message?.id) return
+    setMsgStore((s) => {
+      const cv = s[cid]
+      if (!cv) return s
+      const ms = [...(cv.messages ?? [])]
+      const existingIndex = ms.findIndex((item) => item.id === message.id)
+      if (existingIndex >= 0) {
+        ms[existingIndex] = { ...ms[existingIndex], ...message, parts: userTextParts(message.content) }
+        return { ...s, [cid]: { ...cv, messages: ms } }
+      }
+      const draftIndex = ms.findIndex((item) => item.isDraft)
+      const candidateIndex = draftIndex > 0 ? draftIndex - 1 : ms.length - 1
+      const candidate = ms[candidateIndex]
+      if (candidate?.role !== 'user' || !String(candidate.id ?? '').startsWith('u-')) return s
+      ms[candidateIndex] = { ...candidate, ...message, parts: userTextParts(message.content) }
       return { ...s, [cid]: { ...cv, messages: ms } }
     })
   }, [])
@@ -2136,7 +2477,9 @@ function App() {
     setMsgStore((s) => {
       const cv = s[cid]; if (!cv) return s
       const ms = [...cv.messages]
-      if (ms.at(-1)?.isDraft) ms[ms.length - 1] = msg; else ms.push(msg)
+      const currentDraft = ms.at(-1)
+      const nextMessage = msg?.isStopped ? mergeStoppedAssistantWithDraft(msg, currentDraft) : msg
+      if (currentDraft?.isDraft) ms[ms.length - 1] = nextMessage; else ms.push(nextMessage)
       return { ...s, [cid]: { ...cv, title: sm.title, updated_at: sm.updated_at, model: sm.model, messages: ms } }
     })
     updateSummary(sm)
@@ -2194,6 +2537,7 @@ function App() {
         }
         if (!payload) continue
         const d = JSON.parse(payload)
+        if (ev === 'user') replaceProvisionalUserMessage(cid, d)
         if (ev === 'chunk') {
           updateDraft(cid, (m) => {
             const text = m.content + d.delta
@@ -2217,7 +2561,10 @@ function App() {
           }))
           scheduleDraftThinkingIndicator(cid)
         }
-        if (ev === 'done') replaceDraft(cid, d.message, d.conversation, d.title_pending === true)
+        if (ev === 'done') {
+          replaceDraft(cid, d.stopped === true ? stoppedAssistant(d.message) : d.message, d.conversation, d.title_pending === true)
+          setScreenReaderStatus(d.stopped === true ? '回复已停止，已生成内容已保留。' : '回复已完成。')
+        }
         if (ev === 'title') applyConversationSummary(cid, d.conversation)
         if (ev === 'error') {
           throw Object.assign(new Error(d.message || '生成回复失败'), {
@@ -2227,12 +2574,13 @@ function App() {
         }
       }
     }
-  }, [applyConversationSummary, replaceDraft, scheduleDraftThinkingIndicator, updateDraft])
+  }, [applyConversationSummary, replaceDraft, replaceProvisionalUserMessage, scheduleDraftThinkingIndicator, updateDraft])
 
   const handleStop = useCallback(async () => {
     const cid = activeId
     if (!cid || !streamingConversations[cid] || stopPendingConversations[cid]) return
     setError('')
+    setScreenReaderStatus('正在停止回复，已生成内容会保留。')
     setConversationStopPending(cid, true)
     try {
       const response = await api(`/api/conversations/${cid}/stop`, { method: 'POST' })
@@ -2249,16 +2597,27 @@ function App() {
     }
   }, [activeId, setConversationStopPending, stopPendingConversations, streamingConversations])
 
-  const handleSubmit = useCallback(async (e) => {
-    e.preventDefault()
-    if (!input.trim() || (activeId && streamingConversations[activeId])) return
+  const sendPrompt = useCallback(async (rawPrompt, options = {}) => {
+    const prompt = String(rawPrompt ?? '').trim()
+    const rerunMessageId = String(options.rerunMessageId ?? '').trim()
+    const isRerun = Boolean(rerunMessageId)
+    if (!prompt || (activeId && streamingConversations[activeId])) return
+    if (prompt.length > MESSAGE_MAX_LENGTH) {
+      setError(`单次消息最多 ${MESSAGE_MAX_LENGTH} 字，请精简后再发送。`)
+      composerRef.current?.focus()
+      return
+    }
     setError('')
+    setFailedPrompt(null)
     shouldAutoScrollRef.current = true
-    const prompt = input.trim()
     let cid = activeId
     let conv = activeId ? (msgStore[activeId] ?? activeConv) : null
-    setInput('')
+    if (options.clearInput !== false) setInput('')
+    if (isRerun && options.clearEditing !== false) setEditingMessage(null)
     try {
+      if (!conv && isRerun) {
+        throw new Error('当前对话尚未加载，无法重新生成。')
+      }
       if (!conv) {
         conv = await createConv()
         cid = conv.id
@@ -2266,26 +2625,54 @@ function App() {
         cid = conv.id
       }
       const timestamp = new Date().toISOString()
-      const um = { id: `u-${createUuid()}`, role: 'user', content: prompt, timestamp, parts: [{ type: 'text', content: prompt }] }
-      const pendingConversation = {
-        ...conv,
-        model: selModel,
-        updated_at: timestamp,
-        messages: [...(conv.messages ?? []), um, draftAssistant()],
+      let pendingMessages
+      if (isRerun) {
+        const sourceMessages = conv.messages ?? []
+        const targetIndex = sourceMessages.findIndex((message) => message.id === rerunMessageId && message.role === 'user')
+        if (targetIndex < 0) throw new Error('未找到要重新生成的问题。')
+        const targetMessage = sourceMessages[targetIndex]
+        const updatedUserMessage = {
+          ...targetMessage,
+          content: prompt,
+          timestamp: messageTextContent(targetMessage) === prompt ? targetMessage.timestamp : timestamp,
+          parts: userTextParts(prompt),
+        }
+        pendingMessages = [...sourceMessages.slice(0, targetIndex), updatedUserMessage, draftAssistant()]
+      } else {
+        const um = { id: `u-${createUuid()}`, role: 'user', content: prompt, timestamp, parts: userTextParts(prompt) }
+        pendingMessages = [...(conv.messages ?? []), um, draftAssistant()]
       }
+      const pendingConversation = { ...conv, model: selModel, updated_at: timestamp, messages: pendingMessages }
       setConversationStopPending(cid, false)
       setConversationStreaming(cid, true)
       setMsgStore((s) => ({ ...s, [cid]: pendingConversation }))
       updateSummary(makeConversationSummary(pendingConversation))
+      setScreenReaderStatus(isRerun ? '正在重新生成回复。' : '消息已发送，正在生成回复。')
       const r = await api(`/api/conversations/${cid}/messages`, {
         method: 'POST',
-        body: JSON.stringify({ content: prompt, model: selModel, thinking_enabled: thinkingEnabled }),
+        body: JSON.stringify({
+          content: prompt,
+          model: selModel,
+          thinking_enabled: thinkingEnabled,
+          ...(isRerun ? { rerun_message_id: rerunMessageId } : {}),
+        }),
       })
       if (!r.ok) throw new Error(await readApiError(r, '发送消息失败', '发送消息过快，请稍后再试。'))
       if (!r.body) throw new Error('响应流不可用，请稍后再试。')
       await readSSE(r, cid)
+      setFailedPrompt(null)
     } catch (err) {
-      setError(err.message)
+      const message = err.message || '发送失败，请稍后重试。'
+      setError(message)
+      if (isRerun) {
+        if (options.restoreEditOnFailure) {
+          setEditingMessage({ id: rerunMessageId, content: prompt })
+          setInput(prompt)
+          requestAnimationFrame(() => composerRef.current?.focus())
+        }
+      } else {
+        setFailedPrompt({ prompt, message })
+      }
       if (cid && err.fallback && err.conversation) {
         replaceDraft(cid, err.fallback, err.conversation)
       } else if (cid) {
@@ -2302,7 +2689,68 @@ function App() {
         // Ignore auth refresh failures after sending; a later retry will resync the state.
       }
     }
-  }, [input, activeId, activeConv, msgStore, selModel, thinkingEnabled, clearConversationStreamState, clearDraftThinkingTimer, createConv, readSSE, refreshAuthState, replaceDraft, setConversationStopPending, setConversationStreaming, streamingConversations, updateDraft, updateSummary])
+  }, [activeId, activeConv, msgStore, selModel, thinkingEnabled, clearConversationStreamState, clearDraftThinkingTimer, createConv, readSSE, refreshAuthState, replaceDraft, setConversationStopPending, setConversationStreaming, streamingConversations, updateDraft, updateSummary])
+
+  const handleSubmit = useCallback((event) => {
+    event.preventDefault()
+    if (editingMessage?.id) {
+      void sendPrompt(input, {
+        rerunMessageId: editingMessage.id,
+        clearInput: true,
+        restoreEditOnFailure: true,
+      })
+      return
+    }
+    void sendPrompt(input)
+  }, [editingMessage, input, sendPrompt])
+
+  const restoreFailedPrompt = useCallback(() => {
+    if (!failedPrompt?.prompt) return
+    setInput(failedPrompt.prompt)
+    setFailedPrompt(null)
+    setError('')
+    requestAnimationFrame(() => composerRef.current?.focus())
+  }, [failedPrompt])
+
+  const retryFailedPrompt = useCallback(() => {
+    if (!failedPrompt?.prompt) return
+    void sendPrompt(failedPrompt.prompt)
+  }, [failedPrompt, sendPrompt])
+
+  const startEditMessage = useCallback((message) => {
+    if (activeId && streamingConversations[activeId]) return
+    const text = messageTextContent(message)
+    if (!text) return
+    setEditingMessage({ id: message.id, content: text })
+    setInput(text)
+    setError('')
+    setFailedPrompt(null)
+    setScreenReaderStatus('已进入消息修改模式，发送后会重新生成后续回复。')
+    requestAnimationFrame(() => composerRef.current?.focus())
+  }, [activeId, streamingConversations])
+
+  const cancelEditMessage = useCallback(() => {
+    setEditingMessage(null)
+    setInput('')
+    setScreenReaderStatus('已取消消息修改。')
+    requestAnimationFrame(() => composerRef.current?.focus())
+  }, [])
+
+  const regenerateMessage = useCallback((message) => {
+    const cid = activeId
+    const conv = cid ? (msgStore[cid] ?? activeConv) : null
+    if (!cid || !conv || streamingConversations[cid]) return
+    const userMessage = previousUserMessage(conv.messages ?? [], message.id)
+    const prompt = messageTextContent(userMessage)
+    if (!userMessage?.id || !prompt) {
+      setError('未找到这条回复对应的问题，无法重新生成。')
+      return
+    }
+    setError('')
+    setFailedPrompt(null)
+    setScreenReaderStatus('正在重新生成回复。')
+    void sendPrompt(prompt, { rerunMessageId: userMessage.id, clearInput: false })
+  }, [activeConv, activeId, msgStore, sendPrompt, streamingConversations])
 
   const handleFeedback = useCallback(async (mid, fb) => {
     const cid = activeId
@@ -2324,6 +2772,13 @@ function App() {
     } finally { setFbPending((p) => p.filter((x) => x !== mid)) }
   }, [activeId, fbPending, msgStore])
 
+  const applyQuickPrompt = useCallback((prompt) => {
+    setInput(prompt)
+    setFailedPrompt(null)
+    setError('')
+    requestAnimationFrame(() => composerRef.current?.focus())
+  }, [])
+
   // --- Auth check ---
   if (!authChecked) return <div className="loading-screen"><div className="loading-spinner" /><p>正在加载…</p></div>
   if (!user) return <LoginPage onLogin={handleLogin} />
@@ -2331,13 +2786,25 @@ function App() {
   // --- Main UI ---
   return (
     <div className={`app-shell ${sidebarCollapsed ? 'app-shell--sidebar-collapsed' : ''}`}>
-      {/* Mobile toggle */}
-      <button className="sidebar-toggle" onClick={() => setSidebarOpen((v) => !v)} type="button">☰</button>
+      <a className="skip-link" href="#main-content">跳到聊天内容</a>
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {screenReaderStatus}
+      </div>
+      <IconButton
+        className="sidebar-toggle"
+        label="打开侧栏"
+        onClick={() => setSidebarOpen((v) => !v)}
+        aria-controls="app-sidebar"
+        aria-expanded={sidebarOpen}
+      >
+        <Menu size={20} aria-hidden="true" />
+      </IconButton>
+      {sidebarOpen && <button type="button" className="sidebar-scrim" aria-label="关闭侧栏" onClick={() => setSidebarOpen(false)} />}
 
-      <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''} ${sidebarCollapsed ? 'sidebar--collapsed' : ''}`}>
+      <aside id="app-sidebar" className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''} ${sidebarCollapsed ? 'sidebar--collapsed' : ''}`} aria-label="应用侧栏">
         <div className="sidebar-top">
           <div className="brand-card">
-            <img src="/assets/FZU.png" alt="FZU" className="brand-logo" />
+            <img src="/assets/FZU.png" alt="福州大学" className="brand-logo" />
             <div>
               <h1>福大灵犀</h1>
               <p className="brand-sub">智能问答 · 教务查询</p>
@@ -2351,7 +2818,9 @@ function App() {
               <span>{user.student_type === 'undergraduate' ? '本科生' : '研究生'}
                 {user.edu_authenticated ? ' · 教务已连接' : needsEduRelogin ? ' · 教务待重新连接' : ''}</span>
             </div>
-            <button className="logout-btn" onClick={handleLogout} type="button" title="退出登录">⏻</button>
+            <IconButton className="logout-btn" label="退出登录" onClick={handleLogout}>
+              <LogOut size={17} aria-hidden="true" />
+            </IconButton>
           </div>
 
           {needsEduRelogin ? (
@@ -2363,7 +2832,7 @@ function App() {
           ) : eduError ? <div className="edu-warn">{eduError}</div> : null}
 
           <button className="new-chat-btn" onClick={handleNew} type="button">
-            <span className="plus-icon">+</span> 新建对话
+            <MessageSquarePlus size={18} aria-hidden="true" /> 新建对话
           </button>
 
           <button
@@ -2371,7 +2840,7 @@ function App() {
             onClick={handleOpenPrivacyView}
             type="button"
           >
-            隐私与数据
+            <ShieldCheck size={16} aria-hidden="true" /> 隐私与数据
           </button>
         </div>
 
@@ -2402,20 +2871,70 @@ function App() {
 
         <div className="sidebar-convos">
           <div className="section-title">对话历史</div>
+          <label className="convo-search" htmlFor="conversation-search">
+            <Search size={15} aria-hidden="true" />
+            <input
+              id="conversation-search"
+              type="search"
+              value={conversationQuery}
+              onChange={(event) => setConversationQuery(event.target.value)}
+              placeholder="搜索标题或内容"
+            />
+            {conversationQuery && (
+              <IconButton label="清空搜索" className="convo-search__clear" onClick={() => setConversationQuery('')}>
+                <X size={14} aria-hidden="true" />
+              </IconButton>
+            )}
+          </label>
           <div className="convo-list">
             {conversations.length === 0
               ? <div className="empty-hint">暂无历史对话</div>
-              : conversations.map((c) => (
+              : filteredConversations.length === 0
+                ? <div className="empty-hint">没有匹配的对话</div>
+                : filteredConversations.map((c) => (
                 <div key={c.id} className={`convo-item ${c.id === activeId ? 'convo-item--active' : ''}`}>
-                  <button type="button" className="convo-select" onClick={() => { setViewMode('chat'); setActiveId(c.id); setSidebarOpen(false) }}>
-                    <div className="convo-item-body">
-                      <strong className={`convo-title ${pendingTitles[c.id] ? 'convo-title--pending' : ''}`.trim()} aria-label={pendingTitles[c.id] ? '正在生成标题' : c.title}>
-                        {pendingTitles[c.id] ? <PendingTitle compact /> : c.title}
-                      </strong>
-                      <span>{c.preview || '等待第一条消息…'}</span>
-                    </div>
-                  </button>
-                  <button type="button" className="convo-del" aria-label={`删除${c.title}`} onClick={() => void handleDelete(c.id)}>×</button>
+                  {renamingId === c.id ? (
+                    <form
+                      className="convo-rename"
+                      onSubmit={(event) => {
+                        event.preventDefault()
+                        void submitRenameConversation(c.id)
+                      }}
+                    >
+                      <input
+                        value={renamingTitle}
+                        onChange={(event) => setRenamingTitle(event.target.value)}
+                        maxLength={20}
+                        aria-label="对话标题"
+                        autoFocus
+                      />
+                      <IconButton label="保存标题" type="submit" variant="success" disabled={renamePending || !renamingTitle.trim()}>
+                        <Check size={15} aria-hidden="true" />
+                      </IconButton>
+                      <IconButton label="取消重命名" onClick={cancelRenameConversation} disabled={renamePending}>
+                        <X size={15} aria-hidden="true" />
+                      </IconButton>
+                    </form>
+                  ) : (
+                    <>
+                      <button type="button" className="convo-select" onClick={() => { setViewMode('chat'); setActiveId(c.id); setSidebarOpen(false) }}>
+                        <div className="convo-item-body">
+                          <strong className={`convo-title ${pendingTitles[c.id] ? 'convo-title--pending' : ''}`.trim()} aria-label={pendingTitles[c.id] ? '正在生成标题' : c.title}>
+                            {pendingTitles[c.id] ? <PendingTitle compact /> : c.title}
+                          </strong>
+                          <span>{c.preview || '等待第一条消息…'}</span>
+                        </div>
+                      </button>
+                      <div className="convo-actions">
+                        <IconButton label={`重命名${c.title}`} className="convo-action" onClick={() => startRenameConversation(c)}>
+                          <Pencil size={14} aria-hidden="true" />
+                        </IconButton>
+                        <IconButton label={`删除${c.title}`} className="convo-action convo-action--danger" onClick={() => requestDeleteConversation(c)}>
+                          <Trash2 size={14} aria-hidden="true" />
+                        </IconButton>
+                      </div>
+                    </>
+                  )}
                 </div>
               ))
             }
@@ -2423,20 +2942,19 @@ function App() {
         </div>
       </aside>
 
-      <main className="chat-area">
+      <main id="main-content" className="chat-area" aria-labelledby="chat-heading" tabIndex={-1}>
         <header className="chat-header">
           <div className="chat-header-left">
-            <button
-              type="button"
+            <IconButton
               className="sidebar-desktop-toggle"
               onClick={toggleDesktopSidebar}
-              aria-label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
+              label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
               aria-expanded={!sidebarCollapsed}
             >
-              {sidebarCollapsed ? '☰' : '⟨'}
-            </button>
+              {sidebarCollapsed ? <PanelLeftOpen size={20} aria-hidden="true" /> : <PanelLeftClose size={20} aria-hidden="true" />}
+            </IconButton>
             <div className="chat-header-copy">
-              <h2 className={`chat-header-title ${!isPrivacyView && activeConv && pendingTitles[activeConv.id] ? 'chat-header-title--pending' : ''}`.trim()} aria-label={isPrivacyView ? '隐私与数据' : (activeConv && pendingTitles[activeConv.id] ? '正在生成标题' : (activeConv?.title ?? '新的对话'))}>
+              <h2 id="chat-heading" className={`chat-header-title ${!isPrivacyView && activeConv && pendingTitles[activeConv.id] ? 'chat-header-title--pending' : ''}`.trim()} aria-label={isPrivacyView ? '隐私与数据' : (activeConv && pendingTitles[activeConv.id] ? '正在生成标题' : (activeConv?.title ?? '新的对话'))}>
                 {isPrivacyView ? '隐私与数据' : (activeConv && pendingTitles[activeConv.id] ? <PendingTitle /> : (activeConv?.title ?? '新的对话'))}
               </h2>
               <p>{isPrivacyView ? '查看隐私政策、数据统计和一键清空入口' : '福州大学知识库 · 联网搜索 · 教务系统'}</p>
@@ -2459,24 +2977,26 @@ function App() {
             clearing={userDataClearing}
             resetDisabled={userDataLoading || userDataClearing || hasStreamingConversation}
             onReload={() => void loadUserDataSummary()}
-            onReset={() => void handleResetUserData()}
+            onReset={() => setResetDialogOpen(true)}
             error={error}
           />
         ) : (
           <>
-        <section className="msg-list" ref={msgListRef} onScroll={syncAutoScrollState} onWheel={handleMsgListWheel}>
+        <section
+          id="message-list"
+          className="msg-list"
+          ref={msgListRef}
+          onScroll={syncAutoScrollState}
+          onWheel={handleMsgListWheel}
+          role="log"
+          aria-label="聊天消息"
+          aria-live="polite"
+          aria-relevant="additions text"
+          aria-atomic="false"
+          aria-busy={isActiveConversationStreaming}
+        >
           {activeMsgs.length === 0 ? (
-            <div className="empty-state">
-              <img src="/assets/FZU.png" alt="logo" className="empty-logo" />
-              <h3>开始一次新对话</h3>
-              <p>{EMPTY_MSG}</p>
-              <div className="quick-actions">
-                <button type="button" onClick={() => setInput('查询我的成绩')}>📊 查询成绩</button>
-                <button type="button" onClick={() => setInput('查询我的课表')}>📅 查看课表</button>
-                <button type="button" onClick={() => setInput('福州大学校训是什么')}>🏫 校训是什么</button>
-                <button type="button" onClick={() => setInput('福州大学最新通知')}>📢 最新通知</button>
-              </div>
-            </div>
+            <EmptyChatState message={EMPTY_MSG} onPrompt={applyQuickPrompt} />
           ) : (
             activeMsgs.map((m) => {
               const parts = compactParts(m.parts)
@@ -2488,17 +3008,26 @@ function App() {
               const bubbleClassName = [
                 'msg-bubble',
                 isDraftWaiting ? 'msg-bubble--thinking' : '',
+                m.isErrorFallback ? 'msg-bubble--error' : '',
+                m.isStopped ? 'msg-bubble--stopped' : '',
               ].filter(Boolean).join(' ')
 
               return (
-                <article key={m.id} className={`msg-row ${m.role === 'user' ? 'msg-row--user' : ''}`}>
-                  <div className={`avatar ${m.role === 'user' ? 'avatar--user' : 'avatar--bot'}`}>
-                    {m.role === 'user' ? (user.display_name?.charAt(0) || 'U') : <img src="/assets/FZU.png" alt="bot" />}
+                <article
+                  key={m.id}
+                  className={`msg-row ${m.role === 'user' ? 'msg-row--user' : ''}`}
+                  aria-label={`${m.role === 'user' ? user.display_name : '福大灵犀'}的消息`}
+                >
+                  <div className={`avatar ${m.role === 'user' ? 'avatar--user' : 'avatar--bot'}`} aria-hidden="true">
+                    {m.role === 'user' ? (user.display_name?.charAt(0) || 'U') : <img src="/assets/FZU.png" alt="" />}
                   </div>
                   <div className="msg-body">
                     <div className="msg-meta">
                       <span>{m.role === 'user' ? user.display_name : '福大灵犀'}</span>
-                      <time>{fmt(m.timestamp)}</time>
+                      <time dateTime={m.timestamp}>{fmt(m.timestamp)}</time>
+                      {m.isDraft && <span className="msg-status-pill">生成中</span>}
+                      {m.isStopped && <span className="msg-status-pill msg-status-pill--stopped">已停止</span>}
+                      {m.isErrorFallback && <span className="msg-status-pill msg-status-pill--error">生成失败</span>}
                     </div>
                     {showBubble && (
                       <div className={bubbleClassName}>
@@ -2524,10 +3053,63 @@ function App() {
                         </div>
                       </div>
                     )}
-                    {canFeedback(m) && (
-                      <div className="feedback-row">
-                        <button type="button" disabled={fbPending.includes(m.id)} className={m.feedback === 'up' ? 'fb-btn fb-btn--on' : 'fb-btn'} onClick={() => void handleFeedback(m.id, 'up')}>👍</button>
-                        <button type="button" disabled={fbPending.includes(m.id)} className={m.feedback === 'down' ? 'fb-btn fb-btn--on' : 'fb-btn'} onClick={() => void handleFeedback(m.id, 'down')}>👎</button>
+                    {(!m.isDraft || canFeedback(m)) && (
+                      <div className={`message-actions ${m.role === 'user' ? 'message-actions--user' : ''}`}>
+                        {!m.isDraft && (
+                          <button
+                            type="button"
+                            className="message-action-btn"
+                            onClick={() => void handleCopyMessage(m)}
+                            aria-label={copiedMessageId === m.id ? '已复制' : m.role === 'assistant' ? '复制回复' : '复制消息'}
+                            title={copiedMessageId === m.id ? '已复制' : m.role === 'assistant' ? '复制回复' : '复制消息'}
+                          >
+                            {copiedMessageId === m.id ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+                          </button>
+                        )}
+                        {m.role === 'assistant' && !m.isDraft && (
+                          <button
+                            type="button"
+                            className="message-action-btn"
+                            onClick={() => regenerateMessage(m)}
+                            disabled={isActiveConversationStreaming}
+                            aria-label="重新生成回复"
+                            title="重新生成回复并替换后续对话"
+                          >
+                            <RefreshCw size={14} aria-hidden="true" />
+                          </button>
+                        )}
+                        {m.role === 'user' && !m.isDraft && (
+                          <button
+                            type="button"
+                            className="message-action-btn"
+                            onClick={() => startEditMessage(m)}
+                            disabled={isActiveConversationStreaming}
+                            aria-label="修改这条消息并重新发送"
+                            title="修改这条消息并重新生成后续回复"
+                          >
+                            <Pencil size={14} aria-hidden="true" />
+                          </button>
+                        )}
+                        {canFeedback(m) && (
+                          <>
+                            <IconButton
+                              label={m.feedback === 'up' ? '取消赞同反馈' : '这条回复有帮助'}
+                              disabled={fbPending.includes(m.id)}
+                              className={m.feedback === 'up' ? 'fb-btn fb-btn--on' : 'fb-btn'}
+                              onClick={() => void handleFeedback(m.id, 'up')}
+                            >
+                              <ThumbsUp size={15} aria-hidden="true" />
+                            </IconButton>
+                            <IconButton
+                              label={m.feedback === 'down' ? '取消负面反馈' : '这条回复需要改进'}
+                              disabled={fbPending.includes(m.id)}
+                              className={m.feedback === 'down' ? 'fb-btn fb-btn--on' : 'fb-btn'}
+                              onClick={() => void handleFeedback(m.id, 'down')}
+                            >
+                              <ThumbsDown size={15} aria-hidden="true" />
+                            </IconButton>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2537,30 +3119,63 @@ function App() {
           )}
         </section>
 
-        <footer className="composer-area">
-          {error && <div className="err-banner">{error}</div>}
-          <form className="composer" onSubmit={handleSubmit}>
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="输入问题，按 Enter 发送，Shift+Enter 换行"
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void handleSubmit(e) } }}
-            />
-            <button
-              className={`send-btn ${isActiveConversationStreaming ? 'send-btn--stop' : ''}`}
-              type={isActiveConversationStreaming ? 'button' : 'submit'}
-              disabled={isActiveConversationStreaming ? isActiveConversationStopPending : !input.trim()}
-              onClick={isActiveConversationStreaming ? () => { void handleStop() } : undefined}
-              aria-label={isActiveConversationStreaming ? '停止响应' : '发送消息'}
-              title={isActiveConversationStreaming ? '停止响应' : '发送消息'}
-            >
-              {isActiveConversationStreaming ? '■' : '➤'}
-            </button>
-          </form>
-        </footer>
+        <ChatComposer
+          composerRef={composerRef}
+          disabled={!input.trim()}
+          editingMessage={editingMessage}
+          error={error}
+          failedPrompt={failedPrompt}
+          input={input}
+          inputLength={inputLength}
+          inputNearLimit={inputNearLimit}
+          isStopPending={isActiveConversationStopPending}
+          isStreaming={isActiveConversationStreaming}
+          maxLength={MESSAGE_MAX_LENGTH}
+          onChange={(value) => {
+            setInput(value)
+            if (failedPrompt) setFailedPrompt(null)
+          }}
+          onCancelEdit={cancelEditMessage}
+          onRestoreFailedPrompt={restoreFailedPrompt}
+          onRetryFailedPrompt={retryFailedPrompt}
+          onScrollBottom={scrollMessagesToBottom}
+          onStop={() => { void handleStop() }}
+          onSubmit={handleSubmit}
+          showScrollBottom={showScrollBottom}
+          statusText={composerStatusText}
+        />
           </>
         )}
       </main>
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="删除这个对话？"
+        description="删除后会从历史记录中移除该对话，相关消息也会一起删除。"
+        confirmText="删除"
+        danger
+        details={deleteTarget ? <span>对话：{deleteTarget.title || '未命名对话'}</span> : null}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => void handleDelete()}
+      />
+      <ConfirmDialog
+        open={resetDialogOpen}
+        title="清空已保存数据？"
+        description="这会删除服务器上已保存的对话历史、长期记忆，并恢复本地界面设置默认值。此操作不可撤销。"
+        confirmText="一键清空"
+        danger
+        busy={userDataClearing}
+        details={(
+          <div className="reset-summary">
+            <span>历史对话：{userDataSummary?.conversation_count ?? 0}</span>
+            <span>消息总数：{userDataSummary?.message_count ?? 0}</span>
+            <span>长期记忆：{userDataSummary?.memory_count ?? 0}</span>
+          </div>
+        )}
+        onCancel={() => {
+          if (!userDataClearing) setResetDialogOpen(false)
+        }}
+        onConfirm={() => void handleResetUserData()}
+      />
     </div>
   )
 }

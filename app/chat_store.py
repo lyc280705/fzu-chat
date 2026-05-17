@@ -355,6 +355,66 @@ class ChatStore:
             )
             return cur.rowcount > 0
 
+    def truncate_after_user_message(
+        self,
+        user_id: str,
+        conversation_id: str,
+        message_id: str,
+        *,
+        content: str | None = None,
+        model: str | None = None,
+        updated_at: str,
+    ) -> Dict[str, Any] | None:
+        with self._cursor() as cur:
+            row = self._get_conversation_row(cur, user_id, conversation_id)
+            if row is None:
+                return None
+            cur.execute(
+                """
+                SELECT id, position, role, content
+                FROM messages
+                WHERE id = ? AND conversation_id = ?
+                """,
+                (message_id, conversation_id),
+            )
+            message_row = cur.fetchone()
+            if message_row is None or message_row["role"] != "user":
+                return None
+
+            if content is not None:
+                cur.execute(
+                    """
+                    UPDATE messages
+                    SET content = ?, parts = ?, timestamp = ?, feedback = NULL
+                    WHERE id = ? AND conversation_id = ?
+                    """,
+                    (
+                        content,
+                        json.dumps([{"type": "text", "content": content}], ensure_ascii=False),
+                        updated_at,
+                        message_id,
+                        conversation_id,
+                    ),
+                )
+
+            cur.execute(
+                """
+                DELETE FROM messages
+                WHERE conversation_id = ? AND position > ?
+                """,
+                (conversation_id, int(message_row["position"])),
+            )
+            cur.execute(
+                """
+                UPDATE conversations
+                SET model = ?, updated_at = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (model or row["model"], updated_at, conversation_id, user_id),
+            )
+            row = self._get_conversation_row(cur, user_id, conversation_id)
+            return self._conversation_from_row(cur, row)
+
     def append_message(self, user_id: str, conversation_id: str, message: Dict[str, Any], *, model: str | None = None) -> Dict[str, Any] | None:
         with self._cursor() as cur:
             row = self._get_conversation_row(cur, user_id, conversation_id)

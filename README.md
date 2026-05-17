@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v4.0](CHANGELOG.md)
+Current tagged release: [v5.0](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -23,6 +23,8 @@ FZU-Chat provides a ChatGPT-style conversation experience for Fuzhou University 
 - **Educational system tools**: Query grades, courses, exam scores, and student info via the FZU academic affairs system (based on [west2-online/jwch](https://github.com/west2-online/jwch))
 - **Educational session cleanup**: The app only keeps educational-system session cookies on the server side and never stores the raw password; logging out clears both the site login state and the cached educational-session cookies
 - **ChatGPT-style interface**: Modern dark UI with sidebar history, quick actions, and streaming replies
+- **Message editing and regeneration**: Icon-only actions for copying replies, regenerating an assistant answer, or editing a sent user message and rebuilding the following response branch
+- **Accessible interaction polish**: Keyboard-friendly focus rings, skip link, screen-reader status updates, dialog focus handling, and live chat-log announcements
 - **Rich tool cards**: Visual display of tool calls with structured data tables for grades and courses
 - **Multi-model support**: Huawei Cloud MaaS GLM-5.1, Kimi K2.6, and DeepSeek V4 Pro selection, with qwen3-30b-a3b for title summarization
 - **FZU-aware personalized memory**: Confirmed long-term preferences for names, answer style, course-selection habits, academic-query presentation, campus-life needs, and dining/campus preferences, while volatile educational facts remain live tool queries
@@ -60,6 +62,8 @@ fzu-chat/
 - `DASHSCOPE_API_KEY` – Alibaba Cloud DashScope embeddings for the local knowledge base
 - `BOCHA_API_KEY` – Bocha web search
 - `LANGSMITH_API_KEY` – LangSmith tracing
+
+For local development, the backend also reads root-level key files such as `huaweicloud_maas_api_key.txt`, `dashscope_api_key.txt`, and `bocha_api_key.txt` when container secrets and environment variables are not set.
 
 ## Local Development
 
@@ -111,6 +115,7 @@ docker compose up -d --build
 - `GET /api/conversations/{id}` – Conversation detail
 - `DELETE /api/conversations/{id}` – Delete conversation
 - `POST /api/conversations/{id}/messages` – Stream assistant response (SSE)
+- `POST /api/conversations/{id}/messages` with `rerun_message_id` – Edit or regenerate from an existing user message while preserving the SSE event format
 - `POST /api/conversations/{id}/feedback` – Save feedback
 - `POST /api/conversations/{id}/memory-proposals/{tool_id}` – Confirm or dismiss a memory save/delete proposal
 
