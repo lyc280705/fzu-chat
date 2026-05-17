@@ -3,12 +3,16 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  BookOpen,
   Copy,
   Eye,
   EyeOff,
+  Loader2,
   LogOut,
+  MapPin,
   Menu,
   MessageSquarePlus,
+  Navigation,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -18,6 +22,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   Trash2,
+  Utensils,
   X,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
@@ -38,6 +43,7 @@ const AUTO_SCROLL_THRESHOLD = 80
 const THINKING_INDICATOR_DELAY = 1000
 const THINKING_STORAGE_KEY = 'fzu_thinking_enabled'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'fzu_sidebar_collapsed'
+const LOCATION_RECOMMENDATION_STORAGE_KEY = 'fzu_location_recommendations_enabled'
 const MESSAGE_MAX_LENGTH = 4000
 
 const TOOL_ICONS = {
@@ -57,7 +63,16 @@ const TOOL_ICONS = {
   query_exam_scores: '📝',
   query_academic_calendar: '🗓️',
   query_cultivate_plan: '🧭',
+  recommend_campus_context: '📍',
 }
+
+const FALLBACK_MANUAL_LOCATIONS = [
+  { id: 'qishan_center', name: '旗山校区中心区', campus: '旗山校区' },
+  { id: 'qishan_teaching', name: '旗山校区教学区', campus: '旗山校区' },
+  { id: 'qishan_dorm', name: '旗山校区生活区', campus: '旗山校区' },
+  { id: 'yishan_center', name: '怡山校区', campus: '怡山校区' },
+  { id: 'tongpan_center', name: '铜盘校区', campus: '铜盘校区' },
+]
 
 const SEARCH_RESULT_TOOL_NAMES = new Set(['retrieve', 'bocha_websearch_tool'])
 const EDUCATIONAL_TOOL_NAMES = new Set([
@@ -619,6 +634,9 @@ const toolResultSummary = (part = {}) => {
   if (part.tool_name === 'query_exam_scores' && Array.isArray(data)) return `${data.length} 条成绩`
   if (part.tool_name === 'query_exam_rooms' && Array.isArray(data.exams)) return `${data.exams.length} 场考试`
   if (part.tool_name === 'query_user_memory' && Array.isArray(data.memories)) return `${data.memories.length} 条记忆`
+  if (part.tool_name === 'recommend_campus_context' && Array.isArray(data.recommendations)) {
+    return `${data.recommendations.length} 个地点`
+  }
   if (data.status) return statusLabel(data.status)
   return ''
 }
@@ -680,6 +698,64 @@ const readApiError = async (response, fallback = '请求失败', rateLimitMessag
   const payload = await response.json().catch(() => ({}))
   if (response.status === 429 && rateLimitMessage) return rateLimitMessage
   return payload?.detail || payload?.message || fallback
+}
+
+const geolocationErrorMessage = (error) => {
+  if (!error) return '无法获取浏览器定位。'
+  if (error.code === 1) return '定位权限被拒绝，你可以手动选择所在校区或区域。'
+  if (error.code === 2) return '暂时无法获取当前位置，你可以手动选择所在校区或区域。'
+  if (error.code === 3) return '定位请求超时，你可以手动选择所在校区或区域。'
+  return error.message || '无法获取浏览器定位。'
+}
+
+const requestBrowserLocation = () => new Promise((resolve, reject) => {
+  const nav = globalThis.navigator
+  if (!nav?.geolocation) {
+    reject(new Error('当前浏览器不支持定位，你可以手动选择所在校区或区域。'))
+    return
+  }
+  nav.geolocation.getCurrentPosition(
+    (position) => resolve({
+      lat: position.coords.latitude,
+      lng: position.coords.longitude,
+      accuracy: position.coords.accuracy,
+    }),
+    (error) => reject(new Error(geolocationErrorMessage(error))),
+    { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 },
+  )
+})
+
+const queryGeolocationPermission = async () => {
+  const nav = globalThis.navigator
+  if (!nav?.geolocation) return 'unsupported'
+  if (!nav.permissions?.query) return 'unknown'
+  try {
+    const status = await nav.permissions.query({ name: 'geolocation' })
+    return status.state || 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+const locationPermissionLabel = (state) => ({
+  granted: '已允许',
+  prompt: '待授权',
+  denied: '已被浏览器拒绝',
+  unsupported: '当前浏览器不支持',
+  unknown: '状态未知',
+}[state] || '状态未知')
+
+const formatDistanceMeters = (value) => {
+  const meters = Number(value)
+  if (!Number.isFinite(meters)) return '距离未知'
+  if (meters >= 1000) return `${(meters / 1000).toFixed(meters >= 2000 ? 0 : 1)} 公里`
+  return `${Math.max(1, Math.round(meters))} 米`
+}
+
+const recommendationScenarioLabel = (scenario) => {
+  if (scenario === 'dining') return '食堂'
+  if (scenario === 'study') return '自习'
+  return '智能'
 }
 
 /* ================================================================== */
@@ -1683,6 +1759,228 @@ function SearchResultsCard({ part, data, messageId }) {
   )
 }
 
+function ContextualRecommendationCard({ data, copied = false, onCopy, onFollowup }) {
+  if (!data || typeof data !== 'object') return null
+  const recommendations = Array.isArray(data.recommendations) ? data.recommendations : []
+  const exams = Array.isArray(data.academic_context?.upcoming_exams) ? data.academic_context.upcoming_exams : []
+  const recentClass = data.academic_context?.recent_class
+  const nextClass = data.academic_context?.next_class
+  const isDining = data.resolved_scenario === 'dining'
+  const locationSource = {
+    browser: '浏览器定位',
+    manual: '手动位置',
+    default: '默认估算',
+  }[data.location_source] || '位置估算'
+
+  return (
+    <section className="campus-recommendation-card" aria-label={data.title || '校园推荐'}>
+      <div className="campus-recommendation-card__header">
+        <span className="campus-recommendation-card__icon" aria-hidden="true">
+          {isDining ? <Utensils size={18} /> : <BookOpen size={18} />}
+        </span>
+        <div>
+          <h4>{data.title || '校园推荐'}</h4>
+          {data.trigger_reason && <p>{data.trigger_reason}</p>}
+        </div>
+      </div>
+
+      <div className="campus-recommendation-meta" aria-label="推荐依据">
+        {data.location_name && (
+          <span>
+            <MapPin size={14} aria-hidden="true" />
+            {data.location_name}
+          </span>
+        )}
+        <span>{locationSource}</span>
+        <span>{data.map_status === 'amap' ? '高德步行路线' : '校内地点库估算'}</span>
+      </div>
+
+      {(recentClass || nextClass || exams.length > 0) && (
+        <div className="campus-recommendation-context">
+          {recentClass && <span>刚结束：{recentClass.name}{recentClass.location ? ` · ${recentClass.location}` : ''}</span>}
+          {nextClass && <span>下一节：{nextClass.name}{nextClass.location ? ` · ${nextClass.location}` : ''}</span>}
+          {exams.slice(0, 2).map((exam) => (
+            <span key={`${exam.course_name}-${exam.date}-${exam.time}`}>考试：{exam.course_name || '未命名课程'} · {exam.days_until === 0 ? '今天' : `${exam.days_until} 天后`}</span>
+          ))}
+        </div>
+      )}
+
+      {data.map_note && <div className="campus-recommendation-note">{data.map_note}</div>}
+
+      <div className="campus-recommendation-list">
+        {recommendations.length === 0 ? (
+          <div className="campus-recommendation-empty">暂时没有可展示的推荐地点。</div>
+        ) : recommendations.map((item, index) => (
+          <article key={item.id || item.name} className="campus-recommendation-item">
+            <div className="campus-recommendation-item__rank">{index + 1}</div>
+            <div className="campus-recommendation-item__body">
+              <div className="campus-recommendation-item__title">
+                <strong>{item.name}</strong>
+                {item.campus && <span>{item.campus}</span>}
+              </div>
+              <div className="campus-recommendation-item__stats">
+                <span>步行约 {item.walk_minutes || '—'} 分钟</span>
+                <span>{formatDistanceMeters(item.walk_distance_m ?? item.distance_m)}</span>
+                <span>{item.route_source === 'amap' ? '高德路线' : '估算'}</span>
+              </div>
+              {item.reason && <p>{item.reason}</p>}
+              {Array.isArray(item.tags) && item.tags.length > 0 && (
+                <div className="campus-recommendation-tags">
+                  {item.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}
+                </div>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+
+      {data.privacy_note && <div className="campus-recommendation-privacy">{data.privacy_note}</div>}
+
+      {(onCopy || onFollowup) && (
+        <div className="campus-recommendation-actions">
+          {onCopy && (
+            <button type="button" className="campus-recommendation-action" onClick={() => onCopy(data)}>
+              {copied ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+              {copied ? '已复制' : '复制建议'}
+            </button>
+          )}
+          {onFollowup && data.followup_prompt && (
+            <button type="button" className="campus-recommendation-action campus-recommendation-action--primary" onClick={() => onFollowup(data.followup_prompt)}>
+              <MessageSquarePlus size={15} aria-hidden="true" />
+              继续问灵犀
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function SmartRecommendationGroup({
+  data,
+  error,
+  loading,
+  manualMode,
+  manualLocations,
+  selectedManualLocationId,
+  pendingScenario,
+  locationEnabled,
+  locationPermission,
+  onPrompt,
+  onRefresh,
+  onOpenPrivacy,
+  onManualSelect,
+  onManualSubmit,
+}) {
+  const locations = manualLocations.length > 0 ? manualLocations : FALLBACK_MANUAL_LOCATIONS
+  const recommendations = Array.isArray(data?.recommendations) ? data.recommendations : []
+  const exams = Array.isArray(data?.academic_context?.upcoming_exams) ? data.academic_context.upcoming_exams : []
+  const actions = []
+
+  if (exams[0]) {
+    const exam = exams[0]
+    const courseName = exam.course_name || '考试'
+    const dayText = exam.days_until === 0 ? '今天' : `${exam.days_until} 天后`
+    actions.push({
+      key: `exam-${courseName}-${exam.date}-${exam.time}`,
+      label: `${courseName} · ${dayText}`,
+      prompt: `我${dayText}有《${courseName}》考试，请结合我的课表安排今天的复习计划，并推荐合适的自习地点。`,
+      icon: <BookOpen size={14} aria-hidden="true" />,
+    })
+  }
+
+  for (const item of recommendations.slice(0, 3)) {
+    const walkText = item.walk_minutes ? `${item.walk_minutes}分钟` : formatDistanceMeters(item.walk_distance_m ?? item.distance_m)
+    actions.push({
+      key: item.id || item.name,
+      label: `${item.name} · ${walkText}`,
+      prompt: data?.resolved_scenario === 'study'
+        ? `我想去${item.name}自习，请结合我的课表和考试安排给我一段复习计划。`
+        : `我可能去${item.name}吃饭，请结合我的课表和当前位置帮我判断是否合适，并给出备选。`,
+      icon: data?.resolved_scenario === 'study' ? <BookOpen size={14} aria-hidden="true" /> : <Utensils size={14} aria-hidden="true" />,
+    })
+    if (actions.length >= 3) break
+  }
+
+  return (
+    <section className="quick-action-group smart-recommendation-group" aria-label="今日建议">
+      <span>今日建议</span>
+      {data?.trigger_reason && <p className="smart-recommendation-reason">{data.trigger_reason}</p>}
+
+      {loading && (
+        <div className="smart-recommendation-status" role="status" aria-live="polite">
+          <Loader2 size={16} aria-hidden="true" />
+          正在生成{recommendationScenarioLabel(pendingScenario)}建议…
+        </div>
+      )}
+
+      {!loading && actions.length > 0 && (
+        <div className="quick-actions smart-recommendation-actions">
+          {actions.map((action) => (
+            <button key={action.key} type="button" onClick={() => onPrompt(action.prompt)}>
+              {action.icon}
+              {action.label}
+            </button>
+          ))}
+          {data?.location_source !== 'browser' && !locationEnabled && (
+            <button type="button" onClick={onOpenPrivacy}>
+              <MapPin size={14} aria-hidden="true" />
+              开启定位优化
+            </button>
+          )}
+          {data?.location_source !== 'browser' && locationEnabled && locationPermission !== 'granted' && (
+            <button type="button" onClick={onOpenPrivacy}>
+              <ShieldCheck size={14} aria-hidden="true" />
+              检查定位权限
+            </button>
+          )}
+        </div>
+      )}
+
+      {!loading && actions.length === 0 && !error && !manualMode && (
+        <div className="quick-actions smart-recommendation-actions">
+          <button type="button" onClick={onRefresh}>
+            <Navigation size={14} aria-hidden="true" />
+            刷新今日建议
+          </button>
+        </div>
+      )}
+
+      {!loading && error && <p className="smart-recommendation-error" role="alert">{error}</p>}
+
+      {manualMode && (
+        <div className="smart-recommendation-manual">
+          <label htmlFor="manual-location-select">手动选择位置</label>
+          <div className="smart-recommendation-manual-row">
+            <select
+              id="manual-location-select"
+              value={selectedManualLocationId}
+              onChange={(event) => onManualSelect(event.target.value)}
+              disabled={loading}
+            >
+              {locations.map((item) => (
+                <option key={item.id} value={item.id}>{item.campus} · {item.name}</option>
+              ))}
+            </select>
+            <button type="button" onClick={onManualSubmit} disabled={loading || !selectedManualLocationId}>
+              生成建议
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!loading && error && !manualMode && (
+        <div className="quick-actions smart-recommendation-actions">
+          <button type="button" onClick={onRefresh}>
+            <RefreshCw size={14} aria-hidden="true" />
+            重试今日建议
+          </button>
+        </div>
+      )}
+    </section>
+  )
+}
+
 function MessageMarkdown({ content, citationMap = {} }) {
   const linkedContent = content ? linkifyCitationReferences(content, citationMap) : ''
   const normalizedContent = linkedContent ? normalizeMarkdownTables(linkedContent) : ''
@@ -1779,6 +2077,8 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
         return <CultivatePlanCard data={part.data} />
       case 'query_student_info':
         return <StudentInfoCard data={part.data} />
+      case 'recommend_campus_context':
+        return <ContextualRecommendationCard data={part.data} />
       case 'query_user_memory':
         return <UserMemoryListCard data={part.data} />
       case 'save_user_memory':
@@ -1853,7 +2153,22 @@ function PendingTitle({ compact = false }) {
   )
 }
 
-function PrivacyPolicyView({ summary, loading, clearing, resetDisabled, onReload, onReset, error }) {
+function PrivacyPolicyView({
+  summary,
+  loading,
+  clearing,
+  resetDisabled,
+  locationEnabled,
+  locationPermission,
+  locationBusy,
+  locationMessage,
+  onReload,
+  onReset,
+  onEnableLocation,
+  onDisableLocation,
+  onRefreshLocationPermission,
+  error,
+}) {
   const stats = [
     { label: '历史对话', value: summary?.conversation_count ?? 0, hint: '包含侧栏中的全部已保存会话' },
     { label: '消息总数', value: summary?.message_count ?? 0, hint: '包括你的提问与助手回复' },
@@ -1886,6 +2201,32 @@ function PrivacyPolicyView({ summary, loading, clearing, resetDisabled, onReload
               <p className="privacy-stat__hint">{item.hint}</p>
             </article>
           ))}
+        </div>
+
+        <div className="privacy-card privacy-card--location">
+          <div>
+            <h3>定位与今日建议</h3>
+            <p>开启后，聊天首页会在浏览器已经授权定位时自动使用当前位置优化食堂、自习和复习建议。经纬度只用于本次推荐请求，不写入会话、长期记忆或服务端日志。</p>
+            <div className="privacy-location-status">
+              <span>应用开关：{locationEnabled ? '已开启' : '未开启'}</span>
+              <span>浏览器权限：{locationPermissionLabel(locationPermission)}</span>
+            </div>
+            {locationMessage && <div className="privacy-location-message">{locationMessage}</div>}
+          </div>
+          <div className="privacy-card__actions">
+            {locationEnabled ? (
+              <button type="button" className="secondary-btn" onClick={onDisableLocation} disabled={locationBusy}>
+                关闭定位优化
+              </button>
+            ) : (
+              <button type="button" className="primary-btn" onClick={onEnableLocation} disabled={locationBusy || locationPermission === 'unsupported'}>
+                <MapPin size={16} aria-hidden="true" /> {locationBusy ? '请求中…' : '允许定位优化'}
+              </button>
+            )}
+            <button type="button" className="secondary-btn" onClick={onRefreshLocationPermission} disabled={locationBusy}>
+              <RefreshCw size={16} aria-hidden="true" /> 刷新权限状态
+            </button>
+          </div>
         </div>
 
         <div className="privacy-card privacy-card--danger">
@@ -1945,6 +2286,20 @@ function App() {
   const [copiedMessageId, setCopiedMessageId] = useState(null)
   const [failedPrompt, setFailedPrompt] = useState(null)
   const [editingMessage, setEditingMessage] = useState(null)
+  const [recommendationData, setRecommendationData] = useState(null)
+  const [recommendationLoading, setRecommendationLoading] = useState(false)
+  const [recommendationError, setRecommendationError] = useState('')
+  const [recommendationManualMode, setRecommendationManualMode] = useState(false)
+  const [manualLocations, setManualLocations] = useState(FALLBACK_MANUAL_LOCATIONS)
+  const [selectedManualLocationId, setSelectedManualLocationId] = useState(FALLBACK_MANUAL_LOCATIONS[0].id)
+  const [pendingRecommendationScenario, setPendingRecommendationScenario] = useState('auto')
+  const [locationRecommendationEnabled, setLocationRecommendationEnabled] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.localStorage.getItem(LOCATION_RECOMMENDATION_STORAGE_KEY) === '1'
+  })
+  const [locationPermission, setLocationPermission] = useState('unknown')
+  const [locationPermissionBusy, setLocationPermissionBusy] = useState(false)
+  const [locationPermissionMessage, setLocationPermissionMessage] = useState('')
   const [screenReaderStatus, setScreenReaderStatus] = useState('')
   const [showScrollBottom, setShowScrollBottom] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -1958,6 +2313,7 @@ function App() {
   const draftThinkingTimersRef = useRef(new Map())
   const conversationEventsRef = useRef(null)
   const copiedMessageTimerRef = useRef(null)
+  const recommendationAutoLoadedRef = useRef(false)
 
   const activeConv = useMemo(() => conversations.find((c) => c.id === activeId) ?? null, [activeId, conversations])
   const activeMsgs = useMemo(() => normMsgs(msgStore[activeId]?.messages ?? []), [activeId, msgStore])
@@ -2084,6 +2440,14 @@ function App() {
     setCopiedMessageId(null)
     setFailedPrompt(null)
     setEditingMessage(null)
+    setRecommendationData(null)
+    setRecommendationLoading(false)
+    setRecommendationError('')
+    setRecommendationManualMode(false)
+    setManualLocations(FALLBACK_MANUAL_LOCATIONS)
+    setSelectedManualLocationId(FALLBACK_MANUAL_LOCATIONS[0].id)
+    setPendingRecommendationScenario('auto')
+    recommendationAutoLoadedRef.current = false
     setScreenReaderStatus('')
     setShowScrollBottom(false)
   }, [])
@@ -2119,6 +2483,21 @@ function App() {
     if (typeof window === 'undefined') return
     window.localStorage.setItem(THINKING_STORAGE_KEY, thinkingEnabled ? '1' : '0')
   }, [thinkingEnabled])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(LOCATION_RECOMMENDATION_STORAGE_KEY, locationRecommendationEnabled ? '1' : '0')
+  }, [locationRecommendationEnabled])
+
+  useEffect(() => {
+    let cancelled = false
+    queryGeolocationPermission().then((state) => {
+      if (!cancelled) setLocationPermission(state)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!shouldAutoScrollRef.current) return
@@ -2267,7 +2646,12 @@ function App() {
   }, [activeConversationModel, activeId, models])
 
   // --- Handlers ---
-  const handleLogin = useCallback((u, eduErr) => { setUser(u); setEduError(eduErr); setError('') }, [])
+  const handleLogin = useCallback((u, eduErr) => {
+    recommendationAutoLoadedRef.current = false
+    setUser(u)
+    setEduError(eduErr)
+    setError('')
+  }, [])
 
   const handleLogout = useCallback(async () => {
     setError('')
@@ -2340,11 +2724,19 @@ function App() {
 
   const handleNew = useCallback(async () => { setError(''); try { await createConv() } catch (e) { setError(e.message) } }, [createConv])
 
+  const refreshLocationPermission = useCallback(async () => {
+    const state = await queryGeolocationPermission()
+    setLocationPermission(state)
+    return state
+  }, [])
+
   const handleOpenPrivacyView = useCallback(() => {
     setError('')
+    setLocationPermissionMessage('')
+    void refreshLocationPermission()
     setViewMode('privacy')
     setSidebarOpen(false)
-  }, [])
+  }, [refreshLocationPermission])
 
   const toggleDesktopSidebar = useCallback(() => {
     setSidebarCollapsed((value) => !value)
@@ -2452,6 +2844,8 @@ function App() {
       setEditingMessage(null)
       setThinkingEnabled(true)
       setSidebarCollapsed(false)
+      setLocationRecommendationEnabled(false)
+      setLocationPermissionMessage('')
       setUserDataSummary({ conversation_count: 0, message_count: 0, memory_count: 0 })
       setResetDialogOpen(false)
     } catch (err) {
@@ -2480,6 +2874,116 @@ function App() {
       setScreenReaderStatus('复制失败，请检查浏览器剪贴板权限。')
     }
   }, [])
+
+  const loadManualLocations = useCallback(async () => {
+    try {
+      const response = await api('/api/recommendations/locations')
+      if (!response.ok) throw new Error('获取手动位置失败')
+      const payload = await response.json()
+      const locations = Array.isArray(payload.locations) && payload.locations.length > 0
+        ? payload.locations
+        : FALLBACK_MANUAL_LOCATIONS
+      setManualLocations(locations)
+      setSelectedManualLocationId((current) => (
+        locations.some((item) => item.id === current) ? current : locations[0].id
+      ))
+      return locations
+    } catch {
+      setManualLocations(FALLBACK_MANUAL_LOCATIONS)
+      setSelectedManualLocationId((current) => (
+        FALLBACK_MANUAL_LOCATIONS.some((item) => item.id === current) ? current : FALLBACK_MANUAL_LOCATIONS[0].id
+      ))
+      return FALLBACK_MANUAL_LOCATIONS
+    }
+  }, [])
+
+  const requestRecommendation = useCallback(async (scenario = 'auto', options = {}) => {
+    if (recommendationLoading) return
+    const nextScenario = ['auto', 'dining', 'study'].includes(scenario) ? scenario : 'auto'
+    const useManualLocation = options.manual === true
+    const useBrowserLocation = options.useLocation !== false && !useManualLocation
+    const silent = options.silent === true
+    const fallbackToDefault = options.fallbackToDefault === true || silent
+    setPendingRecommendationScenario(nextScenario)
+    setRecommendationLoading(true)
+    setRecommendationError('')
+    setError('')
+
+    const body = { scenario: nextScenario }
+    if (useManualLocation) {
+      body.manual_location_id = selectedManualLocationId || FALLBACK_MANUAL_LOCATIONS[0].id
+    } else if (useBrowserLocation) {
+      try {
+        body.location = await requestBrowserLocation()
+        setLocationPermission('granted')
+      } catch (err) {
+        const nextPermission = await queryGeolocationPermission()
+        setLocationPermission(nextPermission)
+        if (fallbackToDefault) {
+          body.manual_location_id = ''
+        } else {
+          await loadManualLocations()
+          setRecommendationManualMode(true)
+          setRecommendationLoading(false)
+          const message = err.message || '无法获取浏览器定位，你可以手动选择所在校区或区域。'
+          setRecommendationError(message)
+          setScreenReaderStatus(message)
+          return
+        }
+      }
+    }
+
+    try {
+      const response = await api('/api/recommendations/contextual', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+      if (!response.ok) throw new Error(await readApiError(response, '生成校园推荐失败'))
+      const payload = await response.json()
+      setRecommendationData(payload)
+      setRecommendationManualMode(false)
+      setRecommendationError('')
+      if (!silent) setScreenReaderStatus('校园建议已生成。')
+    } catch (err) {
+      const message = err.message || '生成校园推荐失败，请稍后重试。'
+      setRecommendationError(message)
+      if (!silent) setScreenReaderStatus(message)
+    } finally {
+      setRecommendationLoading(false)
+    }
+  }, [loadManualLocations, recommendationLoading, selectedManualLocationId])
+
+  const enableLocationRecommendations = useCallback(async () => {
+    if (locationPermissionBusy) return
+    setLocationPermissionBusy(true)
+    setLocationPermissionMessage('')
+    try {
+      await requestBrowserLocation()
+      setLocationPermission('granted')
+      setLocationRecommendationEnabled(true)
+      setLocationPermissionMessage('已开启。之后首页会自动使用本次浏览器授权的位置优化今日建议。')
+      recommendationAutoLoadedRef.current = false
+      if (!isPrivacyView && activeMsgs.length === 0) {
+        void requestRecommendation('auto', { useLocation: true })
+      }
+    } catch (err) {
+      const state = await queryGeolocationPermission()
+      setLocationPermission(state)
+      setLocationRecommendationEnabled(false)
+      setLocationPermissionMessage(err.message || '无法开启定位优化。')
+    } finally {
+      setLocationPermissionBusy(false)
+    }
+  }, [activeMsgs.length, isPrivacyView, locationPermissionBusy, requestRecommendation])
+
+  const disableLocationRecommendations = useCallback(() => {
+    setLocationRecommendationEnabled(false)
+    setLocationPermissionMessage('已关闭首页定位优化。浏览器授权状态可在浏览器站点设置中管理。')
+    recommendationAutoLoadedRef.current = false
+    if (!isPrivacyView && activeMsgs.length === 0) {
+      void requestRecommendation('auto', { useLocation: false })
+    }
+  }, [activeMsgs.length, isPrivacyView, requestRecommendation])
 
   const updateDraft = useCallback((cid, fn) => {
     setMsgStore((s) => {
@@ -2739,6 +3243,14 @@ function App() {
       }
     }
   }, [activeId, activeConv, msgStore, selModel, thinkingEnabled, clearConversationStreamState, clearDraftThinkingTimer, createConv, readSSE, refreshAuthState, replaceDraft, setConversationStopPending, setConversationStreaming, streamingConversations, updateDraft, updateSummary])
+
+  useEffect(() => {
+    if (!user || isPrivacyView || activeMsgs.length !== 0 || recommendationAutoLoadedRef.current) return
+    if (locationRecommendationEnabled && locationPermission === 'unknown') return
+    recommendationAutoLoadedRef.current = true
+    const shouldUseLocation = locationRecommendationEnabled && locationPermission === 'granted'
+    void requestRecommendation('auto', { useLocation: shouldUseLocation, fallbackToDefault: true, silent: true })
+  }, [activeMsgs.length, isPrivacyView, locationPermission, locationRecommendationEnabled, requestRecommendation, user])
 
   const handleSubmit = useCallback((event) => {
     event.preventDefault()
@@ -3020,15 +3532,22 @@ function App() {
             loading={userDataLoading}
             clearing={userDataClearing}
             resetDisabled={userDataLoading || userDataClearing || hasStreamingConversation}
+            locationEnabled={locationRecommendationEnabled}
+            locationPermission={locationPermission}
+            locationBusy={locationPermissionBusy}
+            locationMessage={locationPermissionMessage}
             onReload={() => void loadUserDataSummary()}
             onReset={() => setResetDialogOpen(true)}
+            onEnableLocation={() => void enableLocationRecommendations()}
+            onDisableLocation={disableLocationRecommendations}
+            onRefreshLocationPermission={() => void refreshLocationPermission()}
             error={error}
           />
         ) : (
           <>
         <section
           id="message-list"
-          className="msg-list"
+          className={`msg-list ${activeMsgs.length === 0 ? 'msg-list--empty' : ''}`.trim()}
           ref={msgListRef}
           onScroll={syncAutoScrollState}
           onWheel={handleMsgListWheel}
@@ -3040,7 +3559,28 @@ function App() {
           aria-busy={isActiveConversationStreaming}
         >
           {activeMsgs.length === 0 ? (
-            <EmptyChatState message={EMPTY_MSG} onPrompt={applyQuickPrompt} />
+            <EmptyChatState
+              message={EMPTY_MSG}
+              onPrompt={applyQuickPrompt}
+              recommendationGroup={(
+                <SmartRecommendationGroup
+                  data={recommendationData}
+                  error={recommendationError}
+                  loading={recommendationLoading}
+                  manualMode={recommendationManualMode}
+                  manualLocations={manualLocations}
+                  selectedManualLocationId={selectedManualLocationId}
+                  pendingScenario={pendingRecommendationScenario}
+                  locationEnabled={locationRecommendationEnabled}
+                  locationPermission={locationPermission}
+                  onPrompt={applyQuickPrompt}
+                  onRefresh={() => void requestRecommendation('auto', { useLocation: false })}
+                  onOpenPrivacy={handleOpenPrivacyView}
+                  onManualSelect={setSelectedManualLocationId}
+                  onManualSubmit={() => void requestRecommendation(pendingRecommendationScenario, { manual: true })}
+                />
+              )}
+            />
           ) : (
             activeMsgs.map((m) => {
               const parts = compactParts(m.parts)

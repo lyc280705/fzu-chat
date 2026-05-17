@@ -7,6 +7,7 @@ services:
     environment:
       FZU_CHAT_ENABLE_LANGSMITH_TRACING: "true"
       FZU_CHAT_CHECKPOINT_PATH: /app/app/storage/conversation_history.sqlite
+      AMAP_WEB_SERVICE_KEY: ${AMAP_WEB_SERVICE_KEY:-}
     ports:
       - "80:8000"
     volumes:
@@ -21,6 +22,7 @@ services:
       - bocha_api_key
       - langsmith_api_key
       - huaweicloud_maas_api_key
+      - amap_web_service_key
     read_only: true
     tmpfs:
       - /tmp
@@ -33,3 +35,5 @@ secrets:
     file: ./langsmith_api_key.txt
   huaweicloud_maas_api_key:
     file: ./huaweicloud_maas_api_key.txt
+  amap_web_service_key:
+    file: ./amap_web_service_key.txt

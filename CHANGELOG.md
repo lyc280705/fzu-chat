@@ -3,6 +3,50 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v6.0] - 2026-05-17
+
+FZU-Chat v6.0 adds contextual campus recommendations. The chat home now surfaces lightweight “Today’s suggestions” from live course/exam context and current time, with optional location optimization managed from the privacy page.
+
+### Highlights
+
+- Smart homepage suggestions. Empty chats automatically show dining, study, or exam-prep prompts above the standard quick actions, without requiring users to choose a scenario first.
+- Privacy-managed location. Users enable location optimization from “Privacy & Data”; once browser permission is granted, the homepage can use one-time location automatically for recommendations.
+- AMap-backed campus routing. The backend keeps the AMap Web Service key server-side, supports Docker secrets and local `amap_web_service_key.txt`, throttles requests to 5 QPS, and falls back to the built-in FZU place library.
+- Agent integration. The `recommend_campus_context` tool lets chat questions such as “where should I eat or study now” reuse the same recommendation service.
+- Compact empty state. The new-chat page is denser so the main recommendations and quick actions fit in the first viewport more often.
+
+### Validation
+
+- conda run -n langchain python -m compileall app
+- conda run -n langchain python -m unittest tests.test_campus_recommendations
+- cd frontend && npm run lint
+- cd frontend && npm run build
+- Browser smoke test for logged-in homepage suggestions and privacy-page location controls
+
+---
+
+## 福大灵犀 v6.0
+
+福大灵犀 v6.0 新增情境校园推荐。聊天首页会基于实时课表、考试安排和当前时段自动出现轻量“今日建议”，定位优化则集中放在“隐私与数据”页面管理。
+
+### 版本亮点
+
+- 首页智能建议。空对话会自动展示食堂、自习或考试复习建议，放在常规快捷问题上方，不需要用户先判断场景。
+- 隐私页统一管理定位。用户在“隐私与数据”中开启定位优化；浏览器授权后，首页后续可自动使用一次性位置优化推荐。
+- 高德地图后端集成。高德 Web 服务 Key 只留在后端，支持 Docker secret 和本地 `amap_web_service_key.txt`，请求默认限速 5 QPS，并可降级到内置福大地点库。
+- Agent 工具接入。新增 `recommend_campus_context`，用户在聊天中问“现在去哪吃/去哪自习”也能复用同一套推荐服务。
+- 空状态压缩。新对话页更紧凑，尽量让今日建议与常用快捷入口在首屏内可见。
+
+### 验证
+
+- conda run -n langchain python -m compileall app
+- conda run -n langchain python -m unittest tests.test_campus_recommendations
+- cd frontend && npm run lint
+- cd frontend && npm run build
+- 登录态浏览器冒烟测试：首页今日建议、隐私页定位控制
+
+---
+
 ## [v5.0] - 2026-05-17
 
 FZU-Chat v5.0 is a full interaction-experience release. It tightens the main chat loop with ChatGPT-style edit, copy, and regenerate actions; makes stopped streams preserve already generated content; improves mobile layout and local development startup; and adds accessibility affordances across the chat surface.

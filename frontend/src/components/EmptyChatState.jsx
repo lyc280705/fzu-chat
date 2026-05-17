@@ -13,13 +13,14 @@ const QUICK_PROMPT_GROUPS = [
   },
 ]
 
-export function EmptyChatState({ message, onPrompt }) {
+export function EmptyChatState({ message, onPrompt, recommendationGroup = null }) {
   return (
     <div className="empty-state">
       <img src="/assets/FZU.png" alt="福州大学" className="empty-logo" />
       <h3>开始一次新对话</h3>
       <p>{message}</p>
       <div className="quick-action-groups">
+        {recommendationGroup}
         {QUICK_PROMPT_GROUPS.map((group) => (
           <section key={group.title} className="quick-action-group" aria-label={group.title}>
             <span>{group.title}</span>

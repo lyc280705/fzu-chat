@@ -31,6 +31,7 @@ from .auth import (
     invalidate_session,
     update_session,
 )
+from .campus_recommendations import build_contextual_recommendation, manual_location_options
 from .chat_store import chat_store
 from .edu_tools import set_current_edu_session
 from .graph import CHAT_MODEL_OPTIONS, DEFAULT_CHAT_MODEL, KIMI_CHAT_MODEL, build_graph, reset_search_citation_counter, summary_chain
@@ -94,6 +95,7 @@ TOOL_LABELS: Dict[str, Dict[str, str]] = {
     "query_exam_scores": {"running": "正在查询考试成绩", "complete": "考试成绩查询完成"},
     "query_academic_calendar": {"running": "正在查询校历", "complete": "校历查询完成"},
     "query_cultivate_plan": {"running": "正在查询培养方案", "complete": "培养方案查询完成"},
+    "recommend_campus_context": {"running": "正在生成校园推荐", "complete": "校园推荐已生成"},
 }
 logger = logging.getLogger(__name__)
 
@@ -124,7 +126,7 @@ class SecurityHeadersMiddleware:
                 headers.setdefault("X-Content-Type-Options", "nosniff")
                 headers.setdefault("X-Frame-Options", "DENY")
                 headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-                headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+                headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(self)")
                 headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
                 headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
                 headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
@@ -248,7 +250,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="FZU Chat API", version="5.0.0", lifespan=lifespan)
+app = FastAPI(title="FZU Chat API", version="6.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
@@ -329,6 +331,18 @@ class MessageCreateRequest(BaseModel):
     model: str | None = None
     thinking_enabled: bool | None = None
     rerun_message_id: str | None = Field(default=None, max_length=80)
+
+
+class RecommendationLocation(BaseModel):
+    lat: float
+    lng: float
+    accuracy: float | None = None
+
+
+class ContextualRecommendationRequest(BaseModel):
+    scenario: Literal["auto", "dining", "study"] = "auto"
+    location: RecommendationLocation | None = None
+    manual_location_id: str | None = Field(default=None, max_length=80)
 
 
 class FeedbackUpdateRequest(BaseModel):
@@ -680,6 +694,7 @@ def extract_structured_data(tool_name: str, artifact: Any, content: str = "") ->
         "query_exam_scores",
         "query_academic_calendar",
         "query_cultivate_plan",
+        "recommend_campus_context",
     ):
         if isinstance(artifact, (list, dict)):
             return artifact
@@ -1311,6 +1326,37 @@ def reset_user_data(user: AuthUser = Depends(require_auth)):
             "memory_count": cleared_memories,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Contextual campus recommendations
+# ---------------------------------------------------------------------------
+
+@app.get("/api/recommendations/locations")
+def list_recommendation_locations(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
+    return {"locations": manual_location_options()}
+
+
+@app.post("/api/recommendations/contextual")
+def contextual_recommendation(
+    req: ContextualRecommendationRequest,
+    user: AuthUser = Depends(require_auth),
+) -> Dict[str, Any]:
+    session = refresh_edu_session_status(user.token) or get_session(user.token) or {}
+    edu_ctx = {
+        "user_id": user.user_id,
+        "edu_authenticated": session.get("edu_authenticated", False),
+        "edu_cookies": session.get("edu_cookies"),
+        "edu_identifier": session.get("edu_identifier", ""),
+        "edu_status_message": session.get("edu_status_message", ""),
+    }
+    location = req.location.dict() if req.location else None
+    return build_contextual_recommendation(
+        scenario=req.scenario,
+        location=location,
+        manual_location_id=(req.manual_location_id or "").strip(),
+        edu_session=edu_ctx,
+    )
 
 
 # ---------------------------------------------------------------------------

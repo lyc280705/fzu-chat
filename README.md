@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v5.0](CHANGELOG.md)
+Current tagged release: [v6.0](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -25,6 +25,7 @@ FZU-Chat provides a ChatGPT-style conversation experience for Fuzhou University 
 - **ChatGPT-style interface**: Modern dark UI with sidebar history, quick actions, and streaming replies
 - **Message editing and regeneration**: Icon-only actions for copying replies, regenerating an assistant answer, or editing a sent user message and rebuilding the following response branch
 - **Accessible interaction polish**: Keyboard-friendly focus rings, skip link, screen-reader status updates, dialog focus handling, and live chat-log announcements
+- **Contextual campus recommendations**: The chat home automatically surfaces lightweight “Today’s suggestions” from live course/exam context and current time, with optional one-time browser-location optimization and manual campus fallback
 - **Rich tool cards**: Visual display of tool calls with structured data tables for grades and courses
 - **Multi-model support**: Huawei Cloud MaaS GLM-5.1, Kimi K2.6, and DeepSeek V4 Pro selection, with qwen3-30b-a3b for title summarization
 - **FZU-aware personalized memory**: Confirmed long-term preferences for names, answer style, course-selection habits, academic-query presentation, campus-life needs, and dining/campus preferences, while volatile educational facts remain live tool queries
@@ -41,6 +42,7 @@ fzu-chat/
 │   ├── auth.py            # Token-based authentication & session management
 │   ├── jwch_client.py     # FZU undergraduate system client (Python port)
 │   ├── edu_tools.py       # LangGraph tools for educational queries
+│   ├── campus_recommendations.py # Contextual dining/study recommendation service
 │   ├── user_memory_tools.py # Confirmed personalized-memory tools
 │   ├── memory_store.py    # SQLite-backed long-term memory store
 │   ├── data/              # Knowledge base documents
@@ -62,6 +64,7 @@ fzu-chat/
 - `DASHSCOPE_API_KEY` – Alibaba Cloud DashScope embeddings for the local knowledge base
 - `BOCHA_API_KEY` – Bocha web search
 - `LANGSMITH_API_KEY` – LangSmith tracing
+- `AMAP_WEB_SERVICE_KEY` – Optional AMap Web Service key for POI supplementation and walking-route distance; local development can also use `amap_web_service_key.txt` or `AMAP_WEB_SERVICE_KEY_FILE`; requests are throttled to at most 5 QPS by default; when unset, campus recommendations fall back to the built-in FZU place library and estimated distance
 
 For local development, the backend also reads root-level key files such as `huaweicloud_maas_api_key.txt`, `dashscope_api_key.txt`, and `bocha_api_key.txt` when container secrets and environment variables are not set.
 
@@ -76,6 +79,7 @@ export HUAWEICLOUD_MAAS_API_KEY=...
 export DASHSCOPE_API_KEY=...
 export BOCHA_API_KEY=...
 export LANGSMITH_API_KEY=...
+export AMAP_WEB_SERVICE_KEY=... # optional, for walking routes in campus recommendations
 
 # 3. Start backend
 uvicorn app.server:app --host 0.0.0.0 --port 8000
@@ -94,6 +98,7 @@ echo "your-key" > huaweicloud_maas_api_key.txt
 echo "your-key" > dashscope_api_key.txt
 echo "your-key" > bocha_api_key.txt
 echo "your-key" > langsmith_api_key.txt
+echo "your-key" > amap_web_service_key.txt # optional, for contextual recommendations
 
 # 2. Build and run
 docker compose up -d --build
@@ -119,12 +124,19 @@ docker compose up -d --build
 - `POST /api/conversations/{id}/feedback` – Save feedback
 - `POST /api/conversations/{id}/memory-proposals/{tool_id}` – Confirm or dismiss a memory save/delete proposal
 
+### Contextual Recommendations
+- `GET /api/recommendations/locations` – Built-in manual campus/location options
+- `POST /api/recommendations/contextual` – Generate one-time dining/study recommendations from `scenario`, optional browser `location`, or `manual_location_id`
+
+Browser coordinates are used only for the current recommendation request. The backend does not persist them to conversation storage or long-term memory, and the AMap key stays server-side through environment variables or Docker secrets.
+
 ### Educational Tools (via Agent)
 The LLM agent can automatically call these tools when students ask about their academic data:
 - `query_grades` – Course grades and GPA
 - `query_courses` – Course schedule
 - `query_student_info` – Student profile
 - `query_exam_scores` – CET and unified exam scores
+- `recommend_campus_context` – Contextual campus dining/study recommendations when the user supplies or authorizes a location
 
 ## Validation
 

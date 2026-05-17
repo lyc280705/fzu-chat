@@ -10,6 +10,7 @@ qianfan_api_key.txt
 huaweicloud_maas_api_key.txt
 langsmith_api_key.txt
 bocha_api_key.txt
+amap_web_service_key.txt
 conversation_history.sqlite
 frontend/node_modules/
 frontend/dist/
