@@ -3,6 +3,48 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v6.1] - 2026-05-17
+
+FZU-Chat v6.1 expands contextual recommendations from dining/study hints into broader campus intelligence. The homepage can now surface course-selection windows, grade-summary changes, exam prep, class-location-aware study spots, and corrected FZU place recommendations.
+
+### Highlights
+
+- Wider recommendation scope. “Today’s suggestions” now considers open or upcoming course-selection windows, soon-ending selection periods, grade-summary digest changes, upcoming exams, recent/next classes, meal periods, and campus location.
+- Better place intelligence. The built-in place library now includes Taoliyuan at the staff activity center, Haitangyuan, Jinjiang Building Learning Center, and more manual fallback locations; the inaccurate “Innovation Building public learning area” entry was removed.
+- Smarter ranking. When browser location is unavailable, the service can infer an approximate origin from course locations such as Jinjiang Building, library, teaching buildings, living areas, Yishan, or Tongpan. Study and dining candidates are ranked by both walking cost and contextual fit.
+- Privacy-preserving grade awareness. Grade-change recommendations compare only a browser-local digest and do not persist grade details, locations, course schedules, or exam arrangements to recommendation storage.
+- Deployment clarity. The UI and docs now explain that mobile geolocation requires HTTPS; plain HTTP server URLs will not show the browser permission prompt.
+
+### Validation
+
+- conda run -n langchain python -m compileall app
+- conda run -n langchain python -m unittest tests.test_campus_recommendations
+- cd frontend && npm run lint
+- cd frontend && npm run build
+
+---
+
+## 福大灵犀 v6.1
+
+福大灵犀 v6.1 将情境推荐从食堂/自习提示扩展为更完整的校园智能建议。首页现在可以主动展示选课窗口、成绩摘要变化、考试复习、结合课程地点的自习推荐和更准确的福大地点建议。
+
+### 版本亮点
+
+- 推荐范围扩展。“今日建议”现在会综合正在进行或即将开始的选课、即将截止的选课窗口、成绩摘要变化、近期考试、刚下课/下一节课、饭点和校园位置。
+- 地点库纠偏。补充桃李园餐厅（教工活动中心位置）、海棠园餐厅、晋江楼学习中心和更多手动位置兜底；移除不准确的“创新楼公共学习区”。
+- 排序更智能。无浏览器定位时，可根据晋江楼、图书馆、教学楼、生活区、怡山、铜盘等课表地点推断推荐起点；自习与食堂候选会同时考虑步行成本和场景匹配度。
+- 成绩提醒保护隐私。成绩变化只比较浏览器本地摘要哈希，不把成绩明细、当前位置、课表或考试安排写入推荐状态。
+- 部署说明更清晰。界面和文档明确提示手机定位需要 HTTPS，普通 HTTP 服务器地址不会弹出浏览器定位授权。
+
+### 验证
+
+- conda run -n langchain python -m compileall app
+- conda run -n langchain python -m unittest tests.test_campus_recommendations
+- cd frontend && npm run lint
+- cd frontend && npm run build
+
+---
+
 ## [v6.0] - 2026-05-17
 
 FZU-Chat v6.0 adds contextual campus recommendations. The chat home now surfaces lightweight “Today’s suggestions” from live course/exam context and current time, with optional location optimization managed from the privacy page.

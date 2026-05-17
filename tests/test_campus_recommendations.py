@@ -6,8 +6,12 @@ from unittest import mock
 
 from app.campus_recommendations import (
     AMapClient,
+    CAMPUS_POIS,
     _choose_scenario,
     _amap_error_message,
+    _course_selection_signals,
+    _grade_update_signal,
+    _origin_from_course_event,
     _recent_and_next_class,
     _upcoming_exams,
     build_contextual_recommendation,
@@ -92,6 +96,99 @@ class CampusRecommendationTests(unittest.TestCase):
 
         self.assertEqual(data["map_status"], "amap")
         self.assertLessEqual(route_mock.call_count, 4)
+
+    def test_builtin_pois_include_corrected_places(self):
+        names = {item["name"] for item in CAMPUS_POIS}
+
+        self.assertIn("桃李园餐厅", names)
+        self.assertIn("海棠园餐厅", names)
+        self.assertIn("晋江楼学习中心", names)
+        self.assertNotIn("旗山校区创新楼公共学习区", names)
+
+    def test_course_selection_signals_detect_open_and_upcoming_windows(self):
+        now = datetime(2026, 5, 17, 10, 0)
+        signals = _course_selection_signals(
+            {
+                "needed_credit_types": [{"category": "人文社科", "missing": "2", "missing_value": 2}],
+                "categories": [
+                    {
+                        "key": "general",
+                        "label": "通识选修课",
+                        "status": "open",
+                        "time_window": {"start": "2026-05-17 08:00", "end": "2026-05-17 18:00"},
+                        "candidate_count": 8,
+                        "current_course_count": 1,
+                        "selected_count": 1,
+                    },
+                    {
+                        "key": "semester",
+                        "label": "学期选课",
+                        "status": "upcoming",
+                        "time_window": {"start": "2026-05-20 12:00", "end": "2026-05-22 12:00"},
+                        "candidate_count": 0,
+                    },
+                ],
+            },
+            now,
+        )
+
+        self.assertEqual(signals[0]["status"], "ending_soon")
+        self.assertIn("通识缺口", signals[0]["summary"])
+        self.assertTrue(any(signal["status"] == "upcoming" for signal in signals))
+
+    def test_grade_update_signal_uses_digest_without_persisting_scores(self):
+        marks = [
+            {"semester_code": "202602", "semester": "2025-2026 学年第二学期", "name": "大学英语", "score": "92", "gpa": "4.0", "credits": "2"},
+            {"semester_code": "202602", "semester": "2025-2026 学年第二学期", "name": "体育", "score": "成绩尚未录入", "gpa": "", "credits": "1"},
+        ]
+        baseline = _grade_update_signal(marks)
+        changed = _grade_update_signal(marks, seen_grade_digest="old-digest")
+
+        self.assertEqual(baseline["status"], "available")
+        self.assertEqual(changed["status"], "changed")
+        self.assertEqual(changed["recorded_count"], 1)
+        self.assertIn("digest", changed)
+
+    def test_course_location_can_seed_origin_without_browser_location(self):
+        origin = _origin_from_course_event({"location": "晋江楼 402"})
+
+        self.assertIsNotNone(origin)
+        self.assertEqual(origin["source"], "course")
+        self.assertIn("晋江楼", origin["name"])
+
+    def test_study_signal_prefers_learning_center_contextually(self):
+        class ClientStub:
+            def get_courses(self):
+                return []
+
+            def get_exam_rooms(self, _term):
+                return {"exams": []}
+
+            def get_course_selection_overview(self):
+                return {"categories": [], "needed_credit_types": []}
+
+            def get_marks(self):
+                return [
+                    {"semester_code": "202602", "semester": "2025-2026 学年第二学期", "name": "大学英语", "score": "92", "gpa": "4.0", "credits": "2"}
+                ]
+
+        route_result = {"distance_m": 700, "duration_min": 8, "source": "amap"}
+        with (
+            mock.patch("app.campus_recommendations._build_client", return_value=ClientStub()),
+            mock.patch("app.campus_recommendations._read_amap_key", return_value="valid-key"),
+            mock.patch.object(AMapClient, "around", return_value=[]),
+            mock.patch.object(AMapClient, "walking_route", return_value=route_result),
+        ):
+            data = build_contextual_recommendation(
+                scenario="auto",
+                manual_location_id="qishan_center",
+                seen_grade_digest="old-digest",
+                edu_session={"edu_authenticated": True},
+                now=datetime(2026, 5, 17, 10, 0),
+            )
+
+        names = [item["name"] for item in data["recommendations"]]
+        self.assertTrue({"晋江楼学习中心", "旗山校区图书馆"}.intersection(names))
 
 
 if __name__ == "__main__":

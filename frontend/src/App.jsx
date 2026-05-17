@@ -44,6 +44,7 @@ const THINKING_INDICATOR_DELAY = 1000
 const THINKING_STORAGE_KEY = 'fzu_thinking_enabled'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'fzu_sidebar_collapsed'
 const LOCATION_RECOMMENDATION_STORAGE_KEY = 'fzu_location_recommendations_enabled'
+const GRADE_DIGEST_STORAGE_KEY = 'fzu_grade_digest'
 const MESSAGE_MAX_LENGTH = 4000
 
 const TOOL_ICONS = {
@@ -70,6 +71,11 @@ const FALLBACK_MANUAL_LOCATIONS = [
   { id: 'qishan_center', name: '旗山校区中心区', campus: '旗山校区' },
   { id: 'qishan_teaching', name: '旗山校区教学区', campus: '旗山校区' },
   { id: 'qishan_dorm', name: '旗山校区生活区', campus: '旗山校区' },
+  { id: 'qishan_library', name: '旗山校区图书馆', campus: '旗山校区' },
+  { id: 'qishan_jinjiang', name: '晋江楼学习中心', campus: '旗山校区' },
+  { id: 'qishan_staff_center', name: '教工活动中心 / 桃李园', campus: '旗山校区' },
+  { id: 'qishan_life_zone_1', name: '旗山校区生活一区', campus: '旗山校区' },
+  { id: 'qishan_life_zone_3', name: '旗山校区生活三区', campus: '旗山校区' },
   { id: 'yishan_center', name: '怡山校区', campus: '怡山校区' },
   { id: 'tongpan_center', name: '铜盘校区', campus: '铜盘校区' },
 ]
@@ -700,6 +706,20 @@ const readApiError = async (response, fallback = '请求失败', rateLimitMessag
   return payload?.detail || payload?.message || fallback
 }
 
+const isLocalhostForGeolocation = (hostname = '') => (
+  hostname === 'localhost'
+  || hostname === '127.0.0.1'
+  || hostname === '[::1]'
+  || hostname === '::1'
+)
+
+const isSecureGeolocationContext = () => {
+  if (globalThis.isSecureContext === true) return true
+  const location = globalThis.location
+  if (!location) return false
+  return location.protocol === 'https:' || isLocalhostForGeolocation(location.hostname)
+}
+
 const geolocationErrorMessage = (error) => {
   if (!error) return '无法获取浏览器定位。'
   if (error.code === 1) return '定位权限被拒绝，你可以手动选择所在校区或区域。'
@@ -708,8 +728,22 @@ const geolocationErrorMessage = (error) => {
   return error.message || '无法获取浏览器定位。'
 }
 
+const refineGeolocationErrorMessage = (message, permissionState) => {
+  const fallback = message || '无法获取浏览器定位，你可以手动选择所在校区或区域。'
+  if (permissionState === 'insecure') return '当前访问地址不是 HTTPS 安全页面，手机浏览器不会弹出定位授权。请使用 HTTPS 域名访问，或仅在 localhost 开发环境测试。'
+  if (permissionState === 'denied') return '当前站点定位权限已被浏览器拒绝，请在浏览器站点设置中改为允许，或继续使用手动位置。'
+  if (permissionState === 'prompt' && /拒绝|denied/i.test(fallback)) {
+    return '浏览器没有弹出定位授权窗口，可能被系统定位服务、浏览器站点设置或内嵌浏览器策略拦截。请在系统/浏览器中允许定位，或继续使用手动位置。'
+  }
+  return fallback
+}
+
 const requestBrowserLocation = () => new Promise((resolve, reject) => {
   const nav = globalThis.navigator
+  if (!isSecureGeolocationContext()) {
+    reject(new Error('当前访问地址不是 HTTPS 安全页面，手机浏览器不会弹出定位授权。请使用 HTTPS 域名访问，或仅在 localhost 开发环境测试。'))
+    return
+  }
   if (!nav?.geolocation) {
     reject(new Error('当前浏览器不支持定位，你可以手动选择所在校区或区域。'))
     return
@@ -727,6 +761,7 @@ const requestBrowserLocation = () => new Promise((resolve, reject) => {
 
 const queryGeolocationPermission = async () => {
   const nav = globalThis.navigator
+  if (!isSecureGeolocationContext()) return 'insecure'
   if (!nav?.geolocation) return 'unsupported'
   if (!nav.permissions?.query) return 'unknown'
   try {
@@ -741,6 +776,7 @@ const locationPermissionLabel = (state) => ({
   granted: '已允许',
   prompt: '待授权',
   denied: '已被浏览器拒绝',
+  insecure: '非 HTTPS，无法弹窗',
   unsupported: '当前浏览器不支持',
   unknown: '状态未知',
 }[state] || '状态未知')
@@ -1763,6 +1799,7 @@ function ContextualRecommendationCard({ data, copied = false, onCopy, onFollowup
   if (!data || typeof data !== 'object') return null
   const recommendations = Array.isArray(data.recommendations) ? data.recommendations : []
   const exams = Array.isArray(data.academic_context?.upcoming_exams) ? data.academic_context.upcoming_exams : []
+  const signals = Array.isArray(data.academic_context?.signals) ? data.academic_context.signals : []
   const recentClass = data.academic_context?.recent_class
   const nextClass = data.academic_context?.next_class
   const isDining = data.resolved_scenario === 'dining'
@@ -1795,8 +1832,11 @@ function ContextualRecommendationCard({ data, copied = false, onCopy, onFollowup
         <span>{data.map_status === 'amap' ? '高德步行路线' : '校内地点库估算'}</span>
       </div>
 
-      {(recentClass || nextClass || exams.length > 0) && (
+      {(signals.length > 0 || recentClass || nextClass || exams.length > 0) && (
         <div className="campus-recommendation-context">
+          {signals.slice(0, 3).map((signal) => (
+            <span key={`${signal.type}-${signal.title}`}>{signal.title}</span>
+          ))}
           {recentClass && <span>刚结束：{recentClass.name}{recentClass.location ? ` · ${recentClass.location}` : ''}</span>}
           {nextClass && <span>下一节：{nextClass.name}{nextClass.location ? ` · ${nextClass.location}` : ''}</span>}
           {exams.slice(0, 2).map((exam) => (
@@ -1875,9 +1915,24 @@ function SmartRecommendationGroup({
   const locations = manualLocations.length > 0 ? manualLocations : FALLBACK_MANUAL_LOCATIONS
   const recommendations = Array.isArray(data?.recommendations) ? data.recommendations : []
   const exams = Array.isArray(data?.academic_context?.upcoming_exams) ? data.academic_context.upcoming_exams : []
+  const signals = Array.isArray(data?.academic_context?.signals) ? data.academic_context.signals : []
   const actions = []
 
-  if (exams[0]) {
+  for (const signal of signals.slice(0, 3)) {
+    if (!signal?.prompt || !signal?.title) continue
+    actions.push({
+      key: `signal-${signal.type}-${signal.title}-${signal.status}`,
+      label: signal.title,
+      prompt: signal.prompt,
+      icon: signal.type === 'course_selection'
+        ? <Check size={14} aria-hidden="true" />
+        : signal.type === 'grade_update'
+          ? <RefreshCw size={14} aria-hidden="true" />
+          : <BookOpen size={14} aria-hidden="true" />,
+    })
+  }
+
+  if (!signals.some((signal) => signal.type === 'exam') && exams[0]) {
     const exam = exams[0]
     const courseName = exam.course_name || '考试'
     const dayText = exam.days_until === 0 ? '今天' : `${exam.days_until} 天后`
@@ -1890,6 +1945,7 @@ function SmartRecommendationGroup({
   }
 
   for (const item of recommendations.slice(0, 3)) {
+    if (actions.length >= 4) break
     const walkText = item.walk_minutes ? `${item.walk_minutes}分钟` : formatDistanceMeters(item.walk_distance_m ?? item.distance_m)
     actions.push({
       key: item.id || item.name,
@@ -2206,7 +2262,7 @@ function PrivacyPolicyView({
         <div className="privacy-card privacy-card--location">
           <div>
             <h3>定位与今日建议</h3>
-            <p>开启后，聊天首页会在浏览器已经授权定位时自动使用当前位置优化食堂、自习和复习建议。经纬度只用于本次推荐请求，不写入会话、长期记忆或服务端日志。</p>
+            <p>开启后，聊天首页会在浏览器已经授权定位时自动使用当前位置优化食堂、自习和复习建议。手机访问需要 HTTPS 域名才会弹出定位授权；经纬度只用于本次推荐请求，不写入会话、长期记忆或服务端日志。</p>
             <div className="privacy-location-status">
               <span>应用开关：{locationEnabled ? '已开启' : '未开启'}</span>
               <span>浏览器权限：{locationPermissionLabel(locationPermission)}</span>
@@ -2447,6 +2503,7 @@ function App() {
     setManualLocations(FALLBACK_MANUAL_LOCATIONS)
     setSelectedManualLocationId(FALLBACK_MANUAL_LOCATIONS[0].id)
     setPendingRecommendationScenario('auto')
+    if (typeof window !== 'undefined') window.localStorage.removeItem(GRADE_DIGEST_STORAGE_KEY)
     recommendationAutoLoadedRef.current = false
     setScreenReaderStatus('')
     setShowScrollBottom(false)
@@ -2846,6 +2903,7 @@ function App() {
       setSidebarCollapsed(false)
       setLocationRecommendationEnabled(false)
       setLocationPermissionMessage('')
+      if (typeof window !== 'undefined') window.localStorage.removeItem(GRADE_DIGEST_STORAGE_KEY)
       setUserDataSummary({ conversation_count: 0, message_count: 0, memory_count: 0 })
       setResetDialogOpen(false)
     } catch (err) {
@@ -2910,6 +2968,10 @@ function App() {
     setError('')
 
     const body = { scenario: nextScenario }
+    const seenGradeDigest = typeof window !== 'undefined'
+      ? window.localStorage.getItem(GRADE_DIGEST_STORAGE_KEY)
+      : ''
+    if (seenGradeDigest) body.seen_grade_digest = seenGradeDigest
     if (useManualLocation) {
       body.manual_location_id = selectedManualLocationId || FALLBACK_MANUAL_LOCATIONS[0].id
     } else if (useBrowserLocation) {
@@ -2925,7 +2987,7 @@ function App() {
           await loadManualLocations()
           setRecommendationManualMode(true)
           setRecommendationLoading(false)
-          const message = err.message || '无法获取浏览器定位，你可以手动选择所在校区或区域。'
+          const message = refineGeolocationErrorMessage(err.message, nextPermission)
           setRecommendationError(message)
           setScreenReaderStatus(message)
           return
@@ -2941,6 +3003,10 @@ function App() {
       if (!response.ok) throw new Error(await readApiError(response, '生成校园推荐失败'))
       const payload = await response.json()
       setRecommendationData(payload)
+      const nextGradeDigest = payload?.academic_context?.grade_update?.digest
+      if (nextGradeDigest && typeof window !== 'undefined') {
+        window.localStorage.setItem(GRADE_DIGEST_STORAGE_KEY, nextGradeDigest)
+      }
       setRecommendationManualMode(false)
       setRecommendationError('')
       if (!silent) setScreenReaderStatus('校园建议已生成。')
@@ -2970,7 +3036,7 @@ function App() {
       const state = await queryGeolocationPermission()
       setLocationPermission(state)
       setLocationRecommendationEnabled(false)
-      setLocationPermissionMessage(err.message || '无法开启定位优化。')
+      setLocationPermissionMessage(refineGeolocationErrorMessage(err.message, state))
     } finally {
       setLocationPermissionBusy(false)
     }

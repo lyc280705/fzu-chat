@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-当前已标记版本：[v6.0](CHANGELOG.md)
+当前已标记版本：[v6.1](CHANGELOG.md)
 
 版本记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -25,7 +25,7 @@
 - **ChatGPT 风格界面**：现代暗色主题，侧边栏历史记录、快捷操作、流式回复
 - **消息修改与重新生成**：纯图标操作支持复制回复、重新生成助手回答、修改已发送问题并重建后续回复分支
 - **无障碍交互优化**：补充键盘焦点、跳过链接、屏幕阅读器状态、弹窗焦点管理和聊天日志播报
-- **情境校园推荐**：聊天首页会根据实时课表/考试信息和当前时段自动出现轻量“今日建议”；用户可选择用一次性浏览器定位优化，也可在定位失败时手动选择校区/区域
+- **情境校园推荐**：聊天首页会根据实时课表、考试、选课窗口、成绩摘要变化和当前时段自动出现轻量“今日建议”；用户可选择用一次性浏览器定位优化，也可在定位失败时手动选择校区/区域
 - **丰富的工具卡片**：可视化工具调用过程，结构化展示成绩表格和课表
 - **多模型支持**：华为云 MaaS 的 GLM-5.1、Kimi K2.6、DeepSeek V4 Pro 可选，标题总结内部使用 qwen3-30b-a3b
 - **福大场景个性化记忆**：在用户确认后保存称呼、回答风格、选课习惯、教务查询展示、校园生活、餐饮与校区等长期偏好；成绩、绩点、课表、考场等易变教务事实仍通过工具实时查询
@@ -126,9 +126,9 @@ docker compose up -d --build
 
 ### 情境推荐
 - `GET /api/recommendations/locations` – 内置手动校区/位置选项
-- `POST /api/recommendations/contextual` – 根据 `scenario`、可选浏览器 `location` 或 `manual_location_id` 生成一次性食堂/自习建议
+- `POST /api/recommendations/contextual` – 根据 `scenario`、可选浏览器 `location`、`manual_location_id` 和浏览器本地保存的 `seen_grade_digest` 生成一次性校园建议
 
-浏览器经纬度仅用于本次推荐请求，不写入会话存储或长期记忆；高德 Key 仅通过后端环境变量或 Docker secret 使用，不暴露给前端。
+推荐会综合考试、课表、选课窗口、成绩摘要变化、当前位置、课表地点推断和内置地点库，覆盖食堂、自习、复习、选课和成绩提醒。浏览器经纬度仅用于本次推荐请求，不写入会话存储或长期记忆；成绩变化只比较浏览器本地保存的摘要哈希，不把成绩明细写入服务端推荐状态；高德 Key 仅通过后端环境变量或 Docker secret 使用，不暴露给前端。手机定位需要通过 HTTPS 域名访问，普通服务器 HTTP 地址不会弹出浏览器定位授权。
 
 ### 教务工具（Agent 自动调用）
 AI 助手在学生询问教务数据时自动调用：
@@ -136,7 +136,7 @@ AI 助手在学生询问教务数据时自动调用：
 - `query_courses` – 课程表
 - `query_student_info` – 学生个人信息
 - `query_exam_scores` – 四六级/等级考试成绩
-- `recommend_campus_context` – 在用户提供或授权位置后生成校园食堂/自习情境推荐
+- `recommend_campus_context` – 在用户提供或授权位置后生成校园事务、食堂与自习情境推荐
 
 ## 验证
 

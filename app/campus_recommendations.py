@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import date, datetime, time, timedelta
+import hashlib
+import json
 import math
 import os
 from pathlib import Path
@@ -124,6 +126,11 @@ MANUAL_LOCATIONS: List[Dict[str, Any]] = [
     {"id": "qishan_center", "name": "旗山校区中心区", "campus": "旗山校区", "lat": 26.0639, "lng": 119.1954},
     {"id": "qishan_teaching", "name": "旗山校区教学区", "campus": "旗山校区", "lat": 26.0624, "lng": 119.1972},
     {"id": "qishan_dorm", "name": "旗山校区生活区", "campus": "旗山校区", "lat": 26.0660, "lng": 119.1921},
+    {"id": "qishan_library", "name": "旗山校区图书馆", "campus": "旗山校区", "lat": 26.0633, "lng": 119.1960},
+    {"id": "qishan_jinjiang", "name": "晋江楼学习中心", "campus": "旗山校区", "lat": 26.061237, "lng": 119.201205},
+    {"id": "qishan_staff_center", "name": "教工活动中心 / 桃李园", "campus": "旗山校区", "lat": 26.062976, "lng": 119.196459},
+    {"id": "qishan_life_zone_1", "name": "旗山校区生活一区", "campus": "旗山校区", "lat": 26.0567, "lng": 119.1924},
+    {"id": "qishan_life_zone_3", "name": "旗山校区生活三区", "campus": "旗山校区", "lat": 26.0529, "lng": 119.1927},
     {"id": "yishan_center", "name": "怡山校区", "campus": "怡山校区", "lat": 26.0831, "lng": 119.2768},
     {"id": "tongpan_center", "name": "铜盘校区", "campus": "铜盘校区", "lat": 26.1158, "lng": 119.2767},
 ]
@@ -134,30 +141,50 @@ CAMPUS_POIS: List[Dict[str, Any]] = [
         "name": "玫瑰园餐厅",
         "kind": "dining",
         "campus": "旗山校区",
-        "lat": 26.0655,
-        "lng": 119.1925,
-        "tags": ["食堂", "生活区", "午餐", "晚餐"],
-        "description": "靠近旗山校区生活区，适合下课后快速就餐。",
+        "lat": 26.052871,
+        "lng": 119.192741,
+        "tags": ["食堂", "生活三区", "午餐", "晚餐"],
+        "description": "位于旗山校区生活三区一带，档口选择较多，适合从南侧生活区或教学区南侧前往。",
     },
     {
         "id": "qishan_lilac_canteen",
         "name": "丁香园餐厅",
         "kind": "dining",
         "campus": "旗山校区",
-        "lat": 26.0646,
-        "lng": 119.1945,
-        "tags": ["食堂", "教学区", "午餐", "晚餐"],
-        "description": "位置相对居中，适合从教学楼或图书馆前往。",
+        "lat": 26.056667,
+        "lng": 119.192164,
+        "tags": ["食堂", "生活一区", "早餐", "午餐"],
+        "description": "靠近旗山校区生活一区，适合宿舍区附近快速用餐。",
     },
     {
         "id": "qishan_zijing_canteen",
         "name": "紫荆园餐厅",
         "kind": "dining",
         "campus": "旗山校区",
-        "lat": 26.0670,
-        "lng": 119.1908,
+        "lat": 26.052725,
+        "lng": 119.192125,
         "tags": ["食堂", "宿舍区", "早餐", "夜宵"],
-        "description": "靠近学生宿舍区，适合回宿舍路上顺路用餐。",
+        "description": "靠近学生生活区，适合回宿舍路上顺路用餐，也常作为晚间备选。",
+    },
+    {
+        "id": "qishan_haitang_canteen",
+        "name": "海棠园餐厅",
+        "kind": "dining",
+        "campus": "旗山校区",
+        "lat": 26.056780,
+        "lng": 119.192574,
+        "tags": ["食堂", "生活一区", "早餐", "午餐"],
+        "description": "靠近生活一区，与丁香园相邻，适合在宿舍区附近就餐。",
+    },
+    {
+        "id": "qishan_taoliyuan_canteen",
+        "name": "桃李园餐厅",
+        "kind": "dining",
+        "campus": "旗山校区",
+        "lat": 26.062976,
+        "lng": 119.196459,
+        "tags": ["食堂", "教工活动中心", "教学区", "午餐"],
+        "description": "位于教工活动中心位置，靠近旗山校区中心与教学区，适合从图书馆、公共教学楼附近前往。",
     },
     {
         "id": "yishan_canteen",
@@ -200,14 +227,24 @@ CAMPUS_POIS: List[Dict[str, Any]] = [
         "description": "靠近教学区，适合课前课后短时复习。",
     },
     {
-        "id": "qishan_innovation_building",
-        "name": "旗山校区创新楼公共学习区",
+        "id": "qishan_jinjiang_learning_center",
+        "name": "晋江楼学习中心",
         "kind": "study",
         "campus": "旗山校区",
-        "lat": 26.0614,
-        "lng": 119.1947,
-        "tags": ["自习", "讨论", "项目"],
-        "description": "适合小组讨论、项目复盘和轻量自习。",
+        "lat": 26.061237,
+        "lng": 119.201205,
+        "tags": ["自习", "讨论", "学习中心", "晋江楼4层"],
+        "description": "位于旗山校区晋江楼 4-5 层，适合自习、研讨和较长时间复习。",
+    },
+    {
+        "id": "qishan_teacher_activity_center_study",
+        "name": "教工活动中心公共学习区",
+        "kind": "study",
+        "campus": "旗山校区",
+        "lat": 26.062976,
+        "lng": 119.196459,
+        "tags": ["自习", "短时学习", "教学区"],
+        "description": "靠近旗山校区中心区，适合课间整理笔记或短时等待。",
     },
     {
         "id": "yishan_library",
@@ -220,6 +257,17 @@ CAMPUS_POIS: List[Dict[str, Any]] = [
         "description": "适合怡山校区附近复习与查阅资料。",
     },
 ]
+
+COURSE_LOCATION_HINTS: Tuple[Dict[str, Any], ...] = (
+    {"tokens": ("晋江楼", "晋江"), "name": "晋江楼", "campus": "旗山校区", "lat": 26.061237, "lng": 119.201205},
+    {"tokens": ("图书馆",), "name": "旗山校区图书馆", "campus": "旗山校区", "lat": 26.0633, "lng": 119.1960},
+    {"tokens": ("教工活动中心", "桃李园"), "name": "教工活动中心 / 桃李园", "campus": "旗山校区", "lat": 26.062976, "lng": 119.196459},
+    {"tokens": ("生活一区", "丁香园", "海棠园"), "name": "旗山校区生活一区", "campus": "旗山校区", "lat": 26.0567, "lng": 119.1924},
+    {"tokens": ("生活三区", "玫瑰园", "紫荆园"), "name": "旗山校区生活三区", "campus": "旗山校区", "lat": 26.0529, "lng": 119.1927},
+    {"tokens": ("公共教学楼", "教学楼", "西一", "西1", "西二", "西2", "西三", "西3", "东一", "东1", "东二", "东2", "东三", "东3"), "name": "旗山校区教学区", "campus": "旗山校区", "lat": 26.0624, "lng": 119.1972},
+    {"tokens": ("怡山",), "name": "怡山校区", "campus": "怡山校区", "lat": 26.0831, "lng": 119.2768},
+    {"tokens": ("铜盘",), "name": "铜盘校区", "campus": "铜盘校区", "lat": 26.1158, "lng": 119.2767},
+)
 
 
 class RecommendationError(Exception):
@@ -295,6 +343,24 @@ def _resolve_origin(location: Dict[str, Any] | None, manual_location_id: str = "
         "name": fallback["name"],
         "privacy": "未获得定位，已按旗山校区中心位置估算。",
     }
+
+
+def _origin_from_course_event(event: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    location_text = str((event or {}).get("location") or "")
+    if not location_text:
+        return None
+    normalized = re.sub(r"\s+", "", location_text)
+    for hint in COURSE_LOCATION_HINTS:
+        if any(token in normalized for token in hint["tokens"]):
+            return {
+                "lat": float(hint["lat"]),
+                "lng": float(hint["lng"]),
+                "accuracy": None,
+                "source": "course",
+                "name": f"{hint['name']}（由课程地点推断）",
+                "privacy": "未获得浏览器定位，已根据课表地点做本次推荐估算，不保存课程地点或经纬度。",
+            }
+    return None
 
 
 def _parse_section_numbers(text: str) -> List[int]:
@@ -380,6 +446,201 @@ def _upcoming_exams(exam_rooms: Dict[str, Any] | None, now: datetime) -> List[Di
         if 0 <= days <= 7:
             result.append({**exam, "days_until": days})
     return sorted(result, key=lambda item: (item.get("date") or "", item.get("time") or ""))
+
+
+def _parse_selection_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip().replace("：", ":")
+    if not text:
+        return None
+    try:
+        if text.endswith("24:00"):
+            return datetime.strptime(text[:-5] + "00:00", "%Y-%m-%d %H:%M") + timedelta(days=1)
+        return datetime.strptime(text, "%Y-%m-%d %H:%M")
+    except ValueError:
+        return None
+
+
+def _format_time_delta(delta: timedelta) -> str:
+    total_minutes = max(0, int(delta.total_seconds() // 60))
+    days, minutes = divmod(total_minutes, 24 * 60)
+    hours, minutes = divmod(minutes, 60)
+    if days > 0:
+        return f"{days} 天后"
+    if hours > 0:
+        return f"{hours} 小时后"
+    return f"{max(1, minutes)} 分钟后"
+
+
+def _grade_digest(marks: List[Dict[str, Any]]) -> str:
+    recorded = [
+        {
+            "semester_code": str(mark.get("semester_code") or ""),
+            "name": str(mark.get("name") or ""),
+            "score": str(mark.get("score") or ""),
+            "gpa": str(mark.get("gpa") or ""),
+        }
+        for mark in marks
+        if str(mark.get("score") or "").strip() not in {"", "成绩尚未录入"}
+    ]
+    payload = json.dumps(sorted(recorded, key=lambda item: (item["semester_code"], item["name"])), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16] if recorded else ""
+
+
+def _grade_update_signal(marks: List[Dict[str, Any]], seen_grade_digest: str = "") -> Dict[str, Any] | None:
+    recorded = [
+        mark for mark in marks
+        if str(mark.get("score") or "").strip() not in {"", "成绩尚未录入"}
+    ]
+    if not recorded:
+        return None
+    digest = _grade_digest(recorded)
+    latest_semester_code = max(str(mark.get("semester_code") or "") for mark in recorded)
+    latest = [mark for mark in recorded if str(mark.get("semester_code") or "") == latest_semester_code]
+    latest_semester = latest[0].get("semester") if latest else ""
+    has_update = bool(seen_grade_digest and digest and seen_grade_digest != digest)
+    title = "成绩有更新" if has_update else "查看最新成绩"
+    summary = (
+        f"检测到成绩记录较上次查看有变化，{latest_semester or '最新学期'}已有 {len(latest)} 门成绩录入。"
+        if has_update else
+        f"{latest_semester or '最新学期'}已有 {len(latest)} 门成绩录入，可以查看成绩和绩点变化。"
+    )
+    return {
+        "type": "grade_update",
+        "title": title,
+        "summary": summary,
+        "priority": 95 if has_update else 45,
+        "status": "changed" if has_update else "available",
+        "digest": digest,
+        "recorded_count": len(recorded),
+        "latest_semester": latest_semester,
+        "latest_courses": [
+            {
+                "name": mark.get("name") or "",
+                "score": mark.get("score") or "",
+                "credits": mark.get("credits") or "",
+                "gpa": mark.get("gpa") or "",
+            }
+            for mark in latest[:5]
+        ],
+        "prompt": "帮我查询最新成绩，并总结本学期成绩、绩点变化和需要注意的课程。",
+    }
+
+
+def _exam_signals(upcoming: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not upcoming:
+        return []
+    first = upcoming[0]
+    days = first.get("days_until")
+    day_text = "今天" if days == 0 else f"{days} 天后"
+    return [
+        {
+            "type": "exam",
+            "title": "考试复习提醒",
+            "summary": f"未来 7 天内有 {len(upcoming)} 场考试，最近一场《{first.get('course_name') or '考试'}》在{day_text}。",
+            "priority": 88 if days == 0 else 82,
+            "status": "upcoming",
+            "items": [
+                {
+                    "course_name": exam.get("course_name") or "",
+                    "date": exam.get("date") or "",
+                    "time": exam.get("time") or "",
+                    "location": exam.get("location") or "",
+                    "days_until": exam.get("days_until"),
+                }
+                for exam in upcoming[:3]
+            ],
+            "prompt": f"我{day_text}有《{first.get('course_name') or '考试'}》考试，请结合我的课表安排今天的复习计划，并推荐合适的自习地点。",
+        }
+    ]
+
+
+def _course_selection_signals(selection_overview: Dict[str, Any] | None, now: datetime) -> List[Dict[str, Any]]:
+    signals: List[Dict[str, Any]] = []
+    if not selection_overview:
+        return signals
+
+    needed_credit_types = selection_overview.get("needed_credit_types") or []
+    missing_text = "、".join(
+        f"{item.get('category')}还差{item.get('missing')}学分"
+        for item in needed_credit_types[:3]
+        if item.get("missing")
+    )
+
+    for category in selection_overview.get("categories") or []:
+        label = category.get("label") or "选课"
+        status = category.get("status") or "unknown"
+        window = category.get("time_window") or {}
+        start_at = _parse_selection_datetime(window.get("start"))
+        end_at = _parse_selection_datetime(window.get("end"))
+        candidate_count = int(category.get("candidate_count") or 0)
+        selected_count = int(category.get("selected_count") or 0)
+        course_count = int(category.get("current_course_count") or 0)
+        summary_bits = []
+        if candidate_count:
+            summary_bits.append(f"当前候选课程 {candidate_count} 门")
+        if course_count:
+            selected_text = f"，其中已中选 {selected_count} 门" if selected_count and selected_count != course_count else ""
+            summary_bits.append(f"结果页课程 {course_count} 门{selected_text}")
+        if label == "通识选修课" and missing_text:
+            summary_bits.append(f"通识缺口：{missing_text}")
+        summary_tail = "；".join(summary_bits)
+
+        if status == "open":
+            ending_soon = end_at is not None and timedelta(0) <= end_at - now <= timedelta(hours=24)
+            title = f"{label}即将截止" if ending_soon else f"{label}正在进行"
+            end_text = f"，截止时间 {window.get('end')}" if window.get("end") else ""
+            signals.append(
+                {
+                    "type": "course_selection",
+                    "title": title,
+                    "summary": f"{label}已开放{end_text}。{summary_tail or '建议及时确认是否需要调整。'}",
+                    "priority": 92 if ending_soon else 86,
+                    "status": "ending_soon" if ending_soon else "open",
+                    "category": category.get("key") or "",
+                    "category_label": label,
+                    "candidate_count": candidate_count,
+                    "time_window": window,
+                    "prompt": f"帮我查看{label}现在能选什么课，结合我的已选课程和通识缺口给出推荐。",
+                }
+            )
+            continue
+
+        if status == "upcoming" and start_at is not None:
+            until_start = start_at - now
+            if timedelta(0) <= until_start <= timedelta(days=7):
+                signals.append(
+                    {
+                        "type": "course_selection",
+                        "title": f"{label}即将开始",
+                        "summary": f"{label}将在{_format_time_delta(until_start)}开始，时间为 {window.get('start')} 至 {window.get('end')}。{summary_tail}",
+                        "priority": 76,
+                        "status": "upcoming",
+                        "category": category.get("key") or "",
+                        "category_label": label,
+                        "candidate_count": candidate_count,
+                        "time_window": window,
+                        "prompt": f"{label}即将开始，请帮我先整理选课策略、注意事项和优先考虑的课程类型。",
+                    }
+                )
+
+    return signals
+
+
+def _rank_academic_signals(
+    *,
+    upcoming: List[Dict[str, Any]],
+    selection_overview: Dict[str, Any] | None,
+    marks: List[Dict[str, Any]],
+    seen_grade_digest: str,
+    now: datetime,
+) -> List[Dict[str, Any]]:
+    signals: List[Dict[str, Any]] = []
+    signals.extend(_course_selection_signals(selection_overview, now))
+    grade_signal = _grade_update_signal(marks, seen_grade_digest)
+    if grade_signal:
+        signals.append(grade_signal)
+    signals.extend(_exam_signals(upcoming))
+    return sorted(signals, key=lambda item: int(item.get("priority") or 0), reverse=True)
 
 
 class AMapClient:
@@ -489,9 +750,18 @@ def _meal_period(now: datetime) -> str:
     return "就餐"
 
 
-def _choose_scenario(requested: str, recent_class: Dict[str, Any] | None, next_class: Dict[str, Any] | None, upcoming: List[Dict[str, Any]], now: datetime) -> str:
+def _choose_scenario(
+    requested: str,
+    recent_class: Dict[str, Any] | None,
+    next_class: Dict[str, Any] | None,
+    upcoming: List[Dict[str, Any]],
+    now: datetime,
+    primary_signal: Dict[str, Any] | None = None,
+) -> str:
     if requested in {"dining", "study"}:
         return requested
+    if primary_signal and primary_signal.get("type") in {"course_selection", "grade_update", "exam"}:
+        return "study"
     if upcoming:
         return "study"
     if recent_class:
@@ -501,7 +771,17 @@ def _choose_scenario(requested: str, recent_class: Dict[str, Any] | None, next_c
     return "dining" if _meal_period(now) != "就餐" else "study"
 
 
-def _trigger_reason(scenario: str, recent_class: Dict[str, Any] | None, next_class: Dict[str, Any] | None, upcoming: List[Dict[str, Any]], origin: Dict[str, Any], now: datetime) -> str:
+def _trigger_reason(
+    scenario: str,
+    recent_class: Dict[str, Any] | None,
+    next_class: Dict[str, Any] | None,
+    upcoming: List[Dict[str, Any]],
+    origin: Dict[str, Any],
+    now: datetime,
+    primary_signal: Dict[str, Any] | None = None,
+) -> str:
+    if primary_signal and primary_signal.get("summary"):
+        return str(primary_signal["summary"])
     if scenario == "study" and upcoming:
         first = upcoming[0]
         return f"你未来 7 天内有 {len(upcoming)} 场考试，最近一场是《{first.get('course_name') or '考试'}》，建议安排复习。"
@@ -524,11 +804,35 @@ def _candidate_reason(kind: str, poi: Dict[str, Any], distance_m: int, route: Di
     return f"{walk_text}，适合当前时段就餐。{poi.get('description') or ''}".strip()
 
 
+def _candidate_context_bonus(kind: str, poi: Dict[str, Any], now: datetime, primary_signal: Dict[str, Any] | None) -> int:
+    tags = {str(tag) for tag in (poi.get("tags") or [])}
+    name = str(poi.get("name") or "")
+    bonus = 0
+    if kind == "dining":
+        meal = _meal_period(now)
+        if meal in tags:
+            bonus += 3
+        if meal in {"午餐", "晚餐"} and tags.intersection({"教学区", "生活一区", "生活三区"}):
+            bonus += 1
+        if meal == "夜宵" and "夜宵" not in tags:
+            bonus -= 2
+    else:
+        signal_type = (primary_signal or {}).get("type")
+        if signal_type in {"exam", "grade_update", "course_selection"} and tags.intersection({"安静", "复习", "学习中心", "资料"}):
+            bonus += 4
+        if signal_type == "course_selection" and name in {"旗山校区公共教学楼自习区", "教工活动中心公共学习区"}:
+            bonus += 1
+        if signal_type == "exam" and name == "晋江楼学习中心":
+            bonus += 2
+    return bonus
+
+
 def build_contextual_recommendation(
     *,
     scenario: str = "auto",
     location: Dict[str, Any] | None = None,
     manual_location_id: str = "",
+    seen_grade_digest: str = "",
     edu_session: Dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> Dict[str, Any]:
@@ -538,6 +842,8 @@ def build_contextual_recommendation(
 
     courses: List[Dict[str, Any]] = []
     exam_rooms: Dict[str, Any] | None = None
+    selection_overview: Dict[str, Any] | None = None
+    marks: List[Dict[str, Any]] = []
     edu_status = "available"
     client = _build_client(edu_session)
     if client is None:
@@ -553,10 +859,31 @@ def build_contextual_recommendation(
             exam_rooms = client.get_exam_rooms(None)
         except Exception:
             exam_rooms = None
+        if requested == "auto":
+            try:
+                selection_overview = client.get_course_selection_overview()
+            except Exception:
+                selection_overview = None
+            try:
+                marks = client.get_marks()
+            except Exception:
+                marks = []
 
     recent_class, next_class = _recent_and_next_class(courses, now)
     upcoming = _upcoming_exams(exam_rooms, now)
-    resolved = _choose_scenario(requested, recent_class, next_class, upcoming, now)
+    if origin["source"] == "default":
+        inferred_origin = _origin_from_course_event(recent_class) or _origin_from_course_event(next_class)
+        if inferred_origin:
+            origin = inferred_origin
+    academic_signals = _rank_academic_signals(
+        upcoming=upcoming,
+        selection_overview=selection_overview,
+        marks=marks,
+        seen_grade_digest=seen_grade_digest,
+        now=now,
+    ) if requested == "auto" else []
+    primary_signal = academic_signals[0] if academic_signals else None
+    resolved = _choose_scenario(requested, recent_class, next_class, upcoming, now, primary_signal)
     kind = "dining" if resolved == "dining" else "study"
 
     amap = AMapClient()
@@ -589,6 +916,7 @@ def build_contextual_recommendation(
             route_failures += 1
         walk_distance_m = route.get("distance_m") if route else None
         walk_minutes = route.get("duration_min") if route else max(3, int(math.ceil(distance_m / 80)))
+        context_bonus = _candidate_context_bonus(kind, poi, now, primary_signal)
         ranked.append(
             {
                 "id": poi["id"],
@@ -601,12 +929,13 @@ def build_contextual_recommendation(
                 "walk_distance_m": walk_distance_m or distance_m,
                 "walk_minutes": walk_minutes,
                 "route_source": route.get("source") if route else "estimated",
+                "ranking_score": max(1, walk_minutes - context_bonus) * 100 + int(distance_m / 100),
                 "reason": _candidate_reason(kind, poi, distance_m, route, upcoming),
                 "source": poi.get("source") or "built_in",
             }
         )
 
-    ranked.sort(key=lambda item: (item["walk_minutes"], item["distance_m"]))
+    ranked.sort(key=lambda item: (item["ranking_score"], item["walk_minutes"], item["distance_m"]))
     limited = ranked[:3]
     map_status = "amap" if any(item["route_source"] == "amap" for item in limited) else "estimated"
     map_note = ""
@@ -615,9 +944,9 @@ def build_contextual_recommendation(
     elif route_failures:
         map_note = f"{amap.last_error or '地图路线服务暂不可用'}，部分结果已按直线距离估算。"
 
-    title = "附近食堂推荐" if kind == "dining" else "复习与自习建议"
-    reason = _trigger_reason(kind, recent_class, next_class, upcoming, origin, now)
-    followup_prompt = (
+    title = str(primary_signal.get("title")) if primary_signal else ("附近食堂推荐" if kind == "dining" else "复习与自习建议")
+    reason = _trigger_reason(kind, recent_class, next_class, upcoming, origin, now, primary_signal)
+    followup_prompt = str(primary_signal.get("prompt")) if primary_signal and primary_signal.get("prompt") else (
         f"请基于刚才的{title}，帮我比较这些地点并给出下一步安排。"
         if limited else
         f"请根据我的课表和当前位置，继续帮我规划{title}。"
@@ -638,6 +967,13 @@ def build_contextual_recommendation(
         "academic_context": {
             "recent_class": _compact_class_context(recent_class),
             "next_class": _compact_class_context(next_class),
+            "signals": [_public_signal(signal) for signal in academic_signals[:5]],
+            "grade_update": _public_grade_context(next((signal for signal in academic_signals if signal.get("type") == "grade_update"), None)),
+            "course_selection": [
+                _public_signal(signal)
+                for signal in academic_signals
+                if signal.get("type") == "course_selection"
+            ][:3],
             "upcoming_exams": [
                 {
                     "course_name": exam.get("course_name") or "",
@@ -654,6 +990,45 @@ def build_contextual_recommendation(
     }
 
 
+def _public_signal(signal: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    if not signal:
+        return None
+    public = {
+        "type": signal.get("type") or "",
+        "title": signal.get("title") or "",
+        "summary": signal.get("summary") or "",
+        "status": signal.get("status") or "",
+        "priority": signal.get("priority") or 0,
+        "prompt": signal.get("prompt") or "",
+    }
+    for key in (
+        "category",
+        "category_label",
+        "candidate_count",
+        "time_window",
+        "items",
+        "recorded_count",
+        "latest_semester",
+        "latest_courses",
+        "digest",
+    ):
+        if key in signal:
+            public[key] = signal[key]
+    return public
+
+
+def _public_grade_context(signal: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    if not signal:
+        return None
+    return {
+        "status": signal.get("status") or "",
+        "digest": signal.get("digest") or "",
+        "recorded_count": signal.get("recorded_count") or 0,
+        "latest_semester": signal.get("latest_semester") or "",
+        "latest_courses": signal.get("latest_courses") or [],
+    }
+
+
 def _compact_class_context(value: Dict[str, Any] | None) -> Dict[str, Any] | None:
     if not value:
         return None
@@ -667,6 +1042,11 @@ def _compact_class_context(value: Dict[str, Any] | None) -> Dict[str, Any] | Non
 
 def _format_recommendation_markdown(data: Dict[str, Any]) -> str:
     lines = [f"## {data.get('title') or '校园推荐'}", "", data.get("trigger_reason") or ""]
+    signals = ((data.get("academic_context") or {}).get("signals") or [])
+    if signals:
+        lines.extend(["", "### 今日提醒"])
+        for signal in signals[:3]:
+            lines.append(f"- {signal.get('title')}: {signal.get('summary')}")
     if data.get("map_note"):
         lines.extend(["", f"> {data['map_note']}"])
     lines.extend(["", "| 地点 | 步行 | 推荐理由 |", "| --- | --- | --- |"])
@@ -686,7 +1066,7 @@ def build_campus_recommendation_tools(request_context: Dict[str, Any] | None = N
         latitude: str = "",
         longitude: str = "",
     ) -> Tuple[str, Any]:
-        """根据课表、考试安排和当前位置生成校园食堂/自习推荐。
+        """根据课表、考试、选课、成绩和当前位置生成校园情境推荐。
 
         如果用户没有提供明确位置，应先建议用户使用首页“今日建议”的定位入口，或让用户说明所在校区/教学楼。
 

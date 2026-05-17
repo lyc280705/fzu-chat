@@ -250,7 +250,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="FZU Chat API", version="6.0.0", lifespan=lifespan)
+app = FastAPI(title="FZU Chat API", version="6.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
@@ -343,6 +343,7 @@ class ContextualRecommendationRequest(BaseModel):
     scenario: Literal["auto", "dining", "study"] = "auto"
     location: RecommendationLocation | None = None
     manual_location_id: str | None = Field(default=None, max_length=80)
+    seen_grade_digest: str | None = Field(default=None, max_length=80)
 
 
 class FeedbackUpdateRequest(BaseModel):
@@ -1355,6 +1356,7 @@ def contextual_recommendation(
         scenario=req.scenario,
         location=location,
         manual_location_id=(req.manual_location_id or "").strip(),
+        seen_grade_digest=(req.seen_grade_digest or "").strip(),
         edu_session=edu_ctx,
     )
 
