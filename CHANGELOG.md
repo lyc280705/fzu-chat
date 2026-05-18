@@ -3,6 +3,56 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.0] - 2026-05-18
+
+FZU-Chat v7.0 makes low-intrusion campus intelligence more cache-friendly and less UI-driven. Recommendation signals now live in a conversation-level runtime context snapshot, while the old prompt-button recommendation surface has been removed from the empty chat page and frontend remnants.
+
+### Highlights
+
+- Conversation-stable runtime context. A new conversation builds the short runtime `SystemMessage` once and stores it on the conversation; later turns append new messages without rewriting old prompt content.
+- Long-context preservation. Chat history trimming now uses LangChain's approximate token counter and waits until roughly 200k tokens, reducing accidental loss of useful tool results.
+- Teaching-week context. The backend warms a public JWCH teaching-week cache outside the educational tools and injects the cached week into runtime context when available.
+- Smarter natural reminders. Near-meal windows now generate a lightweight dining hint even without a recent class, and the model can remind users to enable location or describe their campus/building instead of requiring a homepage button.
+- Recommendation cleanup. Removed the old click-to-send recommendation prompt UI path, including unused homepage recommendation panel styles and follow-up prompt buttons; explicit `recommend_campus_context` tool results still render as normal tool cards.
+- Place corrections. Removed the nonexistent staff-activity-center study area entry, kept Taoliyuan at the staff activity center, and verified dining/study recommendations avoid the inaccurate legacy locations.
+- Snack-time dining removal. Removed snack-time (夜宵) period detection and context bonus logic; dining recommendations now focus on three main meals (breakfast, lunch, dinner).
+- Empty-chat polish. The new-chat quick prompts keep the original three groups, with slightly roomier buttons and tighter unused bottom space without forcing scroll.
+
+### Validation
+
+- conda run -n langchain python -m compileall app
+- conda run -n langchain python -m unittest discover tests
+- cd frontend && npm run lint
+- cd frontend && npm run build
+- Browser/API smoke test with real educational login: location options, signal refresh, dining/study/auto recommendations, and a new-conversation SSE answer all completed successfully.
+
+---
+
+## 福大灵犀 v7.0
+
+福大灵犀 v7.0 让低侵入校园智能更稳定、更利于缓存，也更少依赖界面按钮。推荐信号改为对话级运行时上下文快照，旧的“点击推荐按钮发送 prompt”入口和残留样式已从空对话页清理。
+
+### 版本亮点
+
+- 对话级运行时上下文。新对话只生成并保存一次短运行时 `SystemMessage`；后续回合只追加新消息，不反复改写旧提示内容。
+- 长上下文保留。历史裁剪改用 LangChain 近似 token 计数，接近 200k token 才裁剪，减少工具结果在长对话中被过早删除。
+- 教学周上下文。后端通过公开 JWCH 教学周接口后台预热缓存，不依赖教务工具；有缓存时会注入当前教学周。
+- 更自然的提醒。接近饭点时即使没有刚下课信号，也会生成轻量食堂提醒；缺少定位时模型会自然提示用户开启定位或说明所在校区/教学楼，而不是让用户点首页推荐按钮。
+- 推荐入口清理。删除旧的点击发送推荐 prompt UI 链路，包括未使用的首页推荐面板样式和追问 prompt 按钮；用户明确询问时的 `recommend_campus_context` 工具结果仍作为普通工具卡片展示。
+- 地点纠偏。移除不存在的教工活动中心公共学习区，保留位于教工活动中心的桃李园餐厅，并验证食堂/自习推荐不会返回旧的不准确地点。
+- 夜宵功能移除。移除夜宵(22:00-24:00)时段检测和上下文加权逻辑，食堂推荐现聚焦三个主要餐饮时段(早餐、午餐、晚餐)。
+- 新对话页微调。保留原有三组快捷问题，只让按钮略微宽松，并减少下方空白，同时避免首屏滚动。
+
+### 验证
+
+- conda run -n langchain python -m compileall app
+- conda run -n langchain python -m unittest discover tests
+- cd frontend && npm run lint
+- cd frontend && npm run build
+- 真实教务登录浏览器/API 冒烟测试：位置列表、信号刷新、食堂/自习/自动推荐和新对话 SSE 回复均正常完成。
+
+---
+
 ## [v6.2] - 2026-05-18
 
 FZU-Chat v6.2 replaces the prominent homepage suggestion card with low-intrusion dynamic context. Campus reminders now come from cached academic summaries injected into a short runtime system message, allowing the model to decide whether a natural end-of-answer reminder is useful without delaying the first response.

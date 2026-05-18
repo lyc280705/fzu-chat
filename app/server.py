@@ -41,7 +41,16 @@ from .campus_dynamic_context import (
 )
 from .chat_store import chat_store
 from .edu_tools import set_current_edu_session
-from .graph import CHAT_MODEL_OPTIONS, DEFAULT_CHAT_MODEL, KIMI_CHAT_MODEL, build_graph, reset_search_citation_counter, summary_chain
+from .graph import (
+    CHAT_MODEL_OPTIONS,
+    DEFAULT_CHAT_MODEL,
+    KIMI_CHAT_MODEL,
+    build_graph,
+    build_runtime_system_context,
+    reset_search_citation_counter,
+    summary_chain,
+    warm_teaching_week_cache_async,
+)
 from .jwch_client import JwchClient, JwchLoginError, JwchSessionError
 from .memory_store import user_memory_store
 from .security_utils import mask_user_id
@@ -254,10 +263,11 @@ def _extract_auth_token(authorization: str | None, session_cookie: str | None) -
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    warm_teaching_week_cache_async()
     yield
 
 
-app = FastAPI(title="FZU Chat API", version="6.2.0", lifespan=lifespan)
+app = FastAPI(title="FZU Chat API", version="7.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
@@ -449,7 +459,7 @@ def create_conversation_record(model: str) -> Dict[str, Any]:
     return {
         "id": str(uuid4()), "title": "新对话",
         "model": model if model in MODEL_OPTIONS else DEFAULT_CHAT_MODEL,
-        "thread_id": str(uuid4()), "created_at": ts, "updated_at": ts, "messages": [],
+        "thread_id": str(uuid4()), "created_at": ts, "updated_at": ts, "runtime_context": "", "messages": [],
     }
 
 
@@ -1257,6 +1267,7 @@ def login(req: LoginRequest, request: Request) -> JSONResponse:
         edu_cookies=[{"name": c.name, "value": c.value} for c in client.session.cookies],
     )
     update_session(token, _build_edu_session_state(client))
+    warm_teaching_week_cache_async()
     schedule_signal_snapshot_refresh(req.student_id, _edu_context_from_session(req.student_id, get_session(token)))
 
     response = JSONResponse(
@@ -1297,6 +1308,7 @@ def relogin_edu(req: EduReloginRequest, request: Request, user: AuthUser = Depen
         raise HTTPException(status_code=503, detail="教务系统连接失败，请稍后重试。") from exc
 
     update_session(user.token, _build_edu_session_state(client))
+    warm_teaching_week_cache_async()
 
     session = get_session(user.token) or {}
     schedule_signal_snapshot_refresh(user.user_id, _edu_context_from_session(user.user_id, session))
@@ -1704,14 +1716,21 @@ async def create_message(
     edu_ctx = _edu_context_from_session(user.user_id, sess)
     user_turn_count = sum(1 for message in conv.get("messages", []) if message.get("role") == "user")
     message_location = req.context.location.dict() if req.context and req.context.location else None
-    dynamic_campus_context = build_dynamic_campus_context(
-        user.user_id,
-        message_content=content,
-        is_first_user_turn=user_turn_count <= 1,
-        location=message_location,
-    )
-    if dynamic_campus_context:
-        edu_ctx["dynamic_campus_context"] = dynamic_campus_context
+    runtime_system_context = str(conv.get("runtime_context") or "").strip()
+    if not runtime_system_context:
+        warm_teaching_week_cache_async()
+        dynamic_campus_context = build_dynamic_campus_context(
+            user.user_id,
+            message_content=content,
+            is_first_user_turn=user_turn_count <= 1,
+            location=message_location,
+        )
+        runtime_system_context = build_runtime_system_context(user.user_id, dynamic_campus_context)
+        conv_with_runtime = chat_store.set_runtime_context(user.user_id, cid, runtime_system_context)
+        if conv_with_runtime is not None:
+            conv = conv_with_runtime
+    if runtime_system_context:
+        edu_ctx["runtime_system_context"] = runtime_system_context
     if user_turn_count <= 1 or is_dynamic_context_request(content):
         schedule_signal_snapshot_refresh(user.user_id, edu_ctx)
     runtime_graph = build_graph(edu_ctx, use_checkpointer=False)

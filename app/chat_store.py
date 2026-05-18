@@ -50,7 +50,8 @@ class ChatStore:
                     model TEXT NOT NULL,
                     thread_id TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    runtime_context TEXT NOT NULL DEFAULT ''
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_conversations_user_updated
@@ -74,9 +75,18 @@ class ChatStore:
                 ON messages (conversation_id, position);
                 """
             )
+            self._ensure_conversation_columns()
             self._ensure_message_columns()
             self.conn.commit()
             self._harden_storage_files()
+
+    def _ensure_conversation_columns(self) -> None:
+        columns = {
+            row["name"]
+            for row in self.conn.execute("PRAGMA table_info(conversations)").fetchall()
+        }
+        if "runtime_context" not in columns:
+            self.conn.execute("ALTER TABLE conversations ADD COLUMN runtime_context TEXT NOT NULL DEFAULT ''")
 
     def _ensure_message_columns(self) -> None:
         columns = {
@@ -121,7 +131,7 @@ class ChatStore:
     def _get_conversation_row(self, cur: sqlite3.Cursor, user_id: str, conversation_id: str) -> sqlite3.Row | None:
         cur.execute(
             """
-            SELECT id, user_id, title, model, thread_id, created_at, updated_at
+            SELECT id, user_id, title, model, thread_id, created_at, updated_at, runtime_context
             FROM conversations
             WHERE id = ? AND user_id = ?
             """,
@@ -149,6 +159,7 @@ class ChatStore:
             "thread_id": row["thread_id"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+            "runtime_context": row["runtime_context"] if "runtime_context" in row.keys() else "",
             "messages": self._get_messages(cur, row["id"]),
         }
 
@@ -207,7 +218,7 @@ class ChatStore:
         with self._cursor() as cur:
             cur.execute(
                 """
-                SELECT id, user_id, title, model, thread_id, created_at, updated_at
+                SELECT id, user_id, title, model, thread_id, created_at, updated_at, runtime_context
                 FROM conversations
                 WHERE user_id = ?
                 ORDER BY updated_at DESC
@@ -243,7 +254,7 @@ class ChatStore:
         with self._cursor() as cur:
             cur.execute(
                 """
-                SELECT c.id, c.user_id, c.title, c.model, c.thread_id, c.created_at, c.updated_at
+                SELECT c.id, c.user_id, c.title, c.model, c.thread_id, c.created_at, c.updated_at, c.runtime_context
                 FROM conversations c
                 WHERE c.user_id = ?
                   AND c.title = ?
@@ -264,8 +275,8 @@ class ChatStore:
         with self._cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO conversations (id, user_id, title, model, thread_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO conversations (id, user_id, title, model, thread_id, created_at, updated_at, runtime_context)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation["id"],
@@ -275,6 +286,7 @@ class ChatStore:
                     conversation["thread_id"],
                     conversation["created_at"],
                     conversation["updated_at"],
+                    conversation.get("runtime_context") or "",
                 ),
             )
             row = self._get_conversation_row(cur, user_id, conversation["id"])
@@ -301,6 +313,25 @@ class ChatStore:
                 WHERE id = ? AND user_id = ?
                 """,
                 (next_title, next_model, updated_at, conversation_id, user_id),
+            )
+            row = self._get_conversation_row(cur, user_id, conversation_id)
+            return self._conversation_from_row(cur, row)
+
+    def set_runtime_context(self, user_id: str, conversation_id: str, runtime_context: str) -> Dict[str, Any] | None:
+        with self._cursor() as cur:
+            row = self._get_conversation_row(cur, user_id, conversation_id)
+            if row is None:
+                return None
+            if (row["runtime_context"] if "runtime_context" in row.keys() else ""):
+                return self._conversation_from_row(cur, row)
+            cur.execute(
+                """
+                UPDATE conversations
+                SET runtime_context = ?
+                WHERE id = ? AND user_id = ?
+                  AND (runtime_context IS NULL OR runtime_context = '')
+                """,
+                (runtime_context, conversation_id, user_id),
             )
             row = self._get_conversation_row(cur, user_id, conversation_id)
             return self._conversation_from_row(cur, row)

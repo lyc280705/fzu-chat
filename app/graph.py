@@ -19,7 +19,7 @@ import re
 import requests
 import ssl
 import tempfile
-from threading import Lock
+from threading import Lock, Thread
 from typing import Any, Dict, List
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -29,6 +29,7 @@ from langchain_classic.storage import LocalFileStore
 from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.messages import AIMessage, AIMessageChunk, SystemMessage, ToolMessage, trim_messages
+from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
@@ -76,7 +77,7 @@ SEARCH_RESULT_TOOL_NAMES = {"retrieve", "bocha_websearch_tool"}
 SEARCH_RESULT_CITATION_RE = re.compile(r"^\[(\d+)\]$")
 SEARCH_RESULT_INLINE_CITATION_RE = re.compile(r"\[(\d+)\](?!\()")
 SEARCH_CITATION_COUNTER: ContextVar[int] = ContextVar("search_citation_counter", default=0)
-MAX_HISTORY_MESSAGES = 32
+MAX_HISTORY_TOKENS = 200_000
 JWCH_LOCATE_DATE_URL = "https://jwcjwxt2.fzu.edu.cn:82/week.asp"
 JWCH_LOCATE_DATE_TIMEOUT = 5
 JWCH_LOCATE_DATE_RE = re.compile(
@@ -88,6 +89,8 @@ JWCH_LOCATE_DATE_CA_BUNDLE_PATH = Path(tempfile.gettempdir()) / "fzu_chat_jwch_l
 WEEK_LOCATE_CACHE: Dict[str, Any] = {}
 WEEK_LOCATE_CACHE_LOCK = Lock()
 JWCH_LOCATE_DATE_CA_BUNDLE_LOCK = Lock()
+JWCH_LOCATE_DATE_WARMUP_LOCK = Lock()
+JWCH_LOCATE_DATE_WARMUP_RUNNING = False
 
 
 def _normalize_reasoning_content(value: Any) -> str:
@@ -274,6 +277,24 @@ def get_cached_teaching_week_context() -> str:
             cached.get("term"),
         )
     return ""
+
+
+def warm_teaching_week_cache_async() -> None:
+    global JWCH_LOCATE_DATE_WARMUP_RUNNING
+    with JWCH_LOCATE_DATE_WARMUP_LOCK:
+        if JWCH_LOCATE_DATE_WARMUP_RUNNING:
+            return
+        JWCH_LOCATE_DATE_WARMUP_RUNNING = True
+
+    def runner() -> None:
+        global JWCH_LOCATE_DATE_WARMUP_RUNNING
+        try:
+            get_current_teaching_week_context()
+        finally:
+            with JWCH_LOCATE_DATE_WARMUP_LOCK:
+                JWCH_LOCATE_DATE_WARMUP_RUNNING = False
+
+    Thread(target=runner, name="jwch-teaching-week-warmup", daemon=True).start()
 
 
 def get_result_source_label(url: str) -> str:
@@ -818,6 +839,8 @@ def build_runtime_system_context(user_id: str, dynamic_campus_context: str = "")
     current_teaching_week = get_cached_teaching_week_context()
     if current_teaching_week:
         lines.append(f"- 当前教学周：{current_teaching_week}。")
+    else:
+        lines.append("- 当前教学周：后台正在同步；教务工具不能获取教学周，如果本轮问题依赖精确周次，请说明正在同步并建议结合校历核对。")
     lines.append("- 课程节次：1-4节在上午，5-8节在下午，9-11节在晚上。")
 
     user_memory_context = build_confirmed_user_memory_context(user_id)
@@ -894,6 +917,7 @@ def _build_query_or_respond(edu_tools, user_memory_tools, campus_recommendation_
         对于 recommend_campus_context：
         - 推荐必须说明依据来自课表、考试安排、选课窗口、成绩变化、当前位置或用户手动选择的位置
         - 如果用户没有提供位置，也没有通过前端授权定位，不要假装知道用户当前位置；请引导用户在隐私页开启定位智能提醒，或说明所在校区/教学楼
+        - 当用户询问食堂、饭点、去哪吃、附近自习等位置相关问题时，如果缺少定位，可自然提醒用户在隐私与数据页开启定位权限，以便下次按当前位置给出更顺路的建议
         - 不要把具体当前位置、当前课表、考试安排、成绩、选课状态写入长期记忆；只允许保存餐饮偏好、自习偏好、校区偏好、选课偏好等长期偏好
 
 3.1 个性化记忆工具：
@@ -960,6 +984,7 @@ def _build_query_or_respond(edu_tools, user_memory_tools, campus_recommendation_
    - 运行时上下文中可能出现“校园动态事件”。这些事件只用于判断是否在本次回答末尾自然提醒用户，不是用户显式提问
    - 必须先完整回答用户当前问题；只有提醒与本轮语境自然、不打扰时，才在末尾补一句简短提醒
    - 对考试、成绩、选课这类高优先级校园事件，若用户只是问候、泛泛询问今天安排或学习规划，可以更主动地在末尾补一句提醒
+   - 如果动态事件提示接近饭点但没有当前位置，可提醒用户开启定位权限或说明所在校区/教学楼，再调用 recommend_campus_context 获取食堂建议
    - 最多提醒 1-2 条，不要机械列出所有事件，不要说“系统提示/隐藏上下文显示”
    - 如果没有校园动态事件，或事件与用户当前问题无关，就完全不要提
    - 不要把动态事件中的成绩摘要、课表、考试、选课状态、当前位置写入长期记忆
@@ -969,14 +994,16 @@ def _build_query_or_respond(edu_tools, user_memory_tools, campus_recommendation_
 - 若你已声明将执行某项操作，便应直接调用工具完成，无需再征求用户许可
 - 使用工具前不要主观猜测问题的答案，而是直接使用工具获取信息
 - **不要自己编造信息或用基础知识回答**"""
-        runtime_context = build_runtime_system_context(
-            user_id,
-            str(request_context.get("dynamic_campus_context") or "").strip(),
-        )
+        runtime_context = str(request_context.get("runtime_system_context") or "").strip()
+        if not runtime_context:
+            runtime_context = build_runtime_system_context(
+                user_id,
+                str(request_context.get("dynamic_campus_context") or "").strip(),
+            )
         history_prompt = trim_messages(
             state["messages"],
-            max_tokens=MAX_HISTORY_MESSAGES,
-            token_counter=len,
+            max_tokens=MAX_HISTORY_TOKENS,
+            token_counter=count_tokens_approximately,
             strategy="last",
             allow_partial=False,
             start_on="human",

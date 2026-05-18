@@ -167,6 +167,26 @@ class CampusDynamicContextTests(unittest.TestCase):
         self.assertIn("可穿戴传感器", context)
         self.assertLess((time.monotonic() - started) * 1000, 100)
 
+    def test_meal_period_snapshot_can_inject_dining_hint(self):
+        store = self.make_store()
+        store.upsert_snapshot(
+            "102304226",
+            "course",
+            {"digest": "no-class", "recent_class": None, "next_class": None},
+            timedelta(minutes=30),
+        )
+
+        with mock.patch.object(dynamic, "campus_dynamic_context_store", store):
+            context = dynamic.build_dynamic_campus_context(
+                "102304226",
+                message_content="你好",
+                is_first_user_turn=True,
+                now=datetime(2026, 5, 18, 10, 25),
+            )
+
+        self.assertIn("饭点食堂提醒", context)
+        self.assertIn("开启定位权限", context)
+
     def test_grade_snapshot_keeps_digest_without_scores(self):
         class ClientStub:
             def get_courses(self):
