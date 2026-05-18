@@ -9,18 +9,17 @@ const QUICK_PROMPT_GROUPS = [
   },
   {
     title: '个性化',
-    prompts: ['记住我喜欢简洁回答', '查看我的个性化记忆'],
+    prompts: ['记住我在旗山校区', '查看我的个性化记忆'],
   },
 ]
 
-export function EmptyChatState({ message, onPrompt, recommendationGroup = null }) {
+export function EmptyChatState({ message, onPrompt }) {
   return (
     <div className="empty-state">
       <img src="/assets/FZU.png" alt="福州大学" className="empty-logo" />
       <h3>开始一次新对话</h3>
       <p>{message}</p>
       <div className="quick-action-groups">
-        {recommendationGroup}
         {QUICK_PROMPT_GROUPS.map((group) => (
           <section key={group.title} className="quick-action-group" aria-label={group.title}>
             <span>{group.title}</span>

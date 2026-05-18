@@ -1773,7 +1773,7 @@ function SearchResultsCard({ part, data, messageId }) {
   )
 }
 
-function ContextualRecommendationCard({ data, copied = false, onCopy, onFollowup }) {
+function ContextualRecommendationCard({ data }) {
   if (!data || typeof data !== 'object') return null
   const recommendations = Array.isArray(data.recommendations) ? data.recommendations : []
   const exams = Array.isArray(data.academic_context?.upcoming_exams) ? data.academic_context.upcoming_exams : []
@@ -1853,23 +1853,6 @@ function ContextualRecommendationCard({ data, copied = false, onCopy, onFollowup
       </div>
 
       {data.privacy_note && <div className="campus-recommendation-privacy">{data.privacy_note}</div>}
-
-      {(onCopy || onFollowup) && (
-        <div className="campus-recommendation-actions">
-          {onCopy && (
-            <button type="button" className="campus-recommendation-action" onClick={() => onCopy(data)}>
-              {copied ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
-              {copied ? '已复制' : '复制建议'}
-            </button>
-          )}
-          {onFollowup && data.followup_prompt && (
-            <button type="button" className="campus-recommendation-action campus-recommendation-action--primary" onClick={() => onFollowup(data.followup_prompt)}>
-              <MessageSquarePlus size={15} aria-hidden="true" />
-              继续问灵犀
-            </button>
-          )}
-        </div>
-      )}
     </section>
   )
 }

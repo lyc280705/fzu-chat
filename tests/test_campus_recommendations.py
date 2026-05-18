@@ -11,6 +11,7 @@ from app.campus_recommendations import (
     _amap_error_message,
     _course_selection_signals,
     _grade_update_signal,
+    _meal_period,
     _origin_from_course_event,
     _recent_and_next_class,
     _upcoming_exams,
@@ -103,7 +104,13 @@ class CampusRecommendationTests(unittest.TestCase):
         self.assertIn("桃李园餐厅", names)
         self.assertIn("海棠园餐厅", names)
         self.assertIn("晋江楼学习中心", names)
+        self.assertNotIn("教工活动中心公共学习区", names)
         self.assertNotIn("旗山校区创新楼公共学习区", names)
+
+    def test_near_meal_time_counts_as_dining_period(self):
+        self.assertEqual(_meal_period(datetime(2026, 5, 18, 10, 25)), "午餐")
+        self.assertEqual(_meal_period(datetime(2026, 5, 18, 16, 35)), "晚餐")
+        self.assertEqual(_meal_period(datetime(2026, 5, 18, 20, 10)), "夜宵")
 
     def test_course_selection_signals_detect_open_and_upcoming_windows(self):
         now = datetime(2026, 5, 17, 10, 0)

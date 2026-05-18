@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 import hashlib
 import json
 import math
@@ -96,6 +97,13 @@ def _wait_for_amap_slot() -> None:
                 return
             sleep_for = max(0.02, 1 - (now - _AMAP_REQUEST_TIMES[0]) + 0.01)
         time_module.sleep(sleep_for)
+
+
+def _beijing_now() -> datetime:
+    try:
+        return datetime.now(ZoneInfo("Asia/Shanghai"))
+    except Exception:
+        return datetime.now()
 
 DAY_INDEX = {
     "一": 0,
@@ -235,16 +243,6 @@ CAMPUS_POIS: List[Dict[str, Any]] = [
         "lng": 119.201205,
         "tags": ["自习", "讨论", "学习中心", "晋江楼4层"],
         "description": "位于旗山校区晋江楼 4-5 层，适合自习、研讨和较长时间复习。",
-    },
-    {
-        "id": "qishan_teacher_activity_center_study",
-        "name": "教工活动中心公共学习区",
-        "kind": "study",
-        "campus": "旗山校区",
-        "lat": 26.062976,
-        "lng": 119.196459,
-        "tags": ["自习", "短时学习", "教学区"],
-        "description": "靠近旗山校区中心区，适合课间整理笔记或短时等待。",
     },
     {
         "id": "yishan_library",
@@ -739,14 +737,12 @@ class AMapClient:
 
 def _meal_period(now: datetime) -> str:
     current = now.time()
-    if time(6, 30) <= current <= time(9, 30):
+    if time(6, 15) <= current <= time(9, 45):
         return "早餐"
-    if time(10, 40) <= current <= time(13, 30):
+    if time(11, 20) <= current <= time(13, 45):
         return "午餐"
-    if time(16, 50) <= current <= time(19, 30):
+    if time(17, 00) <= current <= time(19, 45):
         return "晚餐"
-    if time(20, 30) <= current <= time(23, 0):
-        return "夜宵"
     return "就餐"
 
 
@@ -820,7 +816,7 @@ def _candidate_context_bonus(kind: str, poi: Dict[str, Any], now: datetime, prim
         signal_type = (primary_signal or {}).get("type")
         if signal_type in {"exam", "grade_update", "course_selection"} and tags.intersection({"安静", "复习", "学习中心", "资料"}):
             bonus += 4
-        if signal_type == "course_selection" and name in {"旗山校区公共教学楼自习区", "教工活动中心公共学习区"}:
+        if signal_type == "course_selection" and name == "旗山校区公共教学楼自习区":
             bonus += 1
         if signal_type == "exam" and name == "晋江楼学习中心":
             bonus += 2
@@ -836,7 +832,7 @@ def build_contextual_recommendation(
     edu_session: Dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> Dict[str, Any]:
-    now = now or datetime.now()
+    now = now or _beijing_now().replace(tzinfo=None)
     requested = scenario if scenario in {"auto", "dining", "study"} else "auto"
     origin = _resolve_origin(location, manual_location_id)
 
@@ -946,11 +942,6 @@ def build_contextual_recommendation(
 
     title = str(primary_signal.get("title")) if primary_signal else ("附近食堂推荐" if kind == "dining" else "复习与自习建议")
     reason = _trigger_reason(kind, recent_class, next_class, upcoming, origin, now, primary_signal)
-    followup_prompt = str(primary_signal.get("prompt")) if primary_signal and primary_signal.get("prompt") else (
-        f"请基于刚才的{title}，帮我比较这些地点并给出下一步安排。"
-        if limited else
-        f"请根据我的课表和当前位置，继续帮我规划{title}。"
-    )
 
     return {
         "scenario": requested,
@@ -986,7 +977,6 @@ def build_contextual_recommendation(
             ],
         },
         "recommendations": limited,
-        "followup_prompt": followup_prompt,
     }
 
 

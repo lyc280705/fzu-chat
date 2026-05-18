@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v6.2](CHANGELOG.md)
+Current tagged release: [v7.0](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -25,7 +25,7 @@ FZU-Chat provides a ChatGPT-style conversation experience for Fuzhou University 
 - **ChatGPT-style interface**: Modern dark UI with sidebar history, quick actions, and streaming replies
 - **Message editing and regeneration**: Icon-only actions for copying replies, regenerating an assistant answer, or editing a sent user message and rebuilding the following response branch
 - **Accessible interaction polish**: Keyboard-friendly focus rings, skip link, screen-reader status updates, dialog focus handling, and live chat-log announcements
-- **Low-intrusion campus intelligence**: After login or educational reconnect, the backend refreshes cached course, exam, selection, and grade-summary snapshots; message generation injects only fresh summaries into short-lived context so the model can decide whether a gentle end-of-answer reminder is useful
+- **Low-intrusion campus intelligence**: After login or educational reconnect, the backend refreshes cached course, exam, selection, and grade-summary snapshots; each new conversation freezes one compact runtime context so the model can decide whether a gentle end-of-answer reminder is useful without changing old messages
 - **Rich tool cards**: Visual display of tool calls with structured data tables for grades and courses
 - **Multi-model support**: Huawei Cloud MaaS GLM-5.1, Kimi K2.6, and DeepSeek V4 Pro selection, with qwen3-30b-a3b for title summarization
 - **FZU-aware personalized memory**: Confirmed long-term preferences for names, answer style, course-selection habits, academic-query presentation, campus-life needs, and dining/campus preferences, while volatile educational facts remain live tool queries
@@ -131,7 +131,7 @@ docker compose up -d --build
 - `POST /api/recommendations/signal-refresh` – Asynchronously refresh non-sensitive academic summary snapshots used by low-intrusion reminders
 - `POST /api/recommendations/contextual` – Generate one-time campus recommendations from `scenario`, optional browser `location`, `manual_location_id`, and optional `seen_grade_digest`
 
-Low-intrusion reminders no longer render automatic homepage cards and do not synchronously fetch slow educational-system data when a user sends a message. The backend reads cached non-sensitive summaries plus reminder cooldown state, injects a few dynamic events into a second short `SystemMessage`, and lets the model decide whether to add a natural end-of-answer reminder. Browser coordinates are transient per message and are not persisted to conversation storage or long-term memory. Grade summaries store only digests, term labels, and recorded counts, never concrete scores. Mobile geolocation requires an HTTPS origin; plain HTTP server URLs will not show the browser permission prompt. The AMap key stays server-side through environment variables or Docker secrets.
+Low-intrusion reminders no longer render automatic homepage cards and do not synchronously fetch slow educational-system data when a user sends a message. The backend reads cached non-sensitive summaries plus reminder cooldown state, injects a few dynamic events into a second short `SystemMessage`, and stores that runtime context once per conversation so later turns append messages without rewriting prior prompt content. Conversation history uses LangChain's approximate token counter and is only trimmed around the 200k-token boundary, preserving tool results for long chats. Browser coordinates are transient per message and are not persisted to conversation storage or long-term memory. Grade summaries store only digests, term labels, and recorded counts, never concrete scores. Mobile geolocation requires an HTTPS origin; plain HTTP server URLs will not show the browser permission prompt. The AMap key stays server-side through environment variables or Docker secrets.
 
 ### Educational Tools (via Agent)
 The LLM agent can automatically call these tools when students ask about their academic data:

@@ -537,6 +537,17 @@ def _build_course_event(snapshot: Dict[str, Any], now: datetime) -> Dict[str, An
             "cooldown_seconds": 2 * 60 * 60,
             "expires_at": _now_utc() + timedelta(hours=3),
         }
+    if meal != "就餐":
+        return {
+            "type": "meal_time",
+            "title": "饭点食堂提醒",
+            "summary": f"当前接近{meal}时段；若用户在问候、安排今天或校园生活，可在末尾轻声提醒可开启定位权限或说明所在校区/教学楼，再继续追问附近食堂。",
+            "priority": 64,
+            "digest": f"meal:{date.today().isoformat()}:{meal}",
+            "repeat": "cooldown",
+            "cooldown_seconds": 2 * 60 * 60,
+            "expires_at": _now_utc() + timedelta(hours=3),
+        }
     if next_class:
         name = next_class.get("name") or "课程"
         return {
