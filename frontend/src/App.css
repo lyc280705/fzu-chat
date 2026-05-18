@@ -459,6 +459,7 @@ summary:focus-visible {
 .sidebar-top {
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;
   gap: 0.75rem;
   padding: 1.25rem 1rem 0;
 }
@@ -684,6 +685,7 @@ summary:focus-visible {
 /* Sidebar model select */
 
 .sidebar-model {
+  flex: 0 0 auto;
   padding: 0.75rem 1rem;
 }
 
@@ -1690,90 +1692,6 @@ summary:focus-visible {
 }
 
 .quick-actions button:hover {
-  border-color: rgba(34, 197, 94, 0.3);
-  background: rgba(34, 197, 94, 0.06);
-}
-
-.smart-recommendation-group {
-  gap: 0.5rem;
-}
-
-.smart-recommendation-reason,
-.smart-recommendation-error {
-  margin: 0;
-  color: #94a3b8;
-  font-size: 0.82rem;
-  line-height: 1.6;
-}
-
-.smart-recommendation-error {
-  color: #fca5a5;
-}
-
-.smart-recommendation-actions button {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.38rem;
-}
-
-.smart-recommendation-status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.45rem;
-  color: #86efac;
-  font-size: 0.82rem;
-}
-
-.smart-recommendation-status svg {
-  animation: spin 0.75s linear infinite;
-}
-
-.smart-recommendation-manual {
-  display: grid;
-  justify-items: center;
-  gap: 0.5rem;
-  margin-top: 0.1rem;
-}
-
-.smart-recommendation-manual label {
-  color: #94a3b8;
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.smart-recommendation-manual-row {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0.55rem;
-}
-
-.smart-recommendation-manual-row select {
-  min-height: 2.35rem;
-  max-width: min(100%, 18rem);
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.6);
-  color: #cbd5e1;
-  padding: 0.55rem 0.8rem;
-  font: inherit;
-  font-size: 0.82rem;
-}
-
-.smart-recommendation-manual-row button {
-  padding: 0.55rem 0.95rem;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.6);
-  color: #cbd5e1;
-  font: inherit;
-  font-size: 0.82rem;
-  cursor: pointer;
-}
-
-.smart-recommendation-manual-row button:hover,
-.smart-recommendation-manual-row button:focus-visible {
   border-color: rgba(34, 197, 94, 0.3);
   background: rgba(34, 197, 94, 0.06);
 }
@@ -3316,7 +3234,11 @@ summary:focus-visible {
 
   .sidebar {
     position: fixed;
-    inset: 0;
+    inset: 0 auto 0 0;
+    width: min(88vw, 340px);
+    max-width: calc(100vw - 2.2rem);
+    height: 100vh;
+    height: 100dvh;
     z-index: 90;
     transform: translateX(-100%);
     transition: transform 0.25s ease;
@@ -3335,7 +3257,60 @@ summary:focus-visible {
   }
 
   .sidebar-top {
-    padding-top: calc(env(safe-area-inset-top, 0px) + 4.75rem);
+    gap: 0.55rem;
+    padding: calc(env(safe-area-inset-top, 0px) + 3.35rem) 0.8rem 0;
+  }
+
+  .sidebar .brand-card {
+    padding: 0.58rem 0.72rem;
+    border-radius: 12px;
+  }
+
+  .sidebar .brand-logo {
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+  }
+
+  .sidebar .brand-card h1 {
+    font-size: 1rem;
+  }
+
+  .sidebar .brand-sub,
+  .sidebar .user-info span,
+  .thinking-panel__hint {
+    font-size: 0.68rem;
+  }
+
+  .sidebar .user-card {
+    padding: 0.5rem 0.62rem;
+    border-radius: 12px;
+  }
+
+  .sidebar .new-chat-btn,
+  .sidebar .sidebar-link-btn {
+    padding: 0.64rem 0.72rem;
+    border-radius: 12px;
+  }
+
+  .sidebar-model {
+    padding: 0.58rem 0.8rem;
+  }
+
+  .thinking-panel {
+    gap: 0.55rem;
+    margin-top: 0.52rem;
+    padding: 0.58rem 0.65rem;
+    border-radius: 12px;
+  }
+
+  .sidebar-convos {
+    min-height: 10rem;
+    padding: 0 0.65rem calc(env(safe-area-inset-bottom, 0px) + 0.75rem);
+  }
+
+  .convo-list {
+    min-height: 0;
   }
 
   .chat-header {
@@ -3346,15 +3321,6 @@ summary:focus-visible {
   .chat-header-left,
   .chat-header-copy {
     width: 100%;
-  }
-
-  .thinking-panel {
-    gap: 0.6rem;
-    padding: 0.68rem 0.74rem;
-  }
-
-  .thinking-panel__hint {
-    font-size: 0.7rem;
   }
 
   .chat-header-badges {

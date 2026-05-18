@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-当前已标记版本：[v6.1](CHANGELOG.md)
+当前已标记版本：[v6.2](CHANGELOG.md)
 
 版本记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -25,7 +25,7 @@
 - **ChatGPT 风格界面**：现代暗色主题，侧边栏历史记录、快捷操作、流式回复
 - **消息修改与重新生成**：纯图标操作支持复制回复、重新生成助手回答、修改已发送问题并重建后续回复分支
 - **无障碍交互优化**：补充键盘焦点、跳过链接、屏幕阅读器状态、弹窗焦点管理和聊天日志播报
-- **情境校园推荐**：聊天首页会根据实时课表、考试、选课窗口、成绩摘要变化和当前时段自动出现轻量“今日建议”；用户可选择用一次性浏览器定位优化，也可在定位失败时手动选择校区/区域
+- **低侵入校园智能提醒**：登录/教务重连后后台刷新课表、考试、选课和成绩摘要快照；发送消息时只把新鲜摘要注入短生命周期上下文，让模型在回答末尾自然判断是否提醒
 - **丰富的工具卡片**：可视化工具调用过程，结构化展示成绩表格和课表
 - **多模型支持**：华为云 MaaS 的 GLM-5.1、Kimi K2.6、DeepSeek V4 Pro 可选，标题总结内部使用 qwen3-30b-a3b
 - **福大场景个性化记忆**：在用户确认后保存称呼、回答风格、选课习惯、教务查询展示、校园生活、餐饮与校区等长期偏好；成绩、绩点、课表、考场等易变教务事实仍通过工具实时查询
@@ -43,6 +43,7 @@ fzu-chat/
 │   ├── jwch_client.py     # 福大本科教务系统客户端（Python 实现）
 │   ├── edu_tools.py       # LangGraph 教务查询工具
 │   ├── campus_recommendations.py # 情境食堂/自习推荐服务
+│   ├── campus_dynamic_context.py # 低延迟校园动态上下文与提醒抑制
 │   ├── user_memory_tools.py # 需用户确认的个性化记忆工具
 │   ├── memory_store.py    # SQLite 长期记忆存储
 │   ├── data/              # 知识库文档
@@ -121,14 +122,16 @@ docker compose up -d --build
 - `DELETE /api/conversations/{id}` – 删除对话
 - `POST /api/conversations/{id}/messages` – 流式生成回复（SSE）
 - `POST /api/conversations/{id}/messages` 携带 `rerun_message_id` – 基于既有用户消息修改或重新生成，SSE 事件格式保持兼容
+- `POST /api/conversations/{id}/messages` 可携带 `context.location` – 本次消息临时定位上下文，仅用于动态提醒判断，不写入历史
 - `POST /api/conversations/{id}/feedback` – 提交反馈
 - `POST /api/conversations/{id}/memory-proposals/{tool_id}` – 确认或忽略记忆保存/删除建议
 
 ### 情境推荐
 - `GET /api/recommendations/locations` – 内置手动校区/位置选项
-- `POST /api/recommendations/contextual` – 根据 `scenario`、可选浏览器 `location`、`manual_location_id` 和浏览器本地保存的 `seen_grade_digest` 生成一次性校园建议
+- `POST /api/recommendations/signal-refresh` – 登录态下异步刷新低侵入提醒所需的非敏感教务摘要快照
+- `POST /api/recommendations/contextual` – 根据 `scenario`、可选浏览器 `location`、`manual_location_id` 和可选 `seen_grade_digest` 生成一次性校园建议
 
-推荐会综合考试、课表、选课窗口、成绩摘要变化、当前位置、课表地点推断和内置地点库，覆盖食堂、自习、复习、选课和成绩提醒。浏览器经纬度仅用于本次推荐请求，不写入会话存储或长期记忆；成绩变化只比较浏览器本地保存的摘要哈希，不把成绩明细写入服务端推荐状态；高德 Key 仅通过后端环境变量或 Docker secret 使用，不暴露给前端。手机定位需要通过 HTTPS 域名访问，普通服务器 HTTP 地址不会弹出浏览器定位授权。
+低侵入提醒不会在首页自动展示推荐卡片，也不会在发送消息时同步抓取慢速教务数据。后端只读取已缓存的非敏感摘要和提醒冷却状态，将少量动态事件放入第二条短 `SystemMessage`，由模型自行判断是否在回答末尾自然提醒。浏览器经纬度仅随本次消息临时传入，不写入会话存储或长期记忆；成绩摘要只保存 digest、学期和录入数量，不保存具体分数；高德 Key 仅通过后端环境变量或 Docker secret 使用，不暴露给前端。手机定位需要通过 HTTPS 域名访问，普通服务器 HTTP 地址不会弹出浏览器定位授权。
 
 ### 教务工具（Agent 自动调用）
 AI 助手在学生询问教务数据时自动调用：

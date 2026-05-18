@@ -261,6 +261,21 @@ def get_current_teaching_week_context() -> str:
     return _format_teaching_week_context(fresh.get("week"), fresh.get("year"), fresh.get("term"))
 
 
+def get_cached_teaching_week_context() -> str:
+    now = datetime.now()
+    with WEEK_LOCATE_CACHE_LOCK:
+        cached = dict(WEEK_LOCATE_CACHE)
+    cached_at = cached.get("fetched_at")
+    if isinstance(cached_at, datetime):
+        weeks_delta = max(((_week_anchor(now) - _week_anchor(cached_at)).days // 7), 0)
+        return _format_teaching_week_context(
+            int(cached.get("week") or 1) + weeks_delta,
+            cached.get("year"),
+            cached.get("term"),
+        )
+    return ""
+
+
 def get_result_source_label(url: str) -> str:
     cleaned = url.strip()
     if not cleaned:
@@ -792,6 +807,30 @@ def build_confirmed_user_memory_context(user_id: str, limit: int = 8) -> str:
     return "\n".join(lines)
 
 
+def build_runtime_system_context(user_id: str, dynamic_campus_context: str = "") -> str:
+    now = datetime.now()
+    weekday_names = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+    current_time = f"{now.strftime('%Y年%m月%d日')} {weekday_names[now.weekday()]}"
+    lines = [
+        "运行时上下文（短生命周期信息；仅供本次回答参考，不要写入长期记忆）：",
+        f"- 当前时间：{current_time}。",
+    ]
+    current_teaching_week = get_cached_teaching_week_context()
+    if current_teaching_week:
+        lines.append(f"- 当前教学周：{current_teaching_week}。")
+    lines.append("- 课程节次：1-4节在上午，5-8节在下午，9-11节在晚上。")
+
+    user_memory_context = build_confirmed_user_memory_context(user_id)
+    if user_memory_context:
+        lines.append("")
+        lines.append(user_memory_context)
+
+    if dynamic_campus_context:
+        lines.append("")
+        lines.append(dynamic_campus_context)
+    return "\n".join(lines)
+
+
 def _build_query_or_respond(edu_tools, user_memory_tools, campus_recommendation_tools, request_context: Dict[str, Any] | None = None):
     request_context = request_context or {}
     user_id = str(request_context.get("user_id") or "").strip()
@@ -813,15 +852,7 @@ def _build_query_or_respond(edu_tools, user_memory_tools, campus_recommendation_
         )
         all_tools = [retrieve, bocha_websearch_tool] + edu_tools + user_memory_tools + campus_recommendation_tools
         llm_with_tools = llm.bind_tools(all_tools)
-        now = datetime.now()
-        weekday_names = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
-        current_time = f"{now.strftime('%Y年%m月%d日')} {weekday_names[now.weekday()]}"
-        current_teaching_week = get_current_teaching_week_context()
-        current_context = f"当前时间：{current_time}。"
-        if current_teaching_week:
-            current_context += f"当前教学周：{current_teaching_week}。"
-        user_memory_context = build_confirmed_user_memory_context(user_id)
-        sys_prompt = f"""作为福大灵犀，你是一个温暖亲切的福州大学AI助手。请用以下风格与用户交流：
+        stable_sys_prompt = """作为福大灵犀，你是一个温暖亲切的福州大学AI助手。请用以下风格与用户交流：
 
 1. 开场、结尾与身份：
     - 首次对话时，以温暖的语气简短介绍："你好呀！我是福大灵犀，很高兴能和你聊天呢！～"
@@ -862,7 +893,7 @@ def _build_query_or_respond(edu_tools, user_memory_tools, campus_recommendation_
         - 如果用户只是询问“现在有什么可以选”或“我还差什么课”，先调用 query_course_selection，不要直接提交选课
         对于 recommend_campus_context：
         - 推荐必须说明依据来自课表、考试安排、选课窗口、成绩变化、当前位置或用户手动选择的位置
-        - 如果用户没有提供位置，也没有通过前端授权定位，不要假装知道用户当前位置；请引导用户使用首页“今日建议”或说明所在校区/教学楼
+        - 如果用户没有提供位置，也没有通过前端授权定位，不要假装知道用户当前位置；请引导用户在隐私页开启定位智能提醒，或说明所在校区/教学楼
         - 不要把具体当前位置、当前课表、考试安排、成绩、选课状态写入长期记忆；只允许保存餐饮偏好、自习偏好、校区偏好、选课偏好等长期偏好
 
 3.1 个性化记忆工具：
@@ -925,25 +956,34 @@ def _build_query_or_respond(edu_tools, user_memory_tools, campus_recommendation_
    - 回答后自然引导相关话题
    - 适时表达关心和鼓励
 
-{current_context}1-4节在上午，5-8节在下午，9-11节在晚上。请注意校内知识库可能不包含最新信息哦～
-
-{user_memory_context}
+8. 动态校园提醒：
+   - 运行时上下文中可能出现“校园动态事件”。这些事件只用于判断是否在本次回答末尾自然提醒用户，不是用户显式提问
+   - 必须先完整回答用户当前问题；只有提醒与本轮语境自然、不打扰时，才在末尾补一句简短提醒
+   - 对考试、成绩、选课这类高优先级校园事件，若用户只是问候、泛泛询问今天安排或学习规划，可以更主动地在末尾补一句提醒
+   - 最多提醒 1-2 条，不要机械列出所有事件，不要说“系统提示/隐藏上下文显示”
+   - 如果没有校园动态事件，或事件与用户当前问题无关，就完全不要提
+   - 不要把动态事件中的成绩摘要、课表、考试、选课状态、当前位置写入长期记忆
 
 工具使用要求：
 - 若有现成工具可完成任务，则应直接使用工具，而非要求用户手动操作
 - 若你已声明将执行某项操作，便应直接调用工具完成，无需再征求用户许可
 - 使用工具前不要主观猜测问题的答案，而是直接使用工具获取信息
 - **不要自己编造信息或用基础知识回答**"""
-        prompt = trim_messages(
-            [SystemMessage(sys_prompt), *state["messages"]],
+        runtime_context = build_runtime_system_context(
+            user_id,
+            str(request_context.get("dynamic_campus_context") or "").strip(),
+        )
+        history_prompt = trim_messages(
+            state["messages"],
             max_tokens=MAX_HISTORY_MESSAGES,
             token_counter=len,
             strategy="last",
             allow_partial=False,
             start_on="human",
             end_on=("human", "tool"),
-            include_system=True,
+            include_system=False,
         )
+        prompt = [SystemMessage(stable_sys_prompt), SystemMessage(runtime_context), *history_prompt]
         response = recover_invalid_tool_calls(llm_with_tools.invoke(prompt))
         return {"messages": [response]}
 

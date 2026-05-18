@@ -3,6 +3,52 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v6.2] - 2026-05-18
+
+FZU-Chat v6.2 replaces the prominent homepage suggestion card with low-intrusion dynamic context. Campus reminders now come from cached academic summaries injected into a short runtime system message, allowing the model to decide whether a natural end-of-answer reminder is useful without delaying the first response.
+
+### Highlights
+
+- Low-latency dynamic context. The stable system prompt is separated from runtime context so the long prompt remains cache-friendly; current time, confirmed memory, and campus events live in a second short `SystemMessage`.
+- No blocking reminder fetches. Login, educational reconnect, and the privacy location switch can refresh course, exam, course-selection, and grade-summary snapshots in the background; message generation only reads fresh cached summaries and skips reminders when data is unavailable.
+- Reminder suppression. The backend records only event type, digest, cooldown, and expiry so grades, full schedules, exam locations, and coordinates are not persisted in reminder state.
+- Natural reminder coverage. Generic follow-ups such as “what should I pay attention to today” now count as dynamic-context requests, and exam reminders cool down daily so early reminders do not suppress the 48-hour exam window.
+- Less intrusive frontend. Empty chats no longer show automatic “Today’s suggestions”; location is managed from Privacy & Data and is used only as transient context when sending the first message of a new conversation.
+- Better mobile sidebar. The mobile drawer is narrower, denser, and gives the conversation history list its own scrollable space at 390px widths.
+
+### Validation
+
+- conda run -n langchain python -m compileall app
+- conda run -n langchain python -m unittest tests.test_campus_dynamic_context tests.test_campus_recommendations
+- cd frontend && npm run lint
+- cd frontend && npm run build
+- Live browser smoke test with real educational login: first message in a new conversation injected the cached exam signal and produced a natural reminder within the assistant reply.
+
+---
+
+## 福大灵犀 v6.2
+
+福大灵犀 v6.2 将突出的首页建议卡片重构为低侵入动态上下文提醒。校园提醒来自后台缓存的教务摘要，并注入到短运行时 system 消息中，由模型判断是否在回答末尾自然提醒，不再拖慢首轮响应。
+
+### 版本亮点
+
+- 低延迟动态上下文。稳定主提示词与运行时上下文拆分，长提示词尽量保持缓存友好；当前时间、确认记忆和校园事件放入第二条短 `SystemMessage`。
+- 不阻塞消息发送。登录、教务重连和隐私页定位开关会后台刷新课表、考试、选课和成绩摘要；生成回复时只读新鲜缓存，读不到就跳过提醒。
+- 重复提醒抑制。后端仅记录事件类型、digest、冷却时间和过期时间，不把成绩明细、完整课表、考试地点或经纬度写入提醒状态。
+- 自然提醒覆盖。类似“今天有什么需要注意”的泛问会触发动态上下文；考试提醒按每日冷却，避免提前提醒一次后覆盖临近 48 小时的复习窗口。
+- 前端更克制。空对话不再自动展示“今日建议”；定位集中在隐私页管理，只在新对话首条消息发送时作为临时上下文使用。
+- 移动侧栏修复。移动抽屉更窄、更紧凑，390px 宽度下历史对话列表拥有独立滚动空间。
+
+### 验证
+
+- conda run -n langchain python -m compileall app
+- conda run -n langchain python -m unittest tests.test_campus_dynamic_context tests.test_campus_recommendations
+- cd frontend && npm run lint
+- cd frontend && npm run build
+- 真实教务登录浏览器冒烟测试：新对话首条消息成功注入缓存考试信号，并在助手回复中自然提醒。
+
+---
+
 ## [v6.1] - 2026-05-17
 
 FZU-Chat v6.1 expands contextual recommendations from dining/study hints into broader campus intelligence. The homepage can now surface course-selection windows, grade-summary changes, exam prep, class-location-aware study spots, and corrected FZU place recommendations.

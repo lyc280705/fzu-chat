@@ -1068,7 +1068,7 @@ def build_campus_recommendation_tools(request_context: Dict[str, Any] | None = N
     ) -> Tuple[str, Any]:
         """根据课表、考试、选课、成绩和当前位置生成校园情境推荐。
 
-        如果用户没有提供明确位置，应先建议用户使用首页“今日建议”的定位入口，或让用户说明所在校区/教学楼。
+        如果用户没有提供明确位置，可建议用户在“隐私与数据”里开启定位与智能提醒，或让用户说明所在校区/教学楼。
 
         参数:
         - scenario: auto、dining 或 study

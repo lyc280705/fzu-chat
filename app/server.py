@@ -9,8 +9,9 @@ import os
 from pathlib import Path
 import re
 import time
-from threading import Lock
 from threading import Event
+from threading import Lock
+from threading import Thread
 from typing import Any, AsyncIterator, Dict, Iterable, List, Literal
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -32,6 +33,12 @@ from .auth import (
     update_session,
 )
 from .campus_recommendations import build_contextual_recommendation, manual_location_options
+from .campus_dynamic_context import (
+    build_dynamic_campus_context,
+    is_dynamic_context_request,
+    purge_dynamic_context_user_data,
+    refresh_signal_snapshots,
+)
 from .chat_store import chat_store
 from .edu_tools import set_current_edu_session
 from .graph import CHAT_MODEL_OPTIONS, DEFAULT_CHAT_MODEL, KIMI_CHAT_MODEL, build_graph, reset_search_citation_counter, summary_chain
@@ -250,7 +257,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="FZU Chat API", version="6.1.0", lifespan=lifespan)
+app = FastAPI(title="FZU Chat API", version="6.2.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
@@ -326,11 +333,23 @@ class ConversationUpdateRequest(BaseModel):
     model: str | None = None
 
 
+class MessageContextLocation(BaseModel):
+    lat: float
+    lng: float
+    accuracy: float | None = None
+    timestamp: str | None = Field(default=None, max_length=80)
+
+
+class MessageContext(BaseModel):
+    location: MessageContextLocation | None = None
+
+
 class MessageCreateRequest(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
     model: str | None = None
     thinking_enabled: bool | None = None
     rerun_message_id: str | None = Field(default=None, max_length=80)
+    context: MessageContext | None = None
 
 
 class RecommendationLocation(BaseModel):
@@ -1135,6 +1154,27 @@ def _build_edu_session_state(client: JwchClient) -> Dict[str, Any]:
     }
 
 
+def _edu_context_from_session(user_id: str, session: Dict[str, Any] | None) -> Dict[str, Any]:
+    session = session or {}
+    return {
+        "user_id": user_id,
+        "edu_authenticated": session.get("edu_authenticated", False),
+        "edu_cookies": session.get("edu_cookies"),
+        "edu_identifier": session.get("edu_identifier", ""),
+        "edu_status_message": session.get("edu_status_message", ""),
+    }
+
+
+def schedule_signal_snapshot_refresh(user_id: str, edu_ctx: Dict[str, Any] | None) -> None:
+    if not user_id or not edu_ctx or not edu_ctx.get("edu_authenticated"):
+        return
+
+    def runner() -> None:
+        refresh_signal_snapshots(user_id, edu_ctx)
+
+    Thread(target=runner, name=f"campus-signal-refresh-{mask_user_id(user_id)}", daemon=True).start()
+
+
 def clear_edu_session(token: str, status_message: str = "") -> None:
     update_session(
         token,
@@ -1217,6 +1257,7 @@ def login(req: LoginRequest, request: Request) -> JSONResponse:
         edu_cookies=[{"name": c.name, "value": c.value} for c in client.session.cookies],
     )
     update_session(token, _build_edu_session_state(client))
+    schedule_signal_snapshot_refresh(req.student_id, _edu_context_from_session(req.student_id, get_session(token)))
 
     response = JSONResponse(
         {
@@ -1258,6 +1299,7 @@ def relogin_edu(req: EduReloginRequest, request: Request, user: AuthUser = Depen
     update_session(user.token, _build_edu_session_state(client))
 
     session = get_session(user.token) or {}
+    schedule_signal_snapshot_refresh(user.user_id, _edu_context_from_session(user.user_id, session))
     return JSONResponse(
         {
             "user": {
@@ -1320,11 +1362,13 @@ def get_user_data_summary(user: AuthUser = Depends(require_auth)):
 def reset_user_data(user: AuthUser = Depends(require_auth)):
     cleared_conversations = chat_store.delete_all_conversations(user.user_id)
     cleared_memories = user_memory_store.purge_all_memories(user.user_id)
+    cleared_dynamic_context = purge_dynamic_context_user_data(user.user_id)
     return {
         "ok": True,
         "cleared": {
             **cleared_conversations,
             "memory_count": cleared_memories,
+            **cleared_dynamic_context,
         },
     }
 
@@ -1336,6 +1380,14 @@ def reset_user_data(user: AuthUser = Depends(require_auth)):
 @app.get("/api/recommendations/locations")
 def list_recommendation_locations(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     return {"locations": manual_location_options()}
+
+
+@app.post("/api/recommendations/signal-refresh")
+def refresh_recommendation_signals(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
+    session = refresh_edu_session_status(user.token) or get_session(user.token) or {}
+    edu_ctx = _edu_context_from_session(user.user_id, session)
+    schedule_signal_snapshot_refresh(user.user_id, edu_ctx)
+    return {"ok": True, "scheduled": bool(edu_ctx.get("edu_authenticated"))}
 
 
 @app.post("/api/recommendations/contextual")
@@ -1649,13 +1701,19 @@ async def create_message(
     graph_messages = build_graph_input_messages(conv["messages"], sel)
 
     sess = refresh_edu_session_status(user.token) or get_session(user.token)
-    edu_ctx = {
-        "user_id": user.user_id,
-        "edu_authenticated": sess.get("edu_authenticated", False) if sess else False,
-        "edu_cookies": sess.get("edu_cookies") if sess else None,
-        "edu_identifier": sess.get("edu_identifier", "") if sess else "",
-        "edu_status_message": sess.get("edu_status_message", "") if sess else "",
-    }
+    edu_ctx = _edu_context_from_session(user.user_id, sess)
+    user_turn_count = sum(1 for message in conv.get("messages", []) if message.get("role") == "user")
+    message_location = req.context.location.dict() if req.context and req.context.location else None
+    dynamic_campus_context = build_dynamic_campus_context(
+        user.user_id,
+        message_content=content,
+        is_first_user_turn=user_turn_count <= 1,
+        location=message_location,
+    )
+    if dynamic_campus_context:
+        edu_ctx["dynamic_campus_context"] = dynamic_campus_context
+    if user_turn_count <= 1 or is_dynamic_context_request(content):
+        schedule_signal_snapshot_refresh(user.user_id, edu_ctx)
     runtime_graph = build_graph(edu_ctx, use_checkpointer=False)
     stop_event = register_active_stream_stop(user.user_id, cid)
     graph_config = {
