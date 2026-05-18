@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 import hashlib
 import json
 import math
@@ -96,6 +97,13 @@ def _wait_for_amap_slot() -> None:
                 return
             sleep_for = max(0.02, 1 - (now - _AMAP_REQUEST_TIMES[0]) + 0.01)
         time_module.sleep(sleep_for)
+
+
+def _beijing_now() -> datetime:
+    try:
+        return datetime.now(ZoneInfo("Asia/Shanghai"))
+    except Exception:
+        return datetime.now()
 
 DAY_INDEX = {
     "一": 0,
@@ -822,7 +830,7 @@ def build_contextual_recommendation(
     edu_session: Dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> Dict[str, Any]:
-    now = now or datetime.now()
+    now = now or _beijing_now().replace(tzinfo=None)
     requested = scenario if scenario in {"auto", "dining", "study"} else "auto"
     origin = _resolve_origin(location, manual_location_id)
 
