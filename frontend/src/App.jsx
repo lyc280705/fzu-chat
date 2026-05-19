@@ -79,6 +79,25 @@ const EDUCATIONAL_TOOL_NAMES = new Set([
   'query_cultivate_plan',
 ])
 
+const CAMPUS_RECOMMENDATION_SCENARIO_LABELS = {
+  auto: '智能校园推荐',
+  dining: '食堂推荐',
+  study: '自习/复习建议',
+}
+
+const CAMPUS_RECOMMENDATION_LOCATION_LABELS = {
+  qishan_center: '旗山校区中心区',
+  qishan_teaching: '旗山校区教学区',
+  qishan_dorm: '旗山校区生活区',
+  qishan_library: '旗山校区图书馆',
+  qishan_jinjiang: '晋江楼学习中心',
+  qishan_staff_center: '教工活动中心 / 桃李园',
+  qishan_life_zone_1: '旗山校区生活一区',
+  qishan_life_zone_3: '旗山校区生活三区',
+  yishan_center: '怡山校区',
+  tongpan_center: '铜盘校区',
+}
+
 const FALLBACK_HEX = Array.from({ length: 256 }, (_, index) => index.toString(16).padStart(2, '0'))
 
 const PRIVACY_POLICY_SECTIONS = [
@@ -612,6 +631,58 @@ const statusLabel = (status, fallback = '状态未知') => {
   return /[\u4e00-\u9fff]/.test(value) ? value : fallback
 }
 
+const parseJsonObject = (value) => {
+  if (!value || typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null
+  try {
+    const parsed = JSON.parse(trimmed)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+const normalizeCampusRecommendationData = (data) => {
+  if (data && typeof data === 'object' && !Array.isArray(data)) return data
+  const parsed = parseJsonObject(data)
+  return parsed && Array.isArray(parsed.recommendations) ? parsed : null
+}
+
+const campusRecommendationArgsSummary = (value, data = null) => {
+  const args = typeof value === 'string' ? parseJsonObject(value) : value
+  if (args && typeof args === 'object' && !Array.isArray(args)) {
+    const scenario = String(args.scenario || data?.scenario || data?.resolved_scenario || 'auto').trim()
+    const parts = [`场景：${CAMPUS_RECOMMENDATION_SCENARIO_LABELS[scenario] || '智能校园推荐'}`]
+    const manualLocation = String(args.manual_location_id || '').trim()
+    if (manualLocation && CAMPUS_RECOMMENDATION_LOCATION_LABELS[manualLocation]) {
+      parts.push(`位置：${CAMPUS_RECOMMENDATION_LOCATION_LABELS[manualLocation]}`)
+    } else if (args.latitude && args.longitude) {
+      parts.push('位置：本次授权定位')
+    } else if (data?.location_name) {
+      parts.push(`位置：${data.location_name}`)
+    } else {
+      parts.push('位置：按校内地点库估算')
+    }
+    return parts.join('；')
+  }
+  if (data?.title || data?.location_name) {
+    return [data.title, data.location_name ? `位置：${data.location_name}` : ''].filter(Boolean).join('；')
+  }
+  return ''
+}
+
+const toolQueryText = (part = {}) => {
+  if (part.tool_name === 'recommend_campus_context') {
+    const data = normalizeCampusRecommendationData(part.data)
+    const summary = campusRecommendationArgsSummary(part.query, data)
+    if (summary) return summary
+    const raw = String(part.query || '').trim()
+    return raw.startsWith('{') ? '' : raw
+  }
+  return String(part.query || '').trim()
+}
+
 const toolResultSummary = (part = {}) => {
   const data = part.data
   if (!data) return ''
@@ -624,8 +695,9 @@ const toolResultSummary = (part = {}) => {
   if (part.tool_name === 'query_exam_scores' && Array.isArray(data)) return `${data.length} 条成绩`
   if (part.tool_name === 'query_exam_rooms' && Array.isArray(data.exams)) return `${data.exams.length} 场考试`
   if (part.tool_name === 'query_user_memory' && Array.isArray(data.memories)) return `${data.memories.length} 条记忆`
-  if (part.tool_name === 'recommend_campus_context' && Array.isArray(data.recommendations)) {
-    return `${data.recommendations.length} 个地点`
+  if (part.tool_name === 'recommend_campus_context') {
+    const recommendationData = normalizeCampusRecommendationData(data)
+    if (Array.isArray(recommendationData?.recommendations)) return `${recommendationData.recommendations.length} 个地点`
   }
   if (data.status) return statusLabel(data.status)
   return ''
@@ -1925,6 +1997,10 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
   const summary = toolResultSummary(part)
   const showRawUrls = !['query_cultivate_plan', 'retrieve', 'bocha_websearch_tool'].includes(part.tool_name)
   const [expanded, setExpanded] = useState(() => !EDUCATIONAL_TOOL_NAMES.has(part.tool_name))
+  const displayQuery = toolQueryText(part)
+  const recommendationData = part.tool_name === 'recommend_campus_context'
+    ? normalizeCampusRecommendationData(part.data)
+    : null
 
   const renderData = () => {
     if (!part.data) return null
@@ -1954,7 +2030,7 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
       case 'query_student_info':
         return <StudentInfoCard data={part.data} />
       case 'recommend_campus_context':
-        return <ContextualRecommendationCard data={part.data} />
+        return <ContextualRecommendationCard data={recommendationData} />
       case 'query_user_memory':
         return <UserMemoryListCard data={part.data} />
       case 'save_user_memory':
@@ -2006,7 +2082,7 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
       </div>
       {expanded && (
         <div className="tool-card-body">
-          {part.query && <div className="tool-card-query">{part.query}</div>}
+          {displayQuery && <div className="tool-card-query">{displayQuery}</div>}
           {renderData()}
           {showRawUrls && part.urls?.length > 0 && (
             <div className="tool-links">

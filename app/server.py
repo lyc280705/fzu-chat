@@ -753,6 +753,32 @@ def summarize_tool_args(args: Any) -> str:
         return args
     if not isinstance(args, dict):
         return str(args or "")
+    if any(key in args for key in ("scenario", "manual_location_id", "latitude", "longitude")):
+        scenario_label = {
+            "auto": "智能校园推荐",
+            "dining": "食堂推荐",
+            "study": "自习/复习建议",
+        }.get(str(args.get("scenario") or "auto").strip(), "智能校园推荐")
+        location_label = {
+            "qishan_center": "旗山校区中心区",
+            "qishan_teaching": "旗山校区教学区",
+            "qishan_dorm": "旗山校区生活区",
+            "qishan_library": "旗山校区图书馆",
+            "qishan_jinjiang": "晋江楼学习中心",
+            "qishan_staff_center": "教工活动中心 / 桃李园",
+            "qishan_life_zone_1": "旗山校区生活一区",
+            "qishan_life_zone_3": "旗山校区生活三区",
+            "yishan_center": "怡山校区",
+            "tongpan_center": "铜盘校区",
+        }.get(str(args.get("manual_location_id") or "").strip(), "")
+        parts = [f"场景：{scenario_label}"]
+        if location_label:
+            parts.append(f"位置：{location_label}")
+        elif args.get("latitude") and args.get("longitude"):
+            parts.append("位置：本次授权定位")
+        else:
+            parts.append("位置：按校内地点库估算")
+        return "；".join(parts)
     if args.get("memory_ids"):
         raw_memory_ids = args.get("memory_ids", [])
         if isinstance(raw_memory_ids, str):

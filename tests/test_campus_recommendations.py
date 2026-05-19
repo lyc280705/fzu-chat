@@ -108,8 +108,9 @@ class CampusRecommendationTests(unittest.TestCase):
         self.assertNotIn("旗山校区创新楼公共学习区", names)
 
     def test_near_meal_time_counts_as_dining_period(self):
-        self.assertEqual(_meal_period(datetime(2026, 5, 18, 10, 25)), "午餐")
-        self.assertEqual(_meal_period(datetime(2026, 5, 18, 16, 35)), "晚餐")
+        self.assertEqual(_meal_period(datetime(2026, 5, 18, 8, 25)), "早餐")
+        self.assertEqual(_meal_period(datetime(2026, 5, 18, 11, 25)), "午餐")
+        self.assertEqual(_meal_period(datetime(2026, 5, 18, 17, 5)), "晚餐")
         self.assertEqual(_meal_period(datetime(2026, 5, 18, 20, 10)), "就餐")
 
     def test_course_selection_signals_detect_open_and_upcoming_windows(self):

@@ -13,7 +13,9 @@ FZU-Chat v7.0 makes low-intrusion campus intelligence more cache-friendly and le
 - Long-context preservation. Chat history trimming now uses LangChain's approximate token counter and waits until roughly 200k tokens, reducing accidental loss of useful tool results.
 - Teaching-week context. The backend warms a public JWCH teaching-week cache outside the educational tools and injects the cached week into runtime context when available.
 - Smarter natural reminders. Near-meal windows now generate a lightweight dining hint even without a recent class, and the model can remind users to enable location or describe their campus/building instead of requiring a homepage button.
+- Meal-time reminders no longer depend on a fresh course snapshot, so breakfast/lunch/dinner hints can still be injected when the academic snapshot cache is empty or expired.
 - Recommendation cleanup. Removed the old click-to-send recommendation prompt UI path, including unused homepage recommendation panel styles and follow-up prompt buttons; explicit `recommend_campus_context` tool results still render as normal tool cards.
+- Recommendation card polish. `recommend_campus_context` tool calls now show a Chinese scene/location summary and parse legacy JSON payloads into the dedicated recommendation card instead of exposing raw tool JSON.
 - Place corrections. Removed the nonexistent staff-activity-center study area entry, kept Taoliyuan at the staff activity center, and verified dining/study recommendations avoid the inaccurate legacy locations.
 - Snack-time dining removal. Removed snack-time (夜宵) period detection and context bonus logic; dining recommendations now focus on three main meals (breakfast, lunch, dinner).
 - Empty-chat polish. The new-chat quick prompts keep the original three groups, with slightly roomier buttons and tighter unused bottom space without forcing scroll.
@@ -38,7 +40,9 @@ FZU-Chat v7.0 makes low-intrusion campus intelligence more cache-friendly and le
 - 长上下文保留。历史裁剪改用 LangChain 近似 token 计数，接近 200k token 才裁剪，减少工具结果在长对话中被过早删除。
 - 教学周上下文。后端通过公开 JWCH 教学周接口后台预热缓存，不依赖教务工具；有缓存时会注入当前教学周。
 - 更自然的提醒。接近饭点时即使没有刚下课信号，也会生成轻量食堂提醒；缺少定位时模型会自然提示用户开启定位或说明所在校区/教学楼，而不是让用户点首页推荐按钮。
+- 饭点提醒不再依赖新鲜课表快照，即使教务摘要缓存为空或过期，也能在早餐、午餐、晚餐时段注入轻量提醒。
 - 推荐入口清理。删除旧的点击发送推荐 prompt UI 链路，包括未使用的首页推荐面板样式和追问 prompt 按钮；用户明确询问时的 `recommend_campus_context` 工具结果仍作为普通工具卡片展示。
+- 推荐卡片打磨。`recommend_campus_context` 工具调用现在显示中文场景/位置摘要，并把历史 JSON 载荷解析成专用推荐卡片，不再直接暴露原始工具 JSON。
 - 地点纠偏。移除不存在的教工活动中心公共学习区，保留位于教工活动中心的桃李园餐厅，并验证食堂/自习推荐不会返回旧的不准确地点。
 - 夜宵功能移除。移除夜宵(22:00-24:00)时段检测和上下文加权逻辑，食堂推荐现聚焦三个主要餐饮时段(早餐、午餐、晚餐)。
 - 新对话页微调。保留原有三组快捷问题，只让按钮略微宽松，并减少下方空白，同时避免首屏滚动。

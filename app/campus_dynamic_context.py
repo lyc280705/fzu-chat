@@ -538,16 +538,7 @@ def _build_course_event(snapshot: Dict[str, Any], now: datetime) -> Dict[str, An
             "expires_at": _now_utc() + timedelta(hours=3),
         }
     if meal != "就餐":
-        return {
-            "type": "meal_time",
-            "title": "饭点食堂提醒",
-            "summary": f"当前接近{meal}时段；若用户在问候、安排今天或校园生活，可在末尾轻声提醒可开启定位权限或说明所在校区/教学楼，再继续追问附近食堂。",
-            "priority": 64,
-            "digest": f"meal:{date.today().isoformat()}:{meal}",
-            "repeat": "cooldown",
-            "cooldown_seconds": 2 * 60 * 60,
-            "expires_at": _now_utc() + timedelta(hours=3),
-        }
+        return _build_meal_time_event(now, meal)
     if next_class:
         name = next_class.get("name") or "课程"
         return {
@@ -561,6 +552,22 @@ def _build_course_event(snapshot: Dict[str, Any], now: datetime) -> Dict[str, An
             "expires_at": _now_utc() + timedelta(hours=6),
         }
     return None
+
+
+def _build_meal_time_event(now: datetime, meal: str | None = None) -> Dict[str, Any] | None:
+    meal = meal or _meal_period(now)
+    if meal == "就餐":
+        return None
+    return {
+        "type": "meal_time",
+        "title": "饭点食堂提醒",
+        "summary": f"当前接近{meal}时段；若用户在问候、安排今天或校园生活，可在末尾轻声提醒可开启定位权限或说明所在校区/教学楼，再继续追问附近食堂。",
+        "priority": 64,
+        "digest": f"meal:{date.today().isoformat()}:{meal}",
+        "repeat": "cooldown",
+        "cooldown_seconds": 2 * 60 * 60,
+        "expires_at": _now_utc() + timedelta(hours=3),
+    }
 
 
 def _build_location_event(location: Dict[str, Any] | None, now: datetime) -> Dict[str, Any] | None:
@@ -619,10 +626,9 @@ def build_dynamic_campus_context(
             events.append(grade_event)
     if "selection" in snapshots:
         events.extend(_build_selection_events(snapshots["selection"]))
-    if "course" in snapshots:
-        course_event = _build_course_event(snapshots["course"], now)
-        if course_event:
-            events.append(course_event)
+    course_event = _build_course_event(snapshots.get("course", {}), now)
+    if course_event:
+        events.append(course_event)
     location_event = _build_location_event(location, now)
     if location_event:
         events.append(location_event)

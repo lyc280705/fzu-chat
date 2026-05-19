@@ -26,6 +26,7 @@ class CampusDynamicContextTests(unittest.TestCase):
                 "102304226",
                 message_content="你好",
                 is_first_user_turn=True,
+                now=datetime(2026, 5, 19, 15, 0),
             )
 
         self.assertEqual(context, "")
@@ -181,11 +182,26 @@ class CampusDynamicContextTests(unittest.TestCase):
                 "102304226",
                 message_content="你好",
                 is_first_user_turn=True,
-                now=datetime(2026, 5, 18, 10, 25),
+                now=datetime(2026, 5, 18, 8, 25),
             )
 
         self.assertIn("饭点食堂提醒", context)
+        self.assertIn("早餐", context)
         self.assertIn("开启定位权限", context)
+
+    def test_meal_period_can_inject_without_course_snapshot(self):
+        store = self.make_store()
+
+        with mock.patch.object(dynamic, "campus_dynamic_context_store", store):
+            context = dynamic.build_dynamic_campus_context(
+                "102304226",
+                message_content="你好",
+                is_first_user_turn=True,
+                now=datetime(2026, 5, 19, 8, 25),
+            )
+
+        self.assertIn("饭点食堂提醒", context)
+        self.assertIn("早餐", context)
 
     def test_grade_snapshot_keeps_digest_without_scores(self):
         class ClientStub:
