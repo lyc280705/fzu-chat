@@ -20,7 +20,7 @@ from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Re
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -72,6 +72,7 @@ CONVERSATION_CREATE_RATE_LIMIT_WINDOW_SECONDS = max(60, int(os.getenv("FZU_CHAT_
 CONVERSATION_CREATE_RATE_LIMIT_MAX_ATTEMPTS = max(1, int(os.getenv("FZU_CHAT_CONVERSATION_CREATE_RATE_LIMIT_ATTEMPTS", "20")))
 MESSAGE_RATE_LIMIT_WINDOW_SECONDS = max(10, int(os.getenv("FZU_CHAT_MESSAGE_RATE_LIMIT_WINDOW", "60")))
 MESSAGE_RATE_LIMIT_MAX_ATTEMPTS = max(1, int(os.getenv("FZU_CHAT_MESSAGE_RATE_LIMIT_ATTEMPTS", "12")))
+TOOL_HISTORY_MAX_CHARS = max(2000, int(os.getenv("FZU_CHAT_TOOL_HISTORY_MAX_CHARS", "120000")))
 API_NO_STORE = "no-store, no-cache, must-revalidate, max-age=0, private"
 BROWSER_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 CONTENT_SECURITY_POLICY = "; ".join(
@@ -267,7 +268,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="FZU Chat API", version="7.0.0", lifespan=lifespan)
+app = FastAPI(title="FZU Chat API", version="7.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
@@ -904,17 +905,109 @@ def extract_reasoning_content(message: Any) -> str:
     return str(value or "")
 
 
+def _truncate_tool_history_text(text: str) -> str:
+    if len(text) <= TOOL_HISTORY_MAX_CHARS:
+        return text
+    return f"{text[:TOOL_HISTORY_MAX_CHARS].rstrip()}\n\n[工具结果过长，历史上下文中已截断展示]"
+
+
+def _safe_json_for_history(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"), sort_keys=True)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _jsonable_for_storage(value: Any) -> Any:
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return str(value)
+
+
+def _tool_args_from_part(part: Dict[str, Any]) -> Dict[str, Any]:
+    args = part.get("args")
+    if isinstance(args, dict):
+        return args
+    if isinstance(args, str):
+        try:
+            parsed = json.loads(args)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    query = str(part.get("query") or "").strip()
+    if query:
+        return {"query": query}
+    return {"source": "persisted_conversation_tool_part"}
+
+
+def _tool_result_content_from_part(part: Dict[str, Any]) -> str:
+    raw_content = part.get("raw_content")
+    if isinstance(raw_content, str) and raw_content:
+        return _truncate_tool_history_text(raw_content)
+
+    payload: Dict[str, Any] = {"tool_name": part.get("tool_name") or "unknown_tool"}
+    query = str(part.get("query") or "").strip()
+    if query:
+        payload["query"] = query
+    data = part.get("data")
+    if data is not None:
+        payload["data"] = data
+    urls = part.get("urls")
+    if isinstance(urls, list) and urls:
+        payload["urls"] = urls
+    return _truncate_tool_history_text(_safe_json_for_history(payload))
+
+
+def _tool_history_messages_from_parts(parts: List[Dict[str, Any]]) -> List[Any]:
+    tool_calls: List[Dict[str, Any]] = []
+    tool_messages: List[ToolMessage] = []
+    for index, part in enumerate(parts):
+        if not isinstance(part, dict) or part.get("type") != "tool":
+            continue
+        tool_name = str(part.get("tool_name") or "unknown_tool").strip() or "unknown_tool"
+        tool_id = clean_tool_call_id(str(part.get("tool_id") or "")) or f"history_tool_{index}"
+        status = str(part.get("status") or "").strip()
+        if status == "running":
+            continue
+        tool_calls.append(
+            {
+                "name": tool_name,
+                "args": _tool_args_from_part(part),
+                "id": tool_id,
+            }
+        )
+        tool_messages.append(
+            ToolMessage(
+                content=_tool_result_content_from_part(part),
+                tool_call_id=tool_id,
+                name=tool_name,
+            )
+        )
+    if not tool_calls:
+        return []
+    return [AIMessage(content="", tool_calls=tool_calls), *tool_messages]
+
+
 def build_graph_input_messages(messages: List[Dict[str, Any]], model: str) -> List[Any]:
     history: List[Any] = []
     for msg in messages:
         role = msg.get("role")
         content = (msg.get("content") or "").strip()
-        if role not in ("user", "assistant") or not content or msg.get("is_error_fallback"):
+        parts = msg.get("parts") if isinstance(msg.get("parts"), list) else []
+        if role not in ("user", "assistant") or msg.get("is_error_fallback"):
             continue
         if role == "user":
+            if not content:
+                continue
             history.append(HumanMessage(content=content))
             continue
 
+        tool_history_messages = _tool_history_messages_from_parts(parts)
+        history.extend(tool_history_messages)
+        if not content:
+            continue
         reasoning_content = msg.get("reasoning_content")
         additional_kwargs: Dict[str, Any] = {}
         if reasoning_content is not None or model == KIMI_CHAT_MODEL:
@@ -1859,6 +1952,7 @@ async def create_message(
                             tp = {
                                 "type": "tool", "tool_id": ti, "tool_name": tn,
                                 "query": q, "status": "running", "status_label": lb["running"],
+                                "args": _jsonable_for_storage(a),
                                 "urls": [], "data": None,
                             }
                             pending[ti] = tp
@@ -1878,6 +1972,7 @@ async def create_message(
                         tp["status_label"] = lb["complete"]
                         rc = extract_text_content(getattr(mc, "content", ""))
                         af = getattr(mc, "artifact", None)
+                        tp["raw_content"] = rc
                         tp["urls"] = extract_urls(rc, af)
                         tp["data"] = extract_structured_data(tn, af, rc)
                         yield serialize_event("tool_result", tp)

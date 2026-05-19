@@ -3,6 +3,46 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.1] - 2026-05-19
+
+FZU-Chat v7.1 fixes persisted tool-result continuity across turns. Tool cards still render as before, but completed tool calls are now replayed into later model history as LangChain `AIMessage(tool_calls=...)` plus matching `ToolMessage` entries so follow-up answers can use the original tool evidence.
+
+### Highlights
+
+- Persisted tool history. Completed tool parts are reconstructed into model history instead of being reduced to the assistant's final text.
+- Original tool payload preservation. Newly streamed tool calls now store JSON-safe original `args` and raw `ToolMessage.content`; later turns prefer these original fields to avoid unnecessary context rewrites and cache churn.
+- Legacy compatibility. Older conversations that do not have raw tool payloads still fall back to stable structured tool context, without UI-only status labels.
+- Tool-only assistant turns are retained. Messages that contain completed tool results but little or no final assistant text are no longer dropped from the next model request.
+
+### Validation
+
+- `conda run -n langchain python -m compileall app`
+- `conda run -n langchain python -m unittest discover tests`
+- `cd frontend && npm run lint`
+- `cd frontend && npm run build`
+
+---
+
+## 福大灵犀 v7.1
+
+福大灵犀 v7.1 修复了工具调用结果跨轮对话不进入模型上下文的问题。界面上的工具卡片保持原有展示方式，但下一轮对话会把已完成的工具调用还原为 LangChain 的 `AIMessage(tool_calls=...)` 和对应 `ToolMessage`，让模型继续基于原始工具证据回答。
+
+### 版本亮点
+
+- 工具历史真正回灌。已完成的工具卡片不再只保留为最终助手文本，而是会被重建进后续模型历史。
+- 原始工具载荷保留。新产生的工具调用会保存 JSON 安全的原始 `args` 和原始 `ToolMessage.content`；后续轮次优先使用这些原始字段，减少不必要的上下文重写和缓存失效。
+- 兼容旧对话。历史对话没有原始工具载荷时，会退回到稳定结构化工具上下文，并避免把 UI 展示状态塞进模型上下文。
+- 工具结果独立保留。即使某条助手消息只有工具结果、没有明显最终文本，也不会在下一轮模型请求中被丢弃。
+
+### 验证
+
+- `conda run -n langchain python -m compileall app`
+- `conda run -n langchain python -m unittest discover tests`
+- `cd frontend && npm run lint`
+- `cd frontend && npm run build`
+
+---
+
 ## [v7.0] - 2026-05-18
 
 FZU-Chat v7.0 makes low-intrusion campus intelligence more cache-friendly and less UI-driven. Recommendation signals now live in a conversation-level runtime context snapshot, while the old prompt-button recommendation surface has been removed from the empty chat page and frontend remnants.
