@@ -43,6 +43,7 @@ const THINKING_STORAGE_KEY = 'fzu_thinking_enabled'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'fzu_sidebar_collapsed'
 const LOCATION_RECOMMENDATION_STORAGE_KEY = 'fzu_location_recommendations_enabled'
 const MESSAGE_MAX_LENGTH = 4000
+const LOCATION_CONTEXT_MAX_AGE_MS = 5 * 60 * 1000
 
 const TOOL_ICONS = {
   retrieve: '📚',
@@ -2158,7 +2159,7 @@ function PrivacyPolicyView({
         <div className="privacy-card privacy-card--location">
           <div>
             <h3>定位与智能提醒</h3>
-            <p>开启后，灵犀只会在你发送新对话时临时读取一次浏览器定位，用来判断是否适合在回复末尾轻声提醒附近食堂或自习地点。手机访问需要 HTTPS 域名才会弹出定位授权；经纬度不写入会话、长期记忆或服务端日志。</p>
+            <p>开启后，灵犀只会在你发送消息时临时读取浏览器定位，用来判断是否适合在回复末尾轻声提醒附近食堂或自习地点。手机访问需要 HTTPS 域名才会弹出定位授权；经纬度不写入会话、长期记忆或服务端日志。</p>
             <div className="privacy-location-status">
               <span>应用开关：{locationEnabled ? '已开启' : '未开启'}</span>
               <span>浏览器权限：{locationPermissionLabel(locationPermission)}</span>
@@ -2258,6 +2259,7 @@ function App() {
   const draftThinkingTimersRef = useRef(new Map())
   const conversationEventsRef = useRef(null)
   const copiedMessageTimerRef = useRef(null)
+  const recentLocationRef = useRef(null)
 
   const activeConv = useMemo(() => conversations.find((c) => c.id === activeId) ?? null, [activeId, conversations])
   const activeMsgs = useMemo(() => normMsgs(msgStore[activeId]?.messages ?? []), [activeId, msgStore])
@@ -2815,10 +2817,15 @@ function App() {
     setLocationPermissionBusy(true)
     setLocationPermissionMessage('')
     try {
-      await requestBrowserLocation()
+      const location = await requestBrowserLocation()
+      recentLocationRef.current = {
+        ...location,
+        timestamp: new Date().toISOString(),
+        capturedAt: Date.now(),
+      }
       setLocationPermission('granted')
       setLocationRecommendationEnabled(true)
-      setLocationPermissionMessage('已开启。之后你发送新对话时，灵犀会临时使用本次浏览器定位判断是否需要顺路提醒附近食堂或自习地点。')
+      setLocationPermissionMessage('已开启。之后你发送消息时，灵犀会临时使用浏览器定位判断是否需要顺路提醒附近食堂或自习地点。')
       void api('/api/recommendations/signal-refresh', { method: 'POST' }).catch(() => {})
     } catch (err) {
       const state = await queryGeolocationPermission()
@@ -2832,6 +2839,7 @@ function App() {
 
   const disableLocationRecommendations = useCallback(() => {
     setLocationRecommendationEnabled(false)
+    recentLocationRef.current = null
     setLocationPermissionMessage('已关闭定位智能提醒。浏览器授权状态可在浏览器站点设置中管理。')
   }, [])
 
@@ -3000,15 +3008,32 @@ function App() {
     }
   }, [activeId, setConversationStopPending, stopPendingConversations, streamingConversations])
 
-  const buildTransientMessageContext = useCallback(async ({ firstUserTurn = false } = {}) => {
-    if (!locationRecommendationEnabled || !firstUserTurn) return null
+  const buildTransientMessageContext = useCallback(async () => {
+    if (!locationRecommendationEnabled) return null
+    const cachedLocation = recentLocationRef.current
+    if (cachedLocation && Date.now() - cachedLocation.capturedAt <= LOCATION_CONTEXT_MAX_AGE_MS) {
+      return {
+        location: {
+          lat: cachedLocation.lat,
+          lng: cachedLocation.lng,
+          accuracy: cachedLocation.accuracy,
+          timestamp: cachedLocation.timestamp,
+        },
+      }
+    }
     try {
-      const location = await requestBrowserLocation({ timeout: 1200, maximumAge: 120000 })
+      const location = await requestBrowserLocation({ timeout: 5000, maximumAge: LOCATION_CONTEXT_MAX_AGE_MS })
+      const timestamp = new Date().toISOString()
+      recentLocationRef.current = {
+        ...location,
+        timestamp,
+        capturedAt: Date.now(),
+      }
       setLocationPermission('granted')
       return {
         location: {
           ...location,
-          timestamp: new Date().toISOString(),
+          timestamp,
         },
       }
     } catch (err) {
@@ -3046,7 +3071,6 @@ function App() {
       } else {
         cid = conv.id
       }
-      const firstUserTurn = !isRerun && (conv.messages ?? []).filter((message) => message.role === 'user').length === 0
       const timestamp = new Date().toISOString()
       let pendingMessages
       if (isRerun) {
@@ -3071,7 +3095,7 @@ function App() {
       setMsgStore((s) => ({ ...s, [cid]: pendingConversation }))
       updateSummary(makeConversationSummary(pendingConversation))
       setScreenReaderStatus(isRerun ? '正在重新生成回复。' : '消息已发送，正在生成回复。')
-      const transientContext = await buildTransientMessageContext({ firstUserTurn })
+      const transientContext = await buildTransientMessageContext()
       const requestBody = {
         content: prompt,
         model: selModel,

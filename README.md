@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v7.1](CHANGELOG.md)
+Current tagged release: [v7.2](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -122,7 +122,7 @@ docker compose up -d --build
 - `DELETE /api/conversations/{id}` – Delete conversation
 - `POST /api/conversations/{id}/messages` – Stream assistant response (SSE)
 - `POST /api/conversations/{id}/messages` with `rerun_message_id` – Edit or regenerate from an existing user message while preserving the SSE event format
-- `POST /api/conversations/{id}/messages` may include `context.location` – One-message transient location context for dynamic reminders, never persisted to chat history
+- `POST /api/conversations/{id}/messages` may include `context.location` – One-message transient location context for dynamic reminders and campus recommendations, never persisted to chat history
 - `POST /api/conversations/{id}/feedback` – Save feedback
 - `POST /api/conversations/{id}/memory-proposals/{tool_id}` – Confirm or dismiss a memory save/delete proposal
 

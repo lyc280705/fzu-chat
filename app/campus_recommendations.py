@@ -1047,6 +1047,20 @@ def _format_recommendation_markdown(data: Dict[str, Any]) -> str:
 def build_campus_recommendation_tools(request_context: Dict[str, Any] | None = None):
     request_context = request_context or {}
 
+    def _context_location() -> Dict[str, Any] | None:
+        value = request_context.get("message_location")
+        if not isinstance(value, dict):
+            return None
+        lat = _safe_float(value.get("lat"))
+        lng = _safe_float(value.get("lng"))
+        if lat is None or lng is None:
+            return None
+        location: Dict[str, Any] = {"lat": lat, "lng": lng}
+        accuracy = _safe_float(value.get("accuracy"))
+        if accuracy is not None:
+            location["accuracy"] = accuracy
+        return location
+
     @tool(response_format="content_and_artifact")
     def recommend_campus_context(
         scenario: str = "auto",
@@ -1065,7 +1079,7 @@ def build_campus_recommendation_tools(request_context: Dict[str, Any] | None = N
         """
         lat = _safe_float(latitude)
         lng = _safe_float(longitude)
-        location = {"lat": lat, "lng": lng} if lat is not None and lng is not None else None
+        location = {"lat": lat, "lng": lng} if lat is not None and lng is not None else _context_location()
         data = build_contextual_recommendation(
             scenario=scenario,
             location=location,

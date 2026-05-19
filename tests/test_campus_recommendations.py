@@ -16,6 +16,7 @@ from app.campus_recommendations import (
     _recent_and_next_class,
     _upcoming_exams,
     build_contextual_recommendation,
+    build_campus_recommendation_tools,
 )
 
 
@@ -69,6 +70,16 @@ class CampusRecommendationTests(unittest.TestCase):
         self.assertIn("未配置高德地图 Key", data["map_note"])
         self.assertNotIn("lat", data)
         self.assertNotIn("lng", data)
+
+    def test_recommendation_tool_uses_message_location_context(self):
+        tool = build_campus_recommendation_tools(
+            {"message_location": {"lat": 26.0609, "lng": 119.1907, "accuracy": 40}}
+        )[0]
+
+        content = tool.invoke({"scenario": "dining"})
+
+        self.assertIn("已使用你本次授权的浏览器定位", content)
+        self.assertNotIn("未获得定位", content)
 
     def test_amap_client_without_key_does_not_call_network(self):
         client = AMapClient(key="")

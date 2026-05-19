@@ -1835,6 +1835,8 @@ async def create_message(
     edu_ctx = _edu_context_from_session(user.user_id, sess)
     user_turn_count = sum(1 for message in conv.get("messages", []) if message.get("role") == "user")
     message_location = req.context.location.dict() if req.context and req.context.location else None
+    if message_location:
+        edu_ctx["message_location"] = message_location
     runtime_system_context = str(conv.get("runtime_context") or "").strip()
     if not runtime_system_context:
         warm_teaching_week_cache_async()

@@ -3,6 +3,48 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.2] - 2026-05-19
+
+FZU-Chat v7.2 fixes authorized browser location not reaching campus recommendation tool calls. When location reminders are enabled, each sent message can now carry a short-lived transient browser location context, and `recommend_campus_context` automatically uses that server-side context when the model does not pass explicit coordinates.
+
+### Highlights
+
+- Authorized location reaches recommendations. The backend now forwards the current message's transient `context.location` into the campus recommendation tool context.
+- Tool fallback repair. `recommend_campus_context` uses the per-message location context before falling back to the default campus-center estimate, so users no longer see "location not obtained" after granting permission.
+- Better follow-up behavior. The frontend now attaches transient location context to normal messages, not only the first message of a new conversation.
+- Short-lived location cache. A freshly granted browser location is reused for up to five minutes to reduce repeated browser prompts and avoid unnecessary send delays.
+- Privacy preserved. Coordinates remain transient per message; they are not written to conversation history, long-term memory, or model-visible prompt text.
+
+### Validation
+
+- `conda run -n langchain python -m compileall app`
+- `conda run -n langchain python -m unittest discover tests`
+- `cd frontend && npm run lint`
+- `cd frontend && npm run build`
+
+---
+
+## 福大灵犀 v7.2
+
+福大灵犀 v7.2 修复了“浏览器已经授权定位，但校园推荐仍提示未获得定位”的问题。开启定位提醒后，每次发送消息都可以携带短期临时浏览器定位；当模型没有显式传入经纬度时，`recommend_campus_context` 会自动使用这次消息的服务端定位上下文。
+
+### 版本亮点
+
+- 授权定位真正进入推荐工具。后端会把当前消息的临时 `context.location` 注入校园推荐工具上下文。
+- 修复工具兜底逻辑。`recommend_campus_context` 会先使用本次消息定位，再退回校区中心估算，避免授权后仍显示“未获得定位”。
+- 后续消息同样可用定位。前端不再只在新对话首条消息携带定位，而是在开启后对普通消息也临时附带定位上下文。
+- 短期定位缓存。刚授权获取的浏览器定位会在五分钟内复用，减少重复弹窗和发送延迟。
+- 隐私边界不变。经纬度仍只随本次消息临时使用，不写入会话历史、长期记忆，也不暴露到模型可见提示文本。
+
+### 验证
+
+- `conda run -n langchain python -m compileall app`
+- `conda run -n langchain python -m unittest discover tests`
+- `cd frontend && npm run lint`
+- `cd frontend && npm run build`
+
+---
+
 ## [v7.1] - 2026-05-19
 
 FZU-Chat v7.1 fixes persisted tool-result continuity across turns. Tool cards still render as before, but completed tool calls are now replayed into later model history as LangChain `AIMessage(tool_calls=...)` plus matching `ToolMessage` entries so follow-up answers can use the original tool evidence.

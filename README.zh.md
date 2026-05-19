@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-当前已标记版本：[v7.0](CHANGELOG.md)
+当前已标记版本：[v7.2](CHANGELOG.md)
 
 版本记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -122,7 +122,7 @@ docker compose up -d --build
 - `DELETE /api/conversations/{id}` – 删除对话
 - `POST /api/conversations/{id}/messages` – 流式生成回复（SSE）
 - `POST /api/conversations/{id}/messages` 携带 `rerun_message_id` – 基于既有用户消息修改或重新生成，SSE 事件格式保持兼容
-- `POST /api/conversations/{id}/messages` 可携带 `context.location` – 本次消息临时定位上下文，仅用于动态提醒判断，不写入历史
+- `POST /api/conversations/{id}/messages` 可携带 `context.location` – 本次消息临时定位上下文，用于动态提醒和校园推荐，不写入历史
 - `POST /api/conversations/{id}/feedback` – 提交反馈
 - `POST /api/conversations/{id}/memory-proposals/{tool_id}` – 确认或忽略记忆保存/删除建议
 
