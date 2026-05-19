@@ -3151,7 +3151,7 @@ function App() {
     setInput(text)
     setError('')
     setFailedPrompt(null)
-    setScreenReaderStatus('已进入消息修改模式，发送后会重新生成后续回复。')
+    setScreenReaderStatus('已进入消息修改模式，发送后会覆盖这条问题之后的所有内容。')
     requestAnimationFrame(() => composerRef.current?.focus())
   }, [activeId, streamingConversations])
 
@@ -3515,8 +3515,8 @@ function App() {
                             className="message-action-btn"
                             onClick={() => startEditMessage(m)}
                             disabled={isActiveConversationStreaming}
-                            aria-label="修改这条消息并重新发送"
-                            title="修改这条消息并重新生成后续回复"
+                            aria-label="修改这条消息并覆盖之后的所有内容"
+                            title="修改这条消息并覆盖之后的所有内容"
                           >
                             <Pencil size={14} aria-hidden="true" />
                           </button>
@@ -3534,7 +3534,7 @@ function App() {
                             <IconButton
                               label={m.feedback === 'down' ? '取消负面反馈' : '这条回复需要改进'}
                               disabled={fbPending.includes(m.id)}
-                              className={m.feedback === 'down' ? 'fb-btn fb-btn--on' : 'fb-btn'}
+                              className={m.feedback === 'down' ? 'fb-btn fb-btn--on fb-btn--down-on' : 'fb-btn'}
                               onClick={() => void handleFeedback(m.id, 'down')}
                             >
                               <ThumbsDown size={15} aria-hidden="true" />

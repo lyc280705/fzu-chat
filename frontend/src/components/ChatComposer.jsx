@@ -57,7 +57,7 @@ export function ChatComposer({
       {editingMessage && (
         <div className="composer-editing" role="status" aria-live="polite">
           <Pencil size={15} aria-hidden="true" />
-          <span>正在修改已发送的问题</span>
+          <span>正在修改已发送的问题，发送后会覆盖这条问题之后的所有内容</span>
           <button type="button" onClick={onCancelEdit} aria-label="取消修改" title="取消修改">
             <X size={15} aria-hidden="true" />
           </button>
@@ -70,7 +70,7 @@ export function ChatComposer({
           value={input}
           onChange={(event) => onChange(event.target.value)}
           maxLength={maxLength + 1}
-          placeholder={editingMessage ? '修改这条问题，发送后将重新生成回复' : '输入问题，按 Enter 发送，Shift+Enter 换行'}
+          placeholder={editingMessage ? '修改这条问题，发送后会覆盖之后的所有内容' : '输入问题，按 Enter 发送，Shift+Enter 换行'}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault()
@@ -90,8 +90,8 @@ export function ChatComposer({
           disabled={isStreaming ? isStopPending : disabled}
           onClick={isStreaming ? onStop : undefined}
           aria-describedby={statusText ? 'composer-runtime-status' : undefined}
-          aria-label={isStreaming ? '停止响应' : editingMessage ? '提交修改并重新生成' : '发送消息'}
-          title={isStreaming ? '停止响应' : editingMessage ? '提交修改并重新生成' : '发送消息'}
+          aria-label={isStreaming ? '停止响应' : editingMessage ? '提交修改并覆盖之后的所有内容' : '发送消息'}
+          title={isStreaming ? '停止响应' : editingMessage ? '提交修改并覆盖之后的所有内容' : '发送消息'}
         >
           {isStreaming ? <Pause size={18} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
         </button>

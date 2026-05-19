@@ -13,6 +13,7 @@ FZU-Chat v7.1 fixes persisted tool-result continuity across turns. Tool cards st
 - Original tool payload preservation. Newly streamed tool calls now store JSON-safe original `args` and raw `ToolMessage.content`; later turns prefer these original fields to avoid unnecessary context rewrites and cache churn.
 - Legacy compatibility. Older conversations that do not have raw tool payloads still fall back to stable structured tool context, without UI-only status labels.
 - Tool-only assistant turns are retained. Messages that contain completed tool results but little or no final assistant text are no longer dropped from the next model request.
+- Editing clarity and feedback polish. Editing a sent question now clearly warns that submitting it will replace everything after that question, and negative feedback uses a red selected state.
 
 ### Validation
 
@@ -33,6 +34,7 @@ FZU-Chat v7.1 fixes persisted tool-result continuity across turns. Tool cards st
 - 原始工具载荷保留。新产生的工具调用会保存 JSON 安全的原始 `args` 和原始 `ToolMessage.content`；后续轮次优先使用这些原始字段，减少不必要的上下文重写和缓存失效。
 - 兼容旧对话。历史对话没有原始工具载荷时，会退回到稳定结构化工具上下文，并避免把 UI 展示状态塞进模型上下文。
 - 工具结果独立保留。即使某条助手消息只有工具结果、没有明显最终文本，也不会在下一轮模型请求中被丢弃。
+- 修改问题提示更明确。修改已发送问题时会明确提示“发送后会覆盖这条问题之后的所有内容”，点踩选中态改为红色。
 
 ### 验证
 
