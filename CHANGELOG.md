@@ -3,6 +3,44 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.3] - 2026-05-20
+
+FZU-Chat v7.3 improves campus route recommendations and fixes a time-zone bug in dynamic meal reminders. Users can now choose whether AMap routes should use walking or bicycling, and that preference lives with location reminders instead of the global sidebar.
+
+### Highlights
+
+- User-selected AMap route mode. Campus dining and study recommendations now support walking and bicycling route estimates, using the user's explicit preference by default.
+- Location settings placement. The walking/bicycling preference is now managed inside Privacy & Data -> Location and Smart Reminders, next to the location toggle it affects.
+- Ten-minute location reuse. Browser location is reused for 10 minutes, reducing repeated permission prompts while keeping the transient-location window shorter.
+- Correct local meal reminders. Dynamic campus reminders now evaluate meal periods in Asia/Shanghai time, so UTC-hosted servers no longer treat Beijing evening as breakfast.
+- Duplicate-place guard. AMap supplemental places are filtered against the verified campus place library so the same campus spot is not recommended twice under slightly different names.
+
+### Validation
+
+- `conda run -n langchain python -m pytest tests/test_campus_recommendations.py tests/test_campus_dynamic_context.py tests/test_tool_history_context.py`
+- `npm --prefix frontend run build`
+
+---
+
+## 福大灵犀 v7.3
+
+福大灵犀 v7.3 优化了校园路线推荐，并修复了动态饭点提醒的时区误判。用户现在可以明确选择高德路线按步行还是骑行计算，这个偏好也移动到了“隐私与数据”的“定位与智能提醒”区域中。
+
+### 版本亮点
+
+- 用户可选择高德路线方式。食堂和自习推荐支持步行、骑行两种路线估算，未在对话中另行说明时会使用用户选择的偏好。
+- 偏好入口归位。步行/骑行选择移动到“隐私与数据 -> 定位与智能提醒”，和定位开关放在同一个设置区域。
+- 定位缓存改为 10 分钟。浏览器定位会在 10 分钟内复用，减少重复授权弹窗，同时缩短临时定位有效窗口。
+- 修复本地饭点判断。动态校园提醒统一按 Asia/Shanghai 判断饭点，避免 UTC 服务器把北京时间傍晚误判为早餐。
+- 避免重复地点。高德补充地点会与已验证的校内地点库去重，避免同一校园地点换个名字重复推荐。
+
+### 验证
+
+- `conda run -n langchain python -m pytest tests/test_campus_recommendations.py tests/test_campus_dynamic_context.py tests/test_tool_history_context.py`
+- `npm --prefix frontend run build`
+
+---
+
 ## [v7.2] - 2026-05-19
 
 FZU-Chat v7.2 fixes authorized browser location not reaching campus recommendation tool calls. When location reminders are enabled, each sent message can now carry a short-lived transient browser location context, and `recommend_campus_context` automatically uses that server-side context when the model does not pass explicit coordinates.

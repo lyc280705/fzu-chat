@@ -46,7 +46,7 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = 'fzu_sidebar_collapsed'
 const LOCATION_RECOMMENDATION_STORAGE_KEY = 'fzu_location_recommendations_enabled'
 const LOCATION_TRAVEL_MODE_STORAGE_KEY = 'fzu_location_travel_mode'
 const MESSAGE_MAX_LENGTH = 4000
-const LOCATION_CONTEXT_CACHE_MS = 30 * 60 * 1000
+const LOCATION_CONTEXT_CACHE_MS = 10 * 60 * 1000
 const LOCATION_CONTEXT_RETRY_COOLDOWN_MS = 10 * 60 * 1000
 
 const TOOL_ICONS = {
@@ -2133,11 +2133,13 @@ function PrivacyPolicyView({
   locationPermission,
   locationBusy,
   locationMessage,
+  travelMode,
   onReload,
   onReset,
   onEnableLocation,
   onDisableLocation,
   onRefreshLocationPermission,
+  onTravelModeChange,
   error,
 }) {
   const stats = [
@@ -2177,12 +2179,40 @@ function PrivacyPolicyView({
         <div className="privacy-card privacy-card--location">
           <div>
             <h3>定位与智能提醒</h3>
-            <p>开启后，灵犀会在你发送消息时复用短期临时浏览器定位，用来判断是否适合在回复末尾轻声提醒附近食堂或自习地点，并避免短时间内反复触发授权。手机访问需要 HTTPS 域名才会弹出定位授权；经纬度不写入会话、长期记忆或服务端日志。</p>
+            <p>开启后，灵犀会在你发送消息时复用 10 分钟内的临时浏览器定位，用来判断是否适合在回复末尾轻声提醒附近食堂或自习地点，并避免短时间内反复触发授权。手机访问需要 HTTPS 域名才会弹出定位授权；经纬度不写入会话、长期记忆或服务端日志。</p>
             <div className="privacy-location-status">
               <span>应用开关：{locationEnabled ? '已开启' : '未开启'}</span>
               <span>浏览器权限：{locationPermissionLabel(locationPermission)}</span>
             </div>
             {locationMessage && <div className="privacy-location-message">{locationMessage}</div>}
+            <div className="travel-mode-panel">
+              <div className="thinking-panel__copy">
+                <span className="thinking-panel__title">高德路线偏好</span>
+                <span className="thinking-panel__hint">食堂和自习推荐会按此偏好计算路线</span>
+              </div>
+              <div className="travel-mode-switch" role="radiogroup" aria-label="高德路线出行偏好">
+                <button
+                  type="button"
+                  className={`travel-mode-btn ${travelMode === 'walking' ? 'travel-mode-btn--active' : ''}`}
+                  role="radio"
+                  aria-checked={travelMode === 'walking'}
+                  onClick={() => onTravelModeChange('walking')}
+                >
+                  <Footprints size={14} aria-hidden="true" />
+                  步行
+                </button>
+                <button
+                  type="button"
+                  className={`travel-mode-btn ${travelMode === 'bicycling' ? 'travel-mode-btn--active' : ''}`}
+                  role="radio"
+                  aria-checked={travelMode === 'bicycling'}
+                  onClick={() => onTravelModeChange('bicycling')}
+                >
+                  <Bike size={14} aria-hidden="true" />
+                  骑行
+                </button>
+              </div>
+            </div>
           </div>
           <div className="privacy-card__actions">
             {locationEnabled ? (
@@ -2855,7 +2885,7 @@ function App() {
       lastLocationFailureAtRef.current = 0
       setLocationPermission('granted')
       setLocationRecommendationEnabled(true)
-      setLocationPermissionMessage('已开启。之后你发送消息时，灵犀会复用短期浏览器定位判断是否需要顺路提醒附近食堂或自习地点，不会短时间反复触发授权。')
+      setLocationPermissionMessage('已开启。之后你发送消息时，灵犀会复用 10 分钟内的浏览器定位判断是否需要顺路提醒附近食堂或自习地点，不会短时间反复触发授权。')
       void api('/api/recommendations/signal-refresh', { method: 'POST' }).catch(() => {})
     } catch (err) {
       lastLocationFailureAtRef.current = Date.now()
@@ -3360,34 +3390,6 @@ function App() {
               </span>
             </button>
           </div>
-          <div className="travel-mode-panel">
-            <div className="thinking-panel__copy">
-              <span className="thinking-panel__title">高德路线</span>
-              <span className="thinking-panel__hint">推荐食堂和自习地点时按此偏好估算</span>
-            </div>
-            <div className="travel-mode-switch" role="radiogroup" aria-label="高德路线出行偏好">
-              <button
-                type="button"
-                className={`travel-mode-btn ${campusTravelMode === 'walking' ? 'travel-mode-btn--active' : ''}`}
-                role="radio"
-                aria-checked={campusTravelMode === 'walking'}
-                onClick={() => setCampusTravelMode('walking')}
-              >
-                <Footprints size={14} aria-hidden="true" />
-                步行
-              </button>
-              <button
-                type="button"
-                className={`travel-mode-btn ${campusTravelMode === 'bicycling' ? 'travel-mode-btn--active' : ''}`}
-                role="radio"
-                aria-checked={campusTravelMode === 'bicycling'}
-                onClick={() => setCampusTravelMode('bicycling')}
-              >
-                <Bike size={14} aria-hidden="true" />
-                骑行
-              </button>
-            </div>
-          </div>
         </div>
 
         <div className="sidebar-convos">
@@ -3496,11 +3498,13 @@ function App() {
             locationPermission={locationPermission}
             locationBusy={locationPermissionBusy}
             locationMessage={locationPermissionMessage}
+            travelMode={campusTravelMode}
             onReload={() => void loadUserDataSummary()}
             onReset={() => setResetDialogOpen(true)}
             onEnableLocation={() => void enableLocationRecommendations()}
             onDisableLocation={disableLocationRecommendations}
             onRefreshLocationPermission={() => void refreshLocationPermission()}
+            onTravelModeChange={setCampusTravelMode}
             error={error}
           />
         ) : (

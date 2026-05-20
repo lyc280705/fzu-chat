@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import hashlib
 import json
 import logging
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 STORAGE_DIR = BASE_DIR / "storage"
 DYNAMIC_CONTEXT_DB_PATH = STORAGE_DIR / "campus_dynamic_context.sqlite"
+LOCAL_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 COURSE_SNAPSHOT_TTL = timedelta(minutes=30)
 EXAM_SNAPSHOT_TTL = timedelta(minutes=30)
@@ -46,14 +48,20 @@ def _now_utc() -> datetime:
 
 
 def _now_local() -> datetime:
-    return datetime.now()
+    return datetime.now(LOCAL_TIMEZONE).replace(tzinfo=None)
+
+
+def _coerce_local_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(LOCAL_TIMEZONE).replace(tzinfo=None)
 
 
 def _as_utc(value: datetime | None = None) -> datetime:
     if value is None:
         return _now_utc()
     if value.tzinfo is None:
-        return value.astimezone(timezone.utc)
+        value = value.replace(tzinfo=LOCAL_TIMEZONE)
     return value.astimezone(timezone.utc)
 
 
@@ -532,7 +540,7 @@ def _build_course_event(snapshot: Dict[str, Any], now: datetime) -> Dict[str, An
             "title": "刚下课顺路提醒",
             "summary": f"用户近期刚结束《{name}》{location}，当前接近{meal}时段；若回答自然，可在末尾轻声提醒可追问附近食堂。",
             "priority": 72,
-            "digest": f"recent:{date.today().isoformat()}:{payload.get('digest')}",
+            "digest": f"recent:{now.date().isoformat()}:{payload.get('digest')}",
             "repeat": "cooldown",
             "cooldown_seconds": 2 * 60 * 60,
             "expires_at": _now_utc() + timedelta(hours=3),
@@ -546,7 +554,7 @@ def _build_course_event(snapshot: Dict[str, Any], now: datetime) -> Dict[str, An
             "title": "下一节课衔接提醒",
             "summary": f"用户今天接下来有《{name}》；若用户在规划时间或地点，可优先提醒不要绕远。",
             "priority": 58,
-            "digest": f"next:{date.today().isoformat()}:{payload.get('digest')}",
+            "digest": f"next:{now.date().isoformat()}:{payload.get('digest')}",
             "repeat": "cooldown",
             "cooldown_seconds": 2 * 60 * 60,
             "expires_at": _now_utc() + timedelta(hours=6),
@@ -563,7 +571,7 @@ def _build_meal_time_event(now: datetime, meal: str | None = None) -> Dict[str, 
         "title": "饭点食堂提醒",
         "summary": f"当前接近{meal}时段；若用户在问候、安排今天或校园生活，可在末尾轻声提醒可开启定位权限或说明所在校区/教学楼，再继续追问附近食堂。",
         "priority": 64,
-        "digest": f"meal:{date.today().isoformat()}:{meal}",
+        "digest": f"meal:{now.date().isoformat()}:{meal}",
         "repeat": "cooldown",
         "cooldown_seconds": 2 * 60 * 60,
         "expires_at": _now_utc() + timedelta(hours=3),
@@ -587,7 +595,7 @@ def _build_location_event(location: Dict[str, Any] | None, now: datetime) -> Dic
         "title": "本次定位可用",
         "summary": f"本次消息携带浏览器临时定位，可在用户需要校园去处时提醒能按当前位置给出{meal}或自习建议；不要复述经纬度。",
         "priority": 54,
-        "digest": f"location:{date.today().isoformat()}:{now.hour}:{meal}",
+        "digest": f"location:{now.date().isoformat()}:{now.hour}:{meal}",
         "repeat": "cooldown",
         "cooldown_seconds": 2 * 60 * 60,
         "expires_at": _now_utc() + timedelta(hours=2),
@@ -605,7 +613,7 @@ def build_dynamic_campus_context(
     now: datetime | None = None,
 ) -> str:
     started = time.monotonic()
-    now = now or _now_local()
+    now = _coerce_local_datetime(now or _now_local())
     if not user_id:
         return ""
     if not is_first_user_turn and not is_dynamic_context_request(message_content):

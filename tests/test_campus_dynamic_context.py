@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 import time
@@ -202,6 +202,35 @@ class CampusDynamicContextTests(unittest.TestCase):
 
         self.assertIn("饭点食堂提醒", context)
         self.assertIn("早餐", context)
+
+    def test_utc_server_time_does_not_emit_wrong_breakfast_hint(self):
+        store = self.make_store()
+
+        with mock.patch.object(dynamic, "campus_dynamic_context_store", store):
+            context = dynamic.build_dynamic_campus_context(
+                "102304226",
+                message_content="你好",
+                is_first_user_turn=True,
+                now=datetime(2026, 5, 20, 8, 50, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(context, "")
+        self.assertNotIn("早餐", context)
+
+    def test_utc_server_time_is_converted_to_beijing_dinner_period(self):
+        store = self.make_store()
+
+        with mock.patch.object(dynamic, "campus_dynamic_context_store", store):
+            context = dynamic.build_dynamic_campus_context(
+                "102304226",
+                message_content="你好",
+                is_first_user_turn=True,
+                now=datetime(2026, 5, 20, 9, 10, tzinfo=timezone.utc),
+            )
+
+        self.assertIn("饭点食堂提醒", context)
+        self.assertIn("晚餐", context)
+        self.assertNotIn("早餐", context)
 
     def test_grade_snapshot_keeps_digest_without_scores(self):
         class ClientStub:
