@@ -713,10 +713,18 @@ if not BOCHA_API_KEY:
     raise ValueError("Bocha API密钥未设置")
 
 
-def build_thinking_config(thinking_enabled: bool | None) -> Dict[str, Any]:
+def is_qwen_model(model_name: str) -> bool:
+    return model_name.lower().startswith("qwen")
+
+
+def build_thinking_config(thinking_enabled: bool | None, model_name: str | None = None) -> Dict[str, Any]:
     if thinking_enabled is None:
         return {}
-    return {"thinking": {"type": "enabled" if thinking_enabled else "disabled"}}
+    thinking_type = "enabled" if thinking_enabled else "disabled"
+    config: Dict[str, Any] = {"thinking": {"type": thinking_type}}
+    if model_name and is_qwen_model(model_name):
+        config["chat_template_kwargs"] = {"enable_thinking": thinking_enabled}
+    return config
 
 
 def build_chat_llm(
@@ -727,6 +735,7 @@ def build_chat_llm(
     stop: List[str] | None = None,
     thinking_enabled: bool | None = None,
     thinking_type: str | None = None,
+    max_tokens: int | None = None,
 ) -> ChatOpenAI:
     normalized_model = model_name if model_name in CHAT_MODEL_OPTIONS or model_name == TITLE_SUMMARY_MODEL else DEFAULT_CHAT_MODEL
     init_kwargs: Dict[str, Any] = {
@@ -738,10 +747,14 @@ def build_chat_llm(
     }
     if stop:
         init_kwargs["stop_sequences"] = stop
+    if max_tokens is not None:
+        init_kwargs["max_tokens"] = max_tokens
 
-    extra_body = build_thinking_config(thinking_enabled)
+    extra_body = build_thinking_config(thinking_enabled, normalized_model)
     if thinking_type:
         extra_body["thinking"] = {"type": thinking_type}
+        if is_qwen_model(normalized_model):
+            extra_body["chat_template_kwargs"] = {"enable_thinking": thinking_type == "enabled"}
     if extra_body:
         init_kwargs["extra_body"] = extra_body
     return ChatOpenAI(**init_kwargs)
@@ -1069,6 +1082,6 @@ summary_prompt = ChatPromptTemplate.from_messages(
 )
 summary_chain = (
     summary_prompt
-    | build_chat_llm(TITLE_SUMMARY_MODEL, temperature=0.1, streaming=False, thinking_type="disabled")
+    | build_chat_llm(TITLE_SUMMARY_MODEL, temperature=0.1, streaming=False, thinking_type="disabled", max_tokens=40)
     | StrOutputParser()
 )
