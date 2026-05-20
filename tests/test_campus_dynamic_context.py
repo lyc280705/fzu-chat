@@ -280,6 +280,8 @@ class CampusDynamicContextTests(unittest.TestCase):
             )
 
         self.assertIn("本次定位可用", context)
+        self.assertNotIn("开启定位权限", context)
+        self.assertNotIn("说明所在校区", context)
         rows = store.conn.execute("SELECT event_type, digest, last_injected_at, cooldown_until, expires_at FROM reminder_state").fetchall()
         persisted_text = " ".join(" ".join(str(value) for value in row) for row in rows)
         self.assertNotIn("26.060123", persisted_text)

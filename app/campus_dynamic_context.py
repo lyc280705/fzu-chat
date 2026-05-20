@@ -99,6 +99,16 @@ def _safe_int(value: Any, default: int = 0) -> int:
     return number
 
 
+def _has_valid_location(location: Dict[str, Any] | None) -> bool:
+    if not location:
+        return False
+    lat = location.get("lat")
+    lng = location.get("lng")
+    if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
+        return False
+    return math.isfinite(float(lat)) and math.isfinite(float(lng))
+
+
 class CampusDynamicContextStore:
     def __init__(self, db_path: Path):
         self.db_path = db_path
@@ -579,13 +589,7 @@ def _build_meal_time_event(now: datetime, meal: str | None = None) -> Dict[str, 
 
 
 def _build_location_event(location: Dict[str, Any] | None, now: datetime) -> Dict[str, Any] | None:
-    if not location:
-        return None
-    lat = location.get("lat")
-    lng = location.get("lng")
-    if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
-        return None
-    if not math.isfinite(float(lat)) or not math.isfinite(float(lng)):
+    if not _has_valid_location(location):
         return None
     meal = _meal_period(now)
     if meal == "就餐":
@@ -634,10 +638,10 @@ def build_dynamic_campus_context(
             events.append(grade_event)
     if "selection" in snapshots:
         events.extend(_build_selection_events(snapshots["selection"]))
-    course_event = _build_course_event(snapshots.get("course", {}), now)
-    if course_event:
-        events.append(course_event)
     location_event = _build_location_event(location, now)
+    course_event = _build_course_event(snapshots.get("course", {}), now)
+    if course_event and not (location_event and course_event.get("type") == "meal_time"):
+        events.append(course_event)
     if location_event:
         events.append(location_event)
 
