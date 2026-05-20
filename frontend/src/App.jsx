@@ -43,7 +43,8 @@ const THINKING_STORAGE_KEY = 'fzu_thinking_enabled'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'fzu_sidebar_collapsed'
 const LOCATION_RECOMMENDATION_STORAGE_KEY = 'fzu_location_recommendations_enabled'
 const MESSAGE_MAX_LENGTH = 4000
-const LOCATION_CONTEXT_MAX_AGE_MS = 5 * 60 * 1000
+const LOCATION_CONTEXT_CACHE_MS = 30 * 60 * 1000
+const LOCATION_CONTEXT_RETRY_COOLDOWN_MS = 10 * 60 * 1000
 
 const TOOL_ICONS = {
   retrieve: '📚',
@@ -2159,7 +2160,7 @@ function PrivacyPolicyView({
         <div className="privacy-card privacy-card--location">
           <div>
             <h3>定位与智能提醒</h3>
-            <p>开启后，灵犀只会在你发送消息时临时读取浏览器定位，用来判断是否适合在回复末尾轻声提醒附近食堂或自习地点。手机访问需要 HTTPS 域名才会弹出定位授权；经纬度不写入会话、长期记忆或服务端日志。</p>
+            <p>开启后，灵犀会在你发送消息时复用短期临时浏览器定位，用来判断是否适合在回复末尾轻声提醒附近食堂或自习地点，并避免短时间内反复触发授权。手机访问需要 HTTPS 域名才会弹出定位授权；经纬度不写入会话、长期记忆或服务端日志。</p>
             <div className="privacy-location-status">
               <span>应用开关：{locationEnabled ? '已开启' : '未开启'}</span>
               <span>浏览器权限：{locationPermissionLabel(locationPermission)}</span>
@@ -2260,6 +2261,7 @@ function App() {
   const conversationEventsRef = useRef(null)
   const copiedMessageTimerRef = useRef(null)
   const recentLocationRef = useRef(null)
+  const lastLocationFailureAtRef = useRef(0)
 
   const activeConv = useMemo(() => conversations.find((c) => c.id === activeId) ?? null, [activeId, conversations])
   const activeMsgs = useMemo(() => normMsgs(msgStore[activeId]?.messages ?? []), [activeId, msgStore])
@@ -2823,11 +2825,13 @@ function App() {
         timestamp: new Date().toISOString(),
         capturedAt: Date.now(),
       }
+      lastLocationFailureAtRef.current = 0
       setLocationPermission('granted')
       setLocationRecommendationEnabled(true)
-      setLocationPermissionMessage('已开启。之后你发送消息时，灵犀会临时使用浏览器定位判断是否需要顺路提醒附近食堂或自习地点。')
+      setLocationPermissionMessage('已开启。之后你发送消息时，灵犀会复用短期浏览器定位判断是否需要顺路提醒附近食堂或自习地点，不会短时间反复触发授权。')
       void api('/api/recommendations/signal-refresh', { method: 'POST' }).catch(() => {})
     } catch (err) {
+      lastLocationFailureAtRef.current = Date.now()
       const state = await queryGeolocationPermission()
       setLocationPermission(state)
       setLocationRecommendationEnabled(false)
@@ -2840,6 +2844,7 @@ function App() {
   const disableLocationRecommendations = useCallback(() => {
     setLocationRecommendationEnabled(false)
     recentLocationRef.current = null
+    lastLocationFailureAtRef.current = 0
     setLocationPermissionMessage('已关闭定位智能提醒。浏览器授权状态可在浏览器站点设置中管理。')
   }, [])
 
@@ -3010,8 +3015,9 @@ function App() {
 
   const buildTransientMessageContext = useCallback(async () => {
     if (!locationRecommendationEnabled) return null
+    const now = Date.now()
     const cachedLocation = recentLocationRef.current
-    if (cachedLocation && Date.now() - cachedLocation.capturedAt <= LOCATION_CONTEXT_MAX_AGE_MS) {
+    if (cachedLocation && now - cachedLocation.capturedAt <= LOCATION_CONTEXT_CACHE_MS) {
       return {
         location: {
           lat: cachedLocation.lat,
@@ -3021,14 +3027,18 @@ function App() {
         },
       }
     }
+    if (lastLocationFailureAtRef.current && now - lastLocationFailureAtRef.current < LOCATION_CONTEXT_RETRY_COOLDOWN_MS) {
+      return null
+    }
     try {
-      const location = await requestBrowserLocation({ timeout: 5000, maximumAge: LOCATION_CONTEXT_MAX_AGE_MS })
+      const location = await requestBrowserLocation({ timeout: 5000, maximumAge: LOCATION_CONTEXT_CACHE_MS })
       const timestamp = new Date().toISOString()
       recentLocationRef.current = {
         ...location,
         timestamp,
         capturedAt: Date.now(),
       }
+      lastLocationFailureAtRef.current = 0
       setLocationPermission('granted')
       return {
         location: {
@@ -3037,6 +3047,7 @@ function App() {
         },
       }
     } catch (err) {
+      lastLocationFailureAtRef.current = Date.now()
       const state = await queryGeolocationPermission()
       setLocationPermission(state)
       setLocationPermissionMessage(refineGeolocationErrorMessage(err.message, state))
