@@ -6,6 +6,7 @@ from unittest import mock
 
 from app.campus_recommendations import (
     AMapClient,
+    AMAP_BICYCLING_URL,
     CAMPUS_POIS,
     _choose_scenario,
     _amap_error_message,
@@ -81,6 +82,15 @@ class CampusRecommendationTests(unittest.TestCase):
         self.assertIn("已使用你本次授权的浏览器定位", content)
         self.assertNotIn("未获得定位", content)
 
+    def test_recommendation_tool_defaults_to_user_selected_travel_mode(self):
+        tool = build_campus_recommendation_tools({"travel_mode": "bicycling"})[0]
+
+        with mock.patch("app.campus_recommendations._read_amap_key", return_value=""):
+            content = tool.invoke({"scenario": "dining", "manual_location_id": "qishan_center"})
+
+        self.assertIn("| 地点 | 骑行 | 推荐理由 |", content)
+        self.assertIn("估算骑行时间", content)
+
     def test_amap_client_without_key_does_not_call_network(self):
         client = AMapClient(key="")
 
@@ -93,12 +103,33 @@ class CampusRecommendationTests(unittest.TestCase):
 
         self.assertEqual(message, "高德服务访问过于频繁或额度暂时受限")
 
-    def test_recommendation_limits_walking_route_requests(self):
-        route_result = {"distance_m": 600, "duration_min": 8, "source": "amap"}
+    def test_amap_client_bicycling_route_uses_v4_payload_shape(self):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "errcode": 0,
+                    "errmsg": "OK",
+                    "data": {"paths": [{"distance": "480", "duration": "180"}]},
+                }
+
+        with mock.patch("app.campus_recommendations.requests.get", return_value=FakeResponse()) as get_mock:
+            client = AMapClient(key="valid-key")
+            result = client.route({"lat": 26.0, "lng": 119.0}, {"lat": 26.1, "lng": 119.1}, "bicycling")
+
+        self.assertEqual(get_mock.call_args.args[0], AMAP_BICYCLING_URL)
+        self.assertEqual(result["distance_m"], 480)
+        self.assertEqual(result["duration_min"], 3)
+        self.assertEqual(result["mode"], "bicycling")
+
+    def test_recommendation_limits_route_requests(self):
+        route_result = {"distance_m": 600, "duration_min": 8, "source": "amap", "mode": "walking", "mode_label": "步行"}
         with (
             mock.patch("app.campus_recommendations._read_amap_key", return_value="valid-key"),
             mock.patch.object(AMapClient, "around", return_value=[]),
-            mock.patch.object(AMapClient, "walking_route", return_value=route_result) as route_mock,
+            mock.patch.object(AMapClient, "route", return_value=route_result) as route_mock,
         ):
             data = build_contextual_recommendation(
                 scenario="dining",
@@ -108,6 +139,70 @@ class CampusRecommendationTests(unittest.TestCase):
 
         self.assertEqual(data["map_status"], "amap")
         self.assertLessEqual(route_mock.call_count, 4)
+        self.assertEqual(data["route_mode"], "walking")
+
+    def test_bicycling_mode_uses_bicycling_routes_and_labels(self):
+        route_result = {"distance_m": 480, "duration_min": 3, "source": "amap", "mode": "bicycling", "mode_label": "骑行"}
+        with (
+            mock.patch("app.campus_recommendations._read_amap_key", return_value="valid-key"),
+            mock.patch.object(AMapClient, "around", return_value=[]),
+            mock.patch.object(AMapClient, "route", return_value=route_result) as route_mock,
+        ):
+            data = build_contextual_recommendation(
+                scenario="dining",
+                manual_location_id="qishan_center",
+                travel_mode="bicycling",
+                now=datetime(2026, 5, 17, 18, 10),
+            )
+
+        self.assertEqual(data["route_mode"], "bicycling")
+        self.assertEqual(data["route_mode_label"], "骑行")
+        self.assertEqual(route_mock.call_args.args[2], "bicycling")
+        self.assertTrue(all(item["travel_mode_label"] == "骑行" for item in data["recommendations"]))
+        self.assertTrue(any("骑行约" in item["reason"] for item in data["recommendations"]))
+
+    def test_amap_duplicate_pois_are_replaced_by_unique_supplements(self):
+        route_result = {"distance_m": 120, "duration_min": 2, "source": "amap", "mode": "walking", "mode_label": "步行"}
+        amap_supplements = [
+            {
+                "id": "amap_duplicate_taoli",
+                "name": "福州大学桃李园餐厅",
+                "kind": "dining",
+                "campus": "高德周边",
+                "lat": 26.062976,
+                "lng": 119.196459,
+                "tags": ["高德补充"],
+                "description": "重复地点",
+                "source": "amap_poi",
+            },
+            {
+                "id": "amap_unique_corner",
+                "name": "福州大学西门轻食",
+                "kind": "dining",
+                "campus": "高德周边",
+                "lat": 26.0639,
+                "lng": 119.1955,
+                "tags": ["高德补充"],
+                "description": "高德补充地点",
+                "source": "amap_poi",
+            },
+        ]
+        with (
+            mock.patch("app.campus_recommendations._read_amap_key", return_value="valid-key"),
+            mock.patch.object(AMapClient, "around", return_value=amap_supplements),
+            mock.patch.object(AMapClient, "route", return_value=route_result) as route_mock,
+        ):
+            data = build_contextual_recommendation(
+                scenario="dining",
+                manual_location_id="qishan_center",
+                now=datetime(2026, 5, 17, 12, 10),
+            )
+
+        names = [item["name"] for item in data["recommendations"]]
+        routed_names = [call.args[1]["name"] for call in route_mock.call_args_list]
+        self.assertNotIn("福州大学桃李园餐厅", names)
+        self.assertNotIn("福州大学桃李园餐厅", routed_names)
+        self.assertIn("福州大学西门轻食", routed_names)
 
     def test_builtin_pois_include_corrected_places(self):
         names = {item["name"] for item in CAMPUS_POIS}
@@ -191,12 +286,12 @@ class CampusRecommendationTests(unittest.TestCase):
                     {"semester_code": "202602", "semester": "2025-2026 学年第二学期", "name": "大学英语", "score": "92", "gpa": "4.0", "credits": "2"}
                 ]
 
-        route_result = {"distance_m": 700, "duration_min": 8, "source": "amap"}
+        route_result = {"distance_m": 700, "duration_min": 8, "source": "amap", "mode": "walking", "mode_label": "步行"}
         with (
             mock.patch("app.campus_recommendations._build_client", return_value=ClientStub()),
             mock.patch("app.campus_recommendations._read_amap_key", return_value="valid-key"),
             mock.patch.object(AMapClient, "around", return_value=[]),
-            mock.patch.object(AMapClient, "walking_route", return_value=route_result),
+            mock.patch.object(AMapClient, "route", return_value=route_result),
         ):
             data = build_contextual_recommendation(
                 scenario="auto",

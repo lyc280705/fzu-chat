@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Bike,
   Check,
   ChevronDown,
   ChevronUp,
@@ -7,6 +8,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  Footprints,
   LogOut,
   MapPin,
   Menu,
@@ -42,6 +44,7 @@ const THINKING_INDICATOR_DELAY = 1000
 const THINKING_STORAGE_KEY = 'fzu_thinking_enabled'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'fzu_sidebar_collapsed'
 const LOCATION_RECOMMENDATION_STORAGE_KEY = 'fzu_location_recommendations_enabled'
+const LOCATION_TRAVEL_MODE_STORAGE_KEY = 'fzu_location_travel_mode'
 const MESSAGE_MAX_LENGTH = 4000
 const LOCATION_CONTEXT_CACHE_MS = 30 * 60 * 1000
 const LOCATION_CONTEXT_RETRY_COOLDOWN_MS = 10 * 60 * 1000
@@ -98,6 +101,16 @@ const CAMPUS_RECOMMENDATION_LOCATION_LABELS = {
   qishan_life_zone_3: '旗山校区生活三区',
   yishan_center: '怡山校区',
   tongpan_center: '铜盘校区',
+}
+
+const CAMPUS_RECOMMENDATION_TRAVEL_MODE_LABELS = {
+  walking: '步行',
+  bicycling: '骑行',
+  bicycle: '骑行',
+  bike: '骑行',
+  cycling: '骑行',
+  骑行: '骑行',
+  自行车: '骑行',
 }
 
 const FALLBACK_HEX = Array.from({ length: 256 }, (_, index) => index.toString(16).padStart(2, '0'))
@@ -656,6 +669,8 @@ const campusRecommendationArgsSummary = (value, data = null) => {
   if (args && typeof args === 'object' && !Array.isArray(args)) {
     const scenario = String(args.scenario || data?.scenario || data?.resolved_scenario || 'auto').trim()
     const parts = [`场景：${CAMPUS_RECOMMENDATION_SCENARIO_LABELS[scenario] || '智能校园推荐'}`]
+    const travelMode = String(args.travel_mode || data?.route_mode || data?.travel_mode || 'walking').trim().toLowerCase()
+    parts.push(`出行：${CAMPUS_RECOMMENDATION_TRAVEL_MODE_LABELS[travelMode] || '步行'}`)
     const manualLocation = String(args.manual_location_id || '').trim()
     if (manualLocation && CAMPUS_RECOMMENDATION_LOCATION_LABELS[manualLocation]) {
       parts.push(`位置：${CAMPUS_RECOMMENDATION_LOCATION_LABELS[manualLocation]}`)
@@ -1860,6 +1875,8 @@ function ContextualRecommendationCard({ data }) {
     manual: '手动位置',
     default: '默认估算',
   }[data.location_source] || '位置估算'
+  const routeMode = String(data.route_mode || data.travel_mode || 'walking').trim().toLowerCase()
+  const routeModeLabel = data.route_mode_label || CAMPUS_RECOMMENDATION_TRAVEL_MODE_LABELS[routeMode] || '步行'
 
   return (
     <section className="campus-recommendation-card" aria-label={data.title || '校园推荐'}>
@@ -1881,7 +1898,7 @@ function ContextualRecommendationCard({ data }) {
           </span>
         )}
         <span>{locationSource}</span>
-        <span>{data.map_status === 'amap' ? '高德步行路线' : '校内地点库估算'}</span>
+        <span>{data.map_status === 'amap' ? `高德${routeModeLabel}路线` : '校内地点库估算'}</span>
       </div>
 
       {(signals.length > 0 || recentClass || nextClass || exams.length > 0) && (
@@ -1911,8 +1928,8 @@ function ContextualRecommendationCard({ data }) {
                 {item.campus && <span>{item.campus}</span>}
               </div>
               <div className="campus-recommendation-item__stats">
-                <span>步行约 {item.walk_minutes || '—'} 分钟</span>
-                <span>{formatDistanceMeters(item.walk_distance_m ?? item.distance_m)}</span>
+                <span>{item.travel_mode_label || routeModeLabel}约 {item.route_minutes ?? item.walk_minutes ?? '—'} 分钟</span>
+                <span>{formatDistanceMeters(item.route_distance_m ?? item.walk_distance_m ?? item.distance_m)}</span>
                 <span>{item.route_source === 'amap' ? '高德路线' : '估算'}</span>
               </div>
               {item.reason && <p>{item.reason}</p>}
@@ -2244,6 +2261,10 @@ function App() {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(LOCATION_RECOMMENDATION_STORAGE_KEY) === '1'
   })
+  const [campusTravelMode, setCampusTravelMode] = useState(() => {
+    if (typeof window === 'undefined') return 'walking'
+    return window.localStorage.getItem(LOCATION_TRAVEL_MODE_STORAGE_KEY) === 'bicycling' ? 'bicycling' : 'walking'
+  })
   const [locationPermission, setLocationPermission] = useState('unknown')
   const [locationPermissionBusy, setLocationPermissionBusy] = useState(false)
   const [locationPermissionMessage, setLocationPermissionMessage] = useState('')
@@ -2428,6 +2449,11 @@ function App() {
     if (typeof window === 'undefined') return
     window.localStorage.setItem(LOCATION_RECOMMENDATION_STORAGE_KEY, locationRecommendationEnabled ? '1' : '0')
   }, [locationRecommendationEnabled])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(LOCATION_TRAVEL_MODE_STORAGE_KEY, campusTravelMode === 'bicycling' ? 'bicycling' : 'walking')
+  }, [campusTravelMode])
 
   useEffect(() => {
     let cancelled = false
@@ -2784,6 +2810,7 @@ function App() {
       setThinkingEnabled(true)
       setSidebarCollapsed(false)
       setLocationRecommendationEnabled(false)
+      setCampusTravelMode('walking')
       setLocationPermissionMessage('')
       setUserDataSummary({ conversation_count: 0, message_count: 0, memory_count: 0 })
       setResetDialogOpen(false)
@@ -3014,11 +3041,15 @@ function App() {
   }, [activeId, setConversationStopPending, stopPendingConversations, streamingConversations])
 
   const buildTransientMessageContext = useCallback(async () => {
-    if (!locationRecommendationEnabled) return null
+    const baseContext = {
+      travel_mode: campusTravelMode === 'bicycling' ? 'bicycling' : 'walking',
+    }
+    if (!locationRecommendationEnabled) return baseContext
     const now = Date.now()
     const cachedLocation = recentLocationRef.current
     if (cachedLocation && now - cachedLocation.capturedAt <= LOCATION_CONTEXT_CACHE_MS) {
       return {
+        ...baseContext,
         location: {
           lat: cachedLocation.lat,
           lng: cachedLocation.lng,
@@ -3028,7 +3059,7 @@ function App() {
       }
     }
     if (lastLocationFailureAtRef.current && now - lastLocationFailureAtRef.current < LOCATION_CONTEXT_RETRY_COOLDOWN_MS) {
-      return null
+      return baseContext
     }
     try {
       const location = await requestBrowserLocation({ timeout: 5000, maximumAge: LOCATION_CONTEXT_CACHE_MS })
@@ -3041,6 +3072,7 @@ function App() {
       lastLocationFailureAtRef.current = 0
       setLocationPermission('granted')
       return {
+        ...baseContext,
         location: {
           ...location,
           timestamp,
@@ -3051,9 +3083,9 @@ function App() {
       const state = await queryGeolocationPermission()
       setLocationPermission(state)
       setLocationPermissionMessage(refineGeolocationErrorMessage(err.message, state))
-      return null
+      return baseContext
     }
-  }, [locationRecommendationEnabled])
+  }, [campusTravelMode, locationRecommendationEnabled])
 
   const sendPrompt = useCallback(async (rawPrompt, options = {}) => {
     const prompt = String(rawPrompt ?? '').trim()
@@ -3327,6 +3359,34 @@ function App() {
                 <span className="thinking-toggle__thumb" />
               </span>
             </button>
+          </div>
+          <div className="travel-mode-panel">
+            <div className="thinking-panel__copy">
+              <span className="thinking-panel__title">高德路线</span>
+              <span className="thinking-panel__hint">推荐食堂和自习地点时按此偏好估算</span>
+            </div>
+            <div className="travel-mode-switch" role="radiogroup" aria-label="高德路线出行偏好">
+              <button
+                type="button"
+                className={`travel-mode-btn ${campusTravelMode === 'walking' ? 'travel-mode-btn--active' : ''}`}
+                role="radio"
+                aria-checked={campusTravelMode === 'walking'}
+                onClick={() => setCampusTravelMode('walking')}
+              >
+                <Footprints size={14} aria-hidden="true" />
+                步行
+              </button>
+              <button
+                type="button"
+                className={`travel-mode-btn ${campusTravelMode === 'bicycling' ? 'travel-mode-btn--active' : ''}`}
+                role="radio"
+                aria-checked={campusTravelMode === 'bicycling'}
+                onClick={() => setCampusTravelMode('bicycling')}
+              >
+                <Bike size={14} aria-hidden="true" />
+                骑行
+              </button>
+            </div>
           </div>
         </div>
 

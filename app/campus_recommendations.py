@@ -20,12 +20,26 @@ from .jwch_client import JwchClient, JwchError
 
 AMAP_AROUND_URL = "https://restapi.amap.com/v3/place/around"
 AMAP_WALKING_URL = "https://restapi.amap.com/v3/direction/walking"
+AMAP_BICYCLING_URL = "https://restapi.amap.com/v4/direction/bicycling"
 AMAP_TIMEOUT_SECONDS = float(os.getenv("AMAP_TIMEOUT_SECONDS", "4"))
 AMAP_MAX_QPS = max(1, min(5, int(os.getenv("AMAP_MAX_QPS", "5") or "5")))
 AMAP_ROUTE_CANDIDATE_LIMIT = max(1, int(os.getenv("AMAP_ROUTE_CANDIDATE_LIMIT", "4") or "4"))
 BASE_DIR = Path(__file__).resolve().parent
 _AMAP_RATE_LOCK = Lock()
 _AMAP_REQUEST_TIMES = deque()
+
+AMAP_ROUTE_URLS = {
+    "walking": AMAP_WALKING_URL,
+    "bicycling": AMAP_BICYCLING_URL,
+}
+ROUTE_MODE_LABELS = {
+    "walking": "步行",
+    "bicycling": "骑行",
+}
+ROUTE_ESTIMATE_METERS_PER_MINUTE = {
+    "walking": 80,
+    "bicycling": 200,
+}
 
 AMAP_ERROR_MESSAGES = {
     "10001": "高德 Key 不正确或已失效",
@@ -75,7 +89,7 @@ def _amap_error_message(payload: Dict[str, Any] | None) -> str:
     if not payload:
         return "地图服务暂不可用"
     code = str(payload.get("infocode") or "").strip()
-    info = str(payload.get("info") or "").strip()
+    info = str(payload.get("info") or payload.get("errmsg") or payload.get("errdetail") or "").strip()
     if code in AMAP_ERROR_MESSAGES:
         return AMAP_ERROR_MESSAGES[code]
     if info in AMAP_ERROR_MESSAGES:
@@ -305,6 +319,68 @@ def _safe_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return result if math.isfinite(result) else None
+
+
+def _normalize_travel_mode(value: Any) -> str:
+    text = str(value or "").strip().lower().replace("-", "_")
+    if text in {"bicycling", "bicycle", "bike", "cycling", "ride", "riding", "骑行", "自行车", "单车"}:
+        return "bicycling"
+    return "walking"
+
+
+def _estimated_route_minutes(distance_m: int, travel_mode: str) -> int:
+    mode = _normalize_travel_mode(travel_mode)
+    speed = ROUTE_ESTIMATE_METERS_PER_MINUTE.get(mode) or ROUTE_ESTIMATE_METERS_PER_MINUTE["walking"]
+    minimum = 2 if mode == "bicycling" else 3
+    return max(minimum, int(math.ceil(distance_m / speed)))
+
+
+def _normalize_place_name(name: Any) -> str:
+    text = re.sub(r"\s+", "", str(name or "")).lower()
+    text = re.sub(r"[（）()\\[\\]【】·/\\\\\\-—_,，。.:：;；]+", "", text)
+    for token in ("福州大学", "fzu", "福大", "旗山校区", "怡山校区", "铜盘校区", "校区", "学生"):
+        text = text.replace(token, "")
+    for suffix in ("学生餐厅", "餐厅", "食堂", "自习室", "自习区", "学习中心"):
+        if text.endswith(suffix):
+            text = text[: -len(suffix)]
+            break
+    return text
+
+
+def _place_names_overlap(left: str, right: str) -> bool:
+    left_norm = _normalize_place_name(left)
+    right_norm = _normalize_place_name(right)
+    if not left_norm or not right_norm:
+        return False
+    if left_norm == right_norm:
+        return True
+    short, long = sorted((left_norm, right_norm), key=len)
+    if len(short) >= 2 and short in long:
+        return True
+    shared_tokens = ("玫瑰园", "丁香园", "紫荆园", "海棠园", "桃李园", "晋江楼", "图书馆", "教学楼")
+    return any(token in left and token in right for token in shared_tokens)
+
+
+def _is_duplicate_amap_poi(candidate: Dict[str, Any], built_in_places: List[Dict[str, Any]]) -> bool:
+    candidate_name = str(candidate.get("name") or "")
+    candidate_lat = _safe_float(candidate.get("lat"))
+    candidate_lng = _safe_float(candidate.get("lng"))
+    for place in built_in_places:
+        if place.get("kind") != candidate.get("kind"):
+            continue
+        place_name = str(place.get("name") or "")
+        if _place_names_overlap(candidate_name, place_name):
+            return True
+        place_lat = _safe_float(place.get("lat"))
+        place_lng = _safe_float(place.get("lng"))
+        if candidate_lat is None or candidate_lng is None or place_lat is None or place_lng is None:
+            continue
+        distance_m = _haversine_meters(candidate_lat, candidate_lng, place_lat, place_lng)
+        if distance_m <= 35:
+            return True
+        if distance_m <= 80 and _place_names_overlap(candidate_name, place_name):
+            return True
+    return False
 
 
 def _resolve_origin(location: Dict[str, Any] | None, manual_location_id: str = "") -> Dict[str, Any]:
@@ -651,9 +727,10 @@ class AMapClient:
     def available(self) -> bool:
         return bool(self.key)
 
-    def walking_route(self, origin: Dict[str, Any], dest: Dict[str, Any]) -> Dict[str, Any] | None:
+    def route(self, origin: Dict[str, Any], dest: Dict[str, Any], travel_mode: str = "walking") -> Dict[str, Any] | None:
         if not self.available:
             return None
+        mode = _normalize_travel_mode(travel_mode)
         params = {
             "key": self.key,
             "origin": f"{origin['lng']},{origin['lat']}",
@@ -661,16 +738,18 @@ class AMapClient:
         }
         try:
             _wait_for_amap_slot()
-            response = requests.get(AMAP_WALKING_URL, params=params, timeout=self.timeout)
+            response = requests.get(AMAP_ROUTE_URLS[mode], params=params, timeout=self.timeout)
             response.raise_for_status()
             payload = response.json()
         except Exception:
             self.last_error = "地图服务请求失败"
             return None
-        if str(payload.get("status")) != "1":
+        status = payload.get("status")
+        errcode = payload.get("errcode")
+        if (status is not None and str(status) != "1") or (errcode is not None and str(errcode) != "0"):
             self.last_error = _amap_error_message(payload)
             return None
-        paths = ((payload.get("route") or {}).get("paths") or [])
+        paths = ((payload.get("route") or {}).get("paths") or []) or ((payload.get("data") or {}).get("paths") or [])
         if not paths:
             return None
         path = paths[0]
@@ -682,7 +761,12 @@ class AMapClient:
             "distance_m": int(round(distance)) if distance is not None else None,
             "duration_min": int(math.ceil(duration / 60)) if duration is not None else None,
             "source": "amap",
+            "mode": mode,
+            "mode_label": ROUTE_MODE_LABELS[mode],
         }
+
+    def walking_route(self, origin: Dict[str, Any], dest: Dict[str, Any]) -> Dict[str, Any] | None:
+        return self.route(origin, dest, "walking")
 
     def around(self, origin: Dict[str, Any], keywords: str, kind: str) -> List[Dict[str, Any]]:
         if not self.available:
@@ -692,7 +776,7 @@ class AMapClient:
             "location": f"{origin['lng']},{origin['lat']}",
             "keywords": keywords,
             "radius": "1800",
-            "offset": "6",
+            "offset": "10",
             "page": "1",
             "extensions": "base",
         }
@@ -775,7 +859,9 @@ def _trigger_reason(
     origin: Dict[str, Any],
     now: datetime,
     primary_signal: Dict[str, Any] | None = None,
+    travel_mode: str = "walking",
 ) -> str:
+    mode_label = ROUTE_MODE_LABELS[_normalize_travel_mode(travel_mode)]
     if primary_signal and primary_signal.get("summary"):
         return str(primary_signal["summary"])
     if scenario == "study" and upcoming:
@@ -783,7 +869,7 @@ def _trigger_reason(
         return f"你未来 7 天内有 {len(upcoming)} 场考试，最近一场是《{first.get('course_name') or '考试'}》，建议安排复习。"
     if scenario == "dining" and recent_class:
         location = f"（{recent_class.get('location')}）" if recent_class.get("location") else ""
-        return f"你刚结束《{recent_class.get('name')}》{location}，适合优先找步行更近的食堂。"
+        return f"你刚结束《{recent_class.get('name')}》{location}，适合优先找{mode_label}更顺路的食堂。"
     if next_class:
         return f"你今天接下来还有《{next_class.get('name')}》，推荐选择不绕路、方便衔接下一节课的位置。"
     if scenario == "dining":
@@ -791,13 +877,22 @@ def _trigger_reason(
     return f"已按{origin['name']}附近的自习场所排序，适合安排一段专注学习时间。"
 
 
-def _candidate_reason(kind: str, poi: Dict[str, Any], distance_m: int, route: Dict[str, Any] | None, upcoming: List[Dict[str, Any]]) -> str:
-    walk_text = f"步行约 {route['duration_min']} 分钟" if route and route.get("duration_min") else f"直线距离约 {distance_m} 米"
+def _candidate_reason(
+    kind: str,
+    poi: Dict[str, Any],
+    distance_m: int,
+    route: Dict[str, Any] | None,
+    upcoming: List[Dict[str, Any]],
+    travel_mode: str = "walking",
+) -> str:
+    mode_label = ROUTE_MODE_LABELS[_normalize_travel_mode(travel_mode)]
+    route_label = str((route or {}).get("mode_label") or mode_label)
+    route_text = f"{route_label}约 {route['duration_min']} 分钟" if route and route.get("duration_min") else f"直线距离约 {distance_m} 米"
     if kind == "study" and upcoming:
-        return f"{walk_text}，环境更适合考前复习。{poi.get('description') or ''}".strip()
+        return f"{route_text}，环境更适合考前复习。{poi.get('description') or ''}".strip()
     if kind == "study":
-        return f"{walk_text}，适合短时自习或整理课程笔记。{poi.get('description') or ''}".strip()
-    return f"{walk_text}，适合当前时段就餐。{poi.get('description') or ''}".strip()
+        return f"{route_text}，适合短时自习或整理课程笔记。{poi.get('description') or ''}".strip()
+    return f"{route_text}，适合当前时段就餐。{poi.get('description') or ''}".strip()
 
 
 def _candidate_context_bonus(kind: str, poi: Dict[str, Any], now: datetime, primary_signal: Dict[str, Any] | None) -> int:
@@ -826,12 +921,15 @@ def build_contextual_recommendation(
     scenario: str = "auto",
     location: Dict[str, Any] | None = None,
     manual_location_id: str = "",
+    travel_mode: str = "walking",
     seen_grade_digest: str = "",
     edu_session: Dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> Dict[str, Any]:
     now = now or _beijing_now().replace(tzinfo=None)
     requested = scenario if scenario in {"auto", "dining", "study"} else "auto"
+    route_mode = _normalize_travel_mode(travel_mode)
+    route_mode_label = ROUTE_MODE_LABELS[route_mode]
     origin = _resolve_origin(location, manual_location_id)
 
     courses: List[Dict[str, Any]] = []
@@ -881,16 +979,19 @@ def build_contextual_recommendation(
     kind = "dining" if resolved == "dining" else "study"
 
     amap = AMapClient()
-    candidates = [item for item in CAMPUS_POIS if item["kind"] == kind]
+    built_in_candidates = [item for item in CAMPUS_POIS if item["kind"] == kind]
+    candidates = list(built_in_candidates)
     used_poi_search = False
     if amap.available and len(candidates) < 8:
         keyword = "福州大学 食堂" if kind == "dining" else "福州大学 图书馆 自习室"
-        seen_names = {item["name"] for item in candidates}
+        seen_names = {_normalize_place_name(item["name"]) for item in candidates}
         used_poi_search = True
         for item in amap.around(origin, keyword, kind):
-            if item["name"] not in seen_names:
-                candidates.append(item)
-                seen_names.add(item["name"])
+            normalized_name = _normalize_place_name(item["name"])
+            if normalized_name in seen_names or _is_duplicate_amap_poi(item, built_in_candidates):
+                continue
+            candidates.append(item)
+            seen_names.add(normalized_name)
 
     candidate_distances = [
         (poi, _haversine_meters(origin["lat"], origin["lng"], float(poi["lat"]), float(poi["lng"])))
@@ -905,11 +1006,13 @@ def build_contextual_recommendation(
     route_failures = 0
     for index, (poi, distance_m) in enumerate(candidate_distances):
         should_route = amap.available and index < route_limit
-        route = amap.walking_route(origin, poi) if should_route else None
+        route = amap.route(origin, poi, route_mode) if should_route else None
         if should_route and route is None:
             route_failures += 1
-        walk_distance_m = route.get("distance_m") if route else None
-        walk_minutes = route.get("duration_min") if route else max(3, int(math.ceil(distance_m / 80)))
+        route_distance_m = route.get("distance_m") if route else None
+        route_minutes = route.get("duration_min") if route else None
+        if route_minutes is None:
+            route_minutes = _estimated_route_minutes(route_distance_m or distance_m, route_mode)
         context_bonus = _candidate_context_bonus(kind, poi, now, primary_signal)
         ranked.append(
             {
@@ -920,26 +1023,30 @@ def build_contextual_recommendation(
                 "description": poi.get("description") or "",
                 "tags": poi.get("tags") or [],
                 "distance_m": distance_m,
-                "walk_distance_m": walk_distance_m or distance_m,
-                "walk_minutes": walk_minutes,
+                "route_distance_m": route_distance_m or distance_m,
+                "route_minutes": route_minutes,
+                "travel_mode": route_mode,
+                "travel_mode_label": route.get("mode_label") if route else route_mode_label,
+                "walk_distance_m": route_distance_m or distance_m,
+                "walk_minutes": route_minutes,
                 "route_source": route.get("source") if route else "estimated",
-                "ranking_score": max(1, walk_minutes - context_bonus) * 100 + int(distance_m / 100),
-                "reason": _candidate_reason(kind, poi, distance_m, route, upcoming),
+                "ranking_score": max(1, route_minutes - context_bonus) * 100 + int(distance_m / 100),
+                "reason": _candidate_reason(kind, poi, distance_m, route, upcoming, route_mode),
                 "source": poi.get("source") or "built_in",
             }
         )
 
-    ranked.sort(key=lambda item: (item["ranking_score"], item["walk_minutes"], item["distance_m"]))
+    ranked.sort(key=lambda item: (item["ranking_score"], item["route_minutes"], item["distance_m"]))
     limited = ranked[:3]
     map_status = "amap" if any(item["route_source"] == "amap" for item in limited) else "estimated"
     map_note = ""
     if not amap.available:
-        map_note = "未配置高德地图 Key，已按校内地点库和直线距离估算。"
+        map_note = f"未配置高德地图 Key，已按校内地点库和直线距离估算{route_mode_label}时间。"
     elif route_failures:
         map_note = f"{amap.last_error or '地图路线服务暂不可用'}，部分结果已按直线距离估算。"
 
     title = str(primary_signal.get("title")) if primary_signal else ("附近食堂推荐" if kind == "dining" else "复习与自习建议")
-    reason = _trigger_reason(kind, recent_class, next_class, upcoming, origin, now, primary_signal)
+    reason = _trigger_reason(kind, recent_class, next_class, upcoming, origin, now, primary_signal, route_mode)
 
     return {
         "scenario": requested,
@@ -952,6 +1059,8 @@ def build_contextual_recommendation(
         "privacy_note": origin["privacy"],
         "map_status": map_status,
         "map_note": map_note,
+        "route_mode": route_mode,
+        "route_mode_label": route_mode_label,
         "edu_status": edu_status,
         "academic_context": {
             "recent_class": _compact_class_context(recent_class),
@@ -1030,6 +1139,7 @@ def _compact_class_context(value: Dict[str, Any] | None) -> Dict[str, Any] | Non
 
 def _format_recommendation_markdown(data: Dict[str, Any]) -> str:
     lines = [f"## {data.get('title') or '校园推荐'}", "", data.get("trigger_reason") or ""]
+    route_mode_label = str(data.get("route_mode_label") or ROUTE_MODE_LABELS["walking"])
     signals = ((data.get("academic_context") or {}).get("signals") or [])
     if signals:
         lines.extend(["", "### 今日提醒"])
@@ -1037,9 +1147,10 @@ def _format_recommendation_markdown(data: Dict[str, Any]) -> str:
             lines.append(f"- {signal.get('title')}: {signal.get('summary')}")
     if data.get("map_note"):
         lines.extend(["", f"> {data['map_note']}"])
-    lines.extend(["", "| 地点 | 步行 | 推荐理由 |", "| --- | --- | --- |"])
+    lines.extend(["", f"| 地点 | {route_mode_label} | 推荐理由 |", "| --- | --- | --- |"])
     for item in data.get("recommendations") or []:
-        lines.append(f"| {item.get('name')} | 约 {item.get('walk_minutes')} 分钟 | {item.get('reason')} |")
+        route_minutes = item.get("route_minutes") or item.get("walk_minutes")
+        lines.append(f"| {item.get('name')} | 约 {route_minutes} 分钟 | {item.get('reason')} |")
     lines.extend(["", f"> {data.get('privacy_note') or '定位只用于本次推荐。'}"])
     return "\n".join(line for line in lines if line is not None)
 
@@ -1065,6 +1176,7 @@ def build_campus_recommendation_tools(request_context: Dict[str, Any] | None = N
     def recommend_campus_context(
         scenario: str = "auto",
         manual_location_id: str = "",
+        travel_mode: str = "",
         latitude: str = "",
         longitude: str = "",
     ) -> Tuple[str, Any]:
@@ -1075,15 +1187,18 @@ def build_campus_recommendation_tools(request_context: Dict[str, Any] | None = N
         参数:
         - scenario: auto、dining 或 study
         - manual_location_id: 可选，qishan_center/qishan_teaching/qishan_dorm/yishan_center/tongpan_center
+        - travel_mode: walking 或 bicycling；用户明确说走路/步行时用 walking，说骑车/骑行/自行车时用 bicycling；未明确时留空并使用用户侧选择的出行偏好
         - latitude/longitude: 可选，经用户明确提供或前端授权后才传入
         """
         lat = _safe_float(latitude)
         lng = _safe_float(longitude)
         location = {"lat": lat, "lng": lng} if lat is not None and lng is not None else _context_location()
+        selected_travel_mode = travel_mode or str(request_context.get("travel_mode") or "walking")
         data = build_contextual_recommendation(
             scenario=scenario,
             location=location,
             manual_location_id=manual_location_id,
+            travel_mode=selected_travel_mode,
             edu_session=request_context,
         )
         return _format_recommendation_markdown(data), data

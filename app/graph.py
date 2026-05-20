@@ -912,6 +912,7 @@ def _build_query_or_respond(edu_tools, user_memory_tools, campus_recommendation_
         - 如果用户只是询问“现在有什么可以选”或“我还差什么课”，先调用 query_course_selection，不要直接提交选课
         对于 recommend_campus_context：
         - 推荐必须说明依据来自课表、考试安排、选课窗口、成绩变化、当前位置或用户手动选择的位置
+        - 用户说步行、走路时传 travel_mode=walking；用户说骑车、骑行、自行车时传 travel_mode=bicycling；未说明时不要硬编码 travel_mode，让工具使用用户侧选择的出行偏好
         - 如果用户没有提供位置，也没有通过前端授权定位，请引导用户在隐私页开启定位智能提醒，或让用户说明所在校区/教学楼
         - 当用户询问食堂、饭点、去哪吃、附近自习等位置相关问题时，如果缺少定位，可自然提醒用户在隐私与数据页开启定位权限，以便下次按当前位置给出更顺路的建议
         - 不要把具体当前位置、当前课表、考试安排、成绩、选课状态写入长期记忆；只允许保存餐饮偏好、自习偏好、校区偏好、选课偏好等长期偏好
@@ -986,6 +987,17 @@ def _build_query_or_respond(edu_tools, user_memory_tools, campus_recommendation_
             runtime_context = build_runtime_system_context(
                 user_id,
                 str(request_context.get("dynamic_campus_context") or "").strip(),
+            )
+        travel_mode = str(request_context.get("travel_mode") or "").strip()
+        if travel_mode in {"walking", "bicycling"}:
+            travel_mode_label = "骑行" if travel_mode == "bicycling" else "步行"
+            runtime_context = "\n".join(
+                part
+                for part in (
+                    runtime_context,
+                    f"本轮校园路线出行偏好：{travel_mode_label}。recommend_campus_context 未显式传 travel_mode 时会按该用户侧选择执行。",
+                )
+                if part
             )
         history_prompt = trim_messages(
             state["messages"],

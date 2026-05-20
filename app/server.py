@@ -353,6 +353,7 @@ class MessageContextLocation(BaseModel):
 
 class MessageContext(BaseModel):
     location: MessageContextLocation | None = None
+    travel_mode: Literal["walking", "bicycling"] = "walking"
 
 
 class MessageCreateRequest(BaseModel):
@@ -371,6 +372,7 @@ class RecommendationLocation(BaseModel):
 
 class ContextualRecommendationRequest(BaseModel):
     scenario: Literal["auto", "dining", "study"] = "auto"
+    travel_mode: Literal["walking", "bicycling"] = "walking"
     location: RecommendationLocation | None = None
     manual_location_id: str | None = Field(default=None, max_length=80)
     seen_grade_digest: str | None = Field(default=None, max_length=80)
@@ -754,12 +756,21 @@ def summarize_tool_args(args: Any) -> str:
         return args
     if not isinstance(args, dict):
         return str(args or "")
-    if any(key in args for key in ("scenario", "manual_location_id", "latitude", "longitude")):
+    if any(key in args for key in ("scenario", "manual_location_id", "latitude", "longitude", "travel_mode")):
         scenario_label = {
             "auto": "智能校园推荐",
             "dining": "食堂推荐",
             "study": "自习/复习建议",
         }.get(str(args.get("scenario") or "auto").strip(), "智能校园推荐")
+        travel_mode_label = {
+            "walking": "步行",
+            "bicycling": "骑行",
+            "bicycle": "骑行",
+            "bike": "骑行",
+            "cycling": "骑行",
+            "骑行": "骑行",
+            "自行车": "骑行",
+        }.get(str(args.get("travel_mode") or "walking").strip().lower(), "步行")
         location_label = {
             "qishan_center": "旗山校区中心区",
             "qishan_teaching": "旗山校区教学区",
@@ -773,6 +784,7 @@ def summarize_tool_args(args: Any) -> str:
             "tongpan_center": "铜盘校区",
         }.get(str(args.get("manual_location_id") or "").strip(), "")
         parts = [f"场景：{scenario_label}"]
+        parts.append(f"出行：{travel_mode_label}")
         if location_label:
             parts.append(f"位置：{location_label}")
         elif args.get("latitude") and args.get("longitude"):
@@ -1539,6 +1551,7 @@ def contextual_recommendation(
         scenario=req.scenario,
         location=location,
         manual_location_id=(req.manual_location_id or "").strip(),
+        travel_mode=req.travel_mode,
         seen_grade_digest=(req.seen_grade_digest or "").strip(),
         edu_session=edu_ctx,
     )
@@ -1837,6 +1850,8 @@ async def create_message(
     message_location = req.context.location.dict() if req.context and req.context.location else None
     if message_location:
         edu_ctx["message_location"] = message_location
+    if req.context:
+        edu_ctx["travel_mode"] = req.context.travel_mode
     runtime_system_context = str(conv.get("runtime_context") or "").strip()
     if not runtime_system_context:
         warm_teaching_week_cache_async()
@@ -1949,7 +1964,10 @@ async def create_message(
                             if ti in pending:
                                 continue
                             a = tc.get("args") or {}
-                            q = summarize_tool_args(a)
+                            summary_args = a
+                            if tn == "recommend_campus_context" and isinstance(a, dict) and not a.get("travel_mode"):
+                                summary_args = {**a, "travel_mode": edu_ctx.get("travel_mode") or "walking"}
+                            q = summarize_tool_args(summary_args)
                             lb = TOOL_LABELS.get(tn, {"running": f"正在调用 {tn}", "complete": f"{tn} 完成"})
                             tp = {
                                 "type": "tool", "tool_id": ti, "tool_name": tn,
