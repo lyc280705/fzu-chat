@@ -633,7 +633,7 @@ def build_dynamic_campus_context(
     ]
     for index, event in enumerate(selected, start=1):
         lines.append(f"{index}. {event['title']}：{event['summary']}")
-    lines.append("提醒约束：先完整回答当前问题；考试、成绩、选课事件可在问候、泛问或学习安排场景末尾轻声提醒；饭点食堂提醒可在问候、安排今天、校园生活或晚餐相关场景主动轻声提醒。若饭点提示已经说明浏览器临时定位可用，不要再要求用户授权定位或说明校区。无关场景可忽略；最多提醒 1-2 条；不要保存易变事实到长期记忆。")
+    lines.append("提醒约束：先完整回答用户当前问题；考试、成绩、选课这类高优先级事件，可优先于末尾轻声提醒一句；饭点食堂提醒在问候、安排今天、校园生活、晚餐/自习相关场景也可以主动轻声提醒一句；专业知识问答等无关场景可忽略。最多提醒 1-2 条；不要保存这些易变事实到长期记忆。")
     text = "\n".join(lines)
     if len(text) <= max_chars:
         return text

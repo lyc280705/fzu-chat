@@ -334,7 +334,7 @@ class CampusDynamicContextTests(unittest.TestCase):
         self.assertIn("本次消息已开启浏览器临时定位", context)
         self.assertIn("按你当前位置推荐附近晚餐食堂", context)
         self.assertIn("步行/骑行路线", context)
-        self.assertIn("若饭点提示已经说明浏览器临时定位可用，不要再要求用户授权定位或说明校区", context)
+        self.assertIn("提醒约束：先完整回答用户当前问题；考试、成绩、选课这类高优先级事件，可优先于末尾轻声提醒一句；饭点食堂提醒在问候、安排今天、校园生活、晚餐/自习相关场景也可以主动轻声提醒一句；专业知识问答等无关场景可忽略。最多提醒 1-2 条；不要保存这些易变事实到长期记忆。", context)
         self.assertNotIn("经纬度", context)
         self.assertNotIn("开启定位权限或说明所在校区", context)
 
