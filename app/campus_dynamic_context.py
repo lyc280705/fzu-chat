@@ -470,7 +470,7 @@ def _build_exam_event(snapshot: Dict[str, Any], now: datetime) -> Dict[str, Any]
     return {
         "type": "exam",
         "title": "考试复习提醒",
-        "summary": f"未来 7 天内有 {count} 场考试，最近一场《{course_name}》在{day_text}。可以询问用户是否需要推荐自习地点。",
+        "summary": f"未来 7 天有 {count} 场考试，最近《{course_name}》在{day_text}；可问是否要推荐自习地点。",
         "priority": 95 if days <= 1 else 86,
         "digest": f"exam:{snapshot.get('digest')}",
         "repeat": "cooldown",
@@ -563,9 +563,9 @@ def _build_meal_time_event(now: datetime, meal: str | None = None, location_avai
     if meal == "就餐":
         return None
     if location_available:
-        summary = f"当前接近{meal}时段，且本次消息已开启浏览器临时定位；若用户在问候、安排今天或校园生活，可在末尾轻声提醒：我可以按你当前位置推荐附近{meal}食堂和步行/骑行路线。需要具体地点详情时先调用校园推荐工具。"
+        summary = f"接近{meal}，定位已开；可轻声提醒：我能按当前位置推荐附近{meal}食堂和步行/骑行路线。"
     else:
-        summary = f"当前接近{meal}时段；若用户在问候、安排今天或校园生活，可在末尾轻声提醒可开启定位权限或说明所在校区/教学楼，我可以继续推荐附近{meal}食堂。"
+        summary = f"接近{meal}；可轻声提醒：开定位或说明校区/教学楼后，我能推荐附近{meal}食堂。"
     return {
         "type": "meal_time",
         "title": "饭点食堂提醒",
@@ -628,12 +628,10 @@ def build_dynamic_campus_context(
     if not selected:
         return ""
 
-    lines = [
-        "校园动态事件（隐藏上下文，仅供判断是否在本次回答末尾自然提醒；不要说出本段来源）：",
-    ]
+    lines = ["校园动态事件（隐藏，仅供判断是否自然提醒）："]
     for index, event in enumerate(selected, start=1):
         lines.append(f"{index}. {event['title']}：{event['summary']}")
-    lines.append("提醒约束：先完整回答当前问题；考试、成绩、选课事件可在问候、泛问或学习安排场景末尾轻声提醒；饭点食堂提醒可在问候、安排今天、校园生活或晚餐相关场景主动轻声提醒。若饭点提示已经说明浏览器临时定位可用，不要再要求用户授权定位或说明校区。无关场景可忽略；最多提醒 1-2 条；不要保存易变事实到长期记忆。")
+    lines.append("约束：先答问题；高优先级事件可优先轻提醒；饭点仅在问候/安排/校园生活/晚餐/自习相关场景提醒；无关忽略；最多 1-2 条；不存长期记忆。")
     text = "\n".join(lines)
     if len(text) <= max_chars:
         return text

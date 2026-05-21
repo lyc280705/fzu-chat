@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from langchain_core.messages import SystemMessage
+
 from app import graph
 
 
@@ -47,6 +49,18 @@ class ModelThinkingConfigTests(unittest.TestCase):
 
         extra_body = chat_openai.call_args.kwargs["extra_body"]
         self.assertEqual(extra_body, {"thinking": {"type": "disabled"}})
+
+    def test_title_summary_prompt_keeps_everything_in_system_message(self):
+        messages = graph.summary_prompt.format_messages(input="user: 今天晚饭去哪吃")
+
+        self.assertEqual(len(messages), 1)
+        self.assertIsInstance(messages[0], SystemMessage)
+        content = messages[0].content
+        self.assertIn("例：", content)
+        self.assertIn("晚餐食堂推荐", content)
+        self.assertIn("user: 今天晚饭去哪吃", content)
+        self.assertLess(len(content), 220)
+        self.assertNotIn("{input}", content)
 
 
 if __name__ == "__main__":
