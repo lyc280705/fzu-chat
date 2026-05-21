@@ -21,7 +21,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langsmith import tracing_context
 from pydantic import BaseModel, Field
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -46,8 +45,6 @@ from .graph import (
     CHAT_MODEL_OPTIONS,
     DEFAULT_CHAT_MODEL,
     KIMI_CHAT_MODEL,
-    LANGSMITH_TRACING_ENABLED,
-    TITLE_SUMMARY_MODEL,
     build_graph,
     build_runtime_system_context,
     reset_search_citation_counter,
@@ -97,8 +94,6 @@ if AUTH_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
     AUTH_COOKIE_SAMESITE = "strict"
 
 MODEL_OPTIONS = dict(CHAT_MODEL_OPTIONS)
-TITLE_SUMMARY_TRACE_RUN_NAME = "conversation_title_summary"
-TITLE_SUMMARY_TRACE_TAGS = ["fzu-chat", "conversation-title", TITLE_SUMMARY_MODEL]
 
 TOOL_LABELS: Dict[str, Dict[str, str]] = {
     "retrieve": {"running": "正在查询知识库", "complete": "知识库查询完成"},
@@ -1042,12 +1037,7 @@ def truncate_title(title: str) -> str:
     return cleaned[:MAX_TITLE_LENGTH].rstrip(" ,，。；;") or "新对话"
 
 
-async def summarize_title(
-    messages: List[Dict[str, Any]],
-    *,
-    user_id: str | None = None,
-    conversation_id: str | None = None,
-) -> str:
+async def summarize_title(messages: List[Dict[str, Any]]) -> str:
     lines = []
     for m in messages:
         c = (m.get("content") or "").strip()
@@ -1056,29 +1046,8 @@ async def summarize_title(
     transcript = "\n".join(lines)
     if not transcript:
         return "新对话"
-    trace_metadata = {
-        "component": "conversation_title_update",
-        "model": TITLE_SUMMARY_MODEL,
-        "message_count": len(messages),
-        "transcript_chars": len(transcript),
-    }
-    if user_id:
-        trace_metadata["user_id"] = mask_user_id(user_id)
-    if conversation_id:
-        trace_metadata["conversation_id"] = conversation_id
-    trace_config = {
-        "run_name": TITLE_SUMMARY_TRACE_RUN_NAME,
-        "tags": TITLE_SUMMARY_TRACE_TAGS,
-        "metadata": trace_metadata,
-    }
     try:
-        with tracing_context(
-            enabled=LANGSMITH_TRACING_ENABLED,
-            tags=TITLE_SUMMARY_TRACE_TAGS,
-            metadata=trace_metadata,
-        ):
-            raw_title = await summary_chain.ainvoke({"input": transcript}, config=trace_config)
-        return truncate_title(raw_title.strip())
+        return truncate_title((await summary_chain.ainvoke({"input": transcript})).strip())
     except Exception:
         return "新对话"
 
@@ -1162,7 +1131,7 @@ async def update_conversation_title_in_background(
             summary = make_conversation_summary(conversation)
             return
 
-        next_title = await summarize_title(messages, user_id=user_id, conversation_id=conversation_id)
+        next_title = await summarize_title(messages)
         if next_title != "新对话":
             updated = chat_store.update_conversation(
                 user_id,
