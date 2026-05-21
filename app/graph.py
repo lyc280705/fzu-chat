@@ -1073,25 +1073,11 @@ def build_graph(edu_session: Dict[str, Any] | None = None, use_checkpointer: boo
 graph = build_graph()
 
 
-TITLE_SUMMARY_PROMPT = """你是福大灵犀的标题生成器。只输出标题本身，不要前缀、解释或换行。
-规则：主要看user意图，assistant只作背景；忽略寒暄、自我介绍和工具过程。标题4-10字，最多15字；保留教务、食堂、自习、路线等具体场景；只有问候或无明确任务时输出“问候交流”。
-
-示例：
-对话内容：
-user: 今天晚饭去哪吃
-输出：晚餐食堂推荐
-
-对话内容：
-user: 你好
-assistant: 你好呀！我是福大灵犀，很高兴能和你聊天呢！
-输出：问候交流
-
-对话内容：
-{input}
-输出："""
+prompt = "请概括用户的问题作为对话的标题，标题需要简短概括，不多于20个字。注意你的输出直接作为标题，所以不要有其他输出，不要输出标题二字。请输出标题"
 summary_prompt = ChatPromptTemplate.from_messages(
     [
-        ("system", TITLE_SUMMARY_PROMPT),
+        ("system", prompt),
+        ("human", "{input}"),
     ]
 )
 summary_chain = (
