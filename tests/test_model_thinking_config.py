@@ -57,10 +57,12 @@ class ModelThinkingConfigTests(unittest.TestCase):
         self.assertIsInstance(messages[0], SystemMessage)
         content = messages[0].content
         self.assertIn("晚餐食堂推荐", content)
-        self.assertIn("学期成绩查询", content)
+        self.assertIn("问候交流", content)
+        self.assertIn("主要看user意图", content)
+        self.assertIn("assistant只作背景", content)
         self.assertIn("user: 今天晚饭去哪吃", content)
         self.assertNotIn("{input}", content)
-        self.assertLess(len(content), 360)
+        self.assertLess(len(content), 380)
 
 
 if __name__ == "__main__":
