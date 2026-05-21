@@ -67,6 +67,7 @@ class CampusDynamicContextTests(unittest.TestCase):
             )
 
         self.assertIn("线性代数", first)
+        self.assertIn("可以询问用户是否需要推荐自习地点", first)
         self.assertEqual(second, "")
 
     def test_exam_event_can_reinject_next_day(self):
@@ -104,7 +105,9 @@ class CampusDynamicContextTests(unittest.TestCase):
             )
 
         self.assertIn("线性代数", first)
+        self.assertIn("可以询问用户是否需要推荐自习地点", first)
         self.assertIn("线性代数", next_day)
+        self.assertIn("可以询问用户是否需要推荐自习地点", next_day)
 
     def test_non_first_unrelated_message_does_not_inject(self):
         store = self.make_store()
@@ -166,6 +169,7 @@ class CampusDynamicContextTests(unittest.TestCase):
             )
 
         self.assertIn("可穿戴传感器", context)
+        self.assertIn("可以询问用户是否需要推荐自习地点", context)
         self.assertLess((time.monotonic() - started) * 1000, 100)
 
     def test_meal_period_snapshot_can_inject_dining_hint(self):
@@ -188,6 +192,31 @@ class CampusDynamicContextTests(unittest.TestCase):
         self.assertIn("饭点食堂提醒", context)
         self.assertIn("早餐", context)
         self.assertIn("开启定位权限", context)
+
+    def test_meal_period_recent_class_still_uses_meal_dining_hint(self):
+        store = self.make_store()
+        store.upsert_snapshot(
+            "102304226",
+            "course",
+            {
+                "digest": "recent-class",
+                "recent_class": {"name": "软件工程", "location": "西三"},
+                "next_class": None,
+            },
+            timedelta(minutes=30),
+        )
+
+        with mock.patch.object(dynamic, "campus_dynamic_context_store", store):
+            context = dynamic.build_dynamic_campus_context(
+                "102304226",
+                message_content="你好",
+                is_first_user_turn=True,
+                now=datetime(2026, 5, 18, 17, 25),
+            )
+
+        self.assertIn("饭点食堂提醒", context)
+        self.assertIn("晚餐", context)
+        self.assertNotIn("刚下课顺路提醒", context)
 
     def test_meal_period_can_inject_without_course_snapshot(self):
         store = self.make_store()
@@ -279,7 +308,8 @@ class CampusDynamicContextTests(unittest.TestCase):
                 now=datetime(2026, 5, 18, 12, 0),
             )
 
-        self.assertIn("本次定位可用", context)
+        self.assertIn("饭点食堂提醒", context)
+        self.assertIn("本次消息已开启浏览器临时定位", context)
         self.assertNotIn("开启定位权限", context)
         self.assertNotIn("说明所在校区", context)
         rows = store.conn.execute("SELECT event_type, digest, last_injected_at, cooldown_until, expires_at FROM reminder_state").fetchall()
@@ -287,7 +317,7 @@ class CampusDynamicContextTests(unittest.TestCase):
         self.assertNotIn("26.060123", persisted_text)
         self.assertNotIn("119.195456", persisted_text)
 
-    def test_dinner_location_hint_is_proactive_without_coordinate_wording(self):
+    def test_dinner_meal_hint_uses_location_enabled_copy(self):
         store = self.make_store()
         with mock.patch.object(dynamic, "campus_dynamic_context_store", store):
             context = dynamic.build_dynamic_campus_context(
@@ -298,12 +328,13 @@ class CampusDynamicContextTests(unittest.TestCase):
                 now=datetime(2026, 5, 18, 17, 10),
             )
 
-        self.assertIn("本次定位可用", context)
+        self.assertIn("饭点食堂提醒", context)
+        self.assertNotIn("本次定位可用", context)
         self.assertIn("晚餐", context)
-        self.assertIn("主动轻声提醒", context)
+        self.assertIn("本次消息已开启浏览器临时定位", context)
         self.assertIn("按你当前位置推荐附近晚餐食堂", context)
         self.assertIn("步行/骑行路线", context)
-        self.assertIn("若定位已经可用，不要再要求用户授权定位或说明校区", context)
+        self.assertIn("若饭点提示已经说明浏览器临时定位可用，不要再要求用户授权定位或说明校区", context)
         self.assertNotIn("经纬度", context)
         self.assertNotIn("开启定位权限或说明所在校区", context)
 

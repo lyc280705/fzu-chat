@@ -470,7 +470,7 @@ def _build_exam_event(snapshot: Dict[str, Any], now: datetime) -> Dict[str, Any]
     return {
         "type": "exam",
         "title": "考试复习提醒",
-        "summary": f"未来 7 天内有 {count} 场考试，最近一场《{course_name}》在{day_text}。",
+        "summary": f"未来 7 天内有 {count} 场考试，最近一场《{course_name}》在{day_text}。可以询问用户是否需要推荐自习地点。",
         "priority": 95 if days <= 1 else 86,
         "digest": f"exam:{snapshot.get('digest')}",
         "repeat": "cooldown",
@@ -537,26 +537,12 @@ def _build_selection_events(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
     return events
 
 
-def _build_course_event(snapshot: Dict[str, Any], now: datetime) -> Dict[str, Any] | None:
+def _build_course_event(snapshot: Dict[str, Any], now: datetime, location_available: bool = False) -> Dict[str, Any] | None:
     payload = snapshot.get("payload", {})
-    recent = payload.get("recent_class") if isinstance(payload.get("recent_class"), dict) else None
     next_class = payload.get("next_class") if isinstance(payload.get("next_class"), dict) else None
     meal = _meal_period(now)
-    if recent and meal != "就餐":
-        name = recent.get("name") or "课程"
-        location = f"（{recent.get('location')}）" if recent.get("location") else ""
-        return {
-            "type": "recent_class",
-            "title": "刚下课顺路提醒",
-            "summary": f"用户近期刚结束《{name}》{location}，当前接近{meal}时段；若回答自然，可在末尾轻声提醒可追问附近食堂。",
-            "priority": 72,
-            "digest": f"recent:{now.date().isoformat()}:{payload.get('digest')}",
-            "repeat": "cooldown",
-            "cooldown_seconds": 2 * 60 * 60,
-            "expires_at": _now_utc() + timedelta(hours=3),
-        }
     if meal != "就餐":
-        return _build_meal_time_event(now, meal)
+        return _build_meal_time_event(now, meal, location_available=location_available)
     if next_class:
         name = next_class.get("name") or "课程"
         return {
@@ -572,37 +558,23 @@ def _build_course_event(snapshot: Dict[str, Any], now: datetime) -> Dict[str, An
     return None
 
 
-def _build_meal_time_event(now: datetime, meal: str | None = None) -> Dict[str, Any] | None:
+def _build_meal_time_event(now: datetime, meal: str | None = None, location_available: bool = False) -> Dict[str, Any] | None:
     meal = meal or _meal_period(now)
     if meal == "就餐":
         return None
+    if location_available:
+        summary = f"当前接近{meal}时段，且本次消息已开启浏览器临时定位；若用户在问候、安排今天或校园生活，可在末尾轻声提醒：我可以按你当前位置推荐附近{meal}食堂和步行/骑行路线。需要具体地点详情时先调用校园推荐工具。"
+    else:
+        summary = f"当前接近{meal}时段；若用户在问候、安排今天或校园生活，可在末尾轻声提醒可开启定位权限或说明所在校区/教学楼，我可以继续推荐附近{meal}食堂。"
     return {
         "type": "meal_time",
         "title": "饭点食堂提醒",
-        "summary": f"当前接近{meal}时段；若用户在问候、安排今天或校园生活，可在末尾轻声提醒可开启定位权限或说明所在校区/教学楼，我可以继续推荐附近{meal}食堂。",
-        "priority": 64,
-        "digest": f"meal:{now.date().isoformat()}:{meal}",
+        "summary": summary,
+        "priority": 68 if location_available else 64,
+        "digest": f"meal:{now.date().isoformat()}:{meal}:{'located' if location_available else 'manual'}",
         "repeat": "cooldown",
         "cooldown_seconds": 2 * 60 * 60,
         "expires_at": _now_utc() + timedelta(hours=3),
-    }
-
-
-def _build_location_event(location: Dict[str, Any] | None, now: datetime) -> Dict[str, Any] | None:
-    if not _has_valid_location(location):
-        return None
-    meal = _meal_period(now)
-    if meal == "就餐":
-        return None
-    return {
-        "type": "transient_location",
-        "title": "本次定位可用",
-        "summary": f"本次消息已有浏览器临时定位可供推荐工具使用，当前接近{meal}时段；若用户在问候、安排今天、校园生活或去处选择，可在末尾主动轻声提醒：我可以按你当前位置推荐附近{meal}食堂、步行/骑行路线，也能顺带找自习点。不要编造具体位置名称；需要地点详情时先调用校园推荐工具。",
-        "priority": 68,
-        "digest": f"location:{now.date().isoformat()}:{now.hour}:{meal}",
-        "repeat": "cooldown",
-        "cooldown_seconds": 2 * 60 * 60,
-        "expires_at": _now_utc() + timedelta(hours=2),
     }
 
 
@@ -638,12 +610,10 @@ def build_dynamic_campus_context(
             events.append(grade_event)
     if "selection" in snapshots:
         events.extend(_build_selection_events(snapshots["selection"]))
-    location_event = _build_location_event(location, now)
-    course_event = _build_course_event(snapshots.get("course", {}), now)
-    if course_event and not (location_event and course_event.get("type") == "meal_time"):
+    location_available = _has_valid_location(location)
+    course_event = _build_course_event(snapshots.get("course", {}), now, location_available=location_available)
+    if course_event:
         events.append(course_event)
-    if location_event:
-        events.append(location_event)
 
     events.sort(key=lambda item: _safe_int(item.get("priority"), 0), reverse=True)
     selected: List[Dict[str, Any]] = []
@@ -663,7 +633,7 @@ def build_dynamic_campus_context(
     ]
     for index, event in enumerate(selected, start=1):
         lines.append(f"{index}. {event['title']}：{event['summary']}")
-    lines.append("提醒约束：先完整回答用户当前问题；考试、成绩、选课这类高优先级事件，在问候、泛问或学习安排场景可优先于末尾轻声提醒一句；饭点或定位可用事件，在问候、安排今天、校园生活、晚餐/自习相关场景也可以主动轻声提醒一句；若定位已经可用，不要再要求用户授权定位或说明校区。专业知识问答等无关场景可忽略。最多提醒 1-2 条；不要保存这些易变事实到长期记忆。")
+    lines.append("提醒约束：先完整回答当前问题；考试、成绩、选课事件可在问候、泛问或学习安排场景末尾轻声提醒；饭点食堂提醒可在问候、安排今天、校园生活或晚餐相关场景主动轻声提醒。若饭点提示已经说明浏览器临时定位可用，不要再要求用户授权定位或说明校区。无关场景可忽略；最多提醒 1-2 条；不要保存易变事实到长期记忆。")
     text = "\n".join(lines)
     if len(text) <= max_chars:
         return text
