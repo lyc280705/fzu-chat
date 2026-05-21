@@ -268,7 +268,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="FZU Chat API", version="7.1.0", lifespan=lifespan)
+app = FastAPI(title="FZU Chat API", version="7.4.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
@@ -1037,13 +1037,22 @@ def truncate_title(title: str) -> str:
     return cleaned[:MAX_TITLE_LENGTH].rstrip(" ,，。；;") or "新对话"
 
 
+def build_title_summary_transcript(messages: List[Dict[str, Any]]) -> str:
+    lines: List[str] = []
+    for message in messages:
+        if message.get("role") != "user":
+            continue
+        content = (message.get("content") or "").strip()
+        if not content:
+            continue
+        lines.append(f"user: {content}")
+        if len(lines) >= 6:
+            break
+    return "\n".join(lines)
+
+
 async def summarize_title(messages: List[Dict[str, Any]]) -> str:
-    lines = []
-    for m in messages:
-        c = (m.get("content") or "").strip()
-        if c:
-            lines.append(f"{m['role']}: {c}")
-    transcript = "\n".join(lines)
+    transcript = build_title_summary_transcript(messages)
     if not transcript:
         return "新对话"
     try:

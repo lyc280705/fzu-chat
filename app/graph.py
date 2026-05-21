@@ -1073,15 +1073,19 @@ def build_graph(edu_session: Dict[str, Any] | None = None, use_checkpointer: boo
 graph = build_graph()
 
 
-prompt = "请概括用户的问题作为对话的标题，标题需要简短概括，不多于20个字。注意你的输出直接作为标题，所以不要有其他输出，不要输出标题二字。请输出标题"
+TITLE_SUMMARY_PROMPT = """你是聊天标题生成专家。只输出中文短标题，不要解释、引号或标点。
+规则：概括user请求的主题，短且客观；优先2-8字，最多15字；保留福大、教务、API等专名和缩写；删去“帮我/请问/问题/需求/关于”等泛词；忽略assistant寒暄和工具过程；无明确任务时输出“问候”。
+好例：今天晚饭去哪吃 -> 晚餐食堂；帮我查这学期成绩 -> 学期成绩；你好 -> 问候。
+请求：
+{input}
+标题："""
 summary_prompt = ChatPromptTemplate.from_messages(
     [
-        ("system", prompt),
-        ("human", "{input}"),
+        ("system", TITLE_SUMMARY_PROMPT),
     ]
 )
 summary_chain = (
     summary_prompt
-    | build_chat_llm(TITLE_SUMMARY_MODEL, temperature=0.1, streaming=False, thinking_type="disabled", max_tokens=40)
+    | build_chat_llm(TITLE_SUMMARY_MODEL, temperature=0.1, streaming=False, thinking_type="disabled", max_tokens=24)
     | StrOutputParser()
 )

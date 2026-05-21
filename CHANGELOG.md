@@ -3,6 +3,44 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.4] - 2026-05-21
+
+FZU-Chat v7.4 improves conversation title generation after the v7.3 campus recommendation release. Title summaries now use a compact Chinese prompt inspired by ultra-short chat-title guidelines, summarize only user requests, and keep the qwen3 title route in no-thinking mode for lower latency.
+
+### Highlights
+
+- More compact title prompt. The qwen3 title chain now uses a short Chinese system prompt that favors concrete 2-8 character titles and preserves campus, academic, route, API, and other proper names.
+- User-request-only title context. Conversation title input now excludes assistant greetings, self-introductions, and tool output text, so a simple "hello" no longer turns into the assistant's greeting phrase.
+- Lower title latency. The title model remains request-layer no-thinking and has a smaller completion budget, matching the ultra-compact output target.
+- Dynamic reminder polish carried forward. Meal reminders use one dining-reminder category with separate copy for location-enabled and location-unavailable states, while exam reminders can naturally ask whether the user needs study-place recommendations.
+
+### Validation
+
+- `/opt/anaconda3/envs/langchain/bin/python -m pytest tests`
+- `npm --prefix frontend run build`
+- Live title smoke: `你好` -> `问候`; `今天晚饭去哪吃` -> `晚餐食堂`; `帮我查一下这学期成绩` -> `学期成绩`
+
+---
+
+## 福大灵犀 v7.4
+
+福大灵犀 v7.4 重点优化 v7.3 之后的对话标题生成体验。标题总结现在采用参考超短聊天标题规范的中文短提示词，只概括用户请求，并保持 qwen3 标题链路关闭思考以降低延迟。
+
+### 版本亮点
+
+- 更紧凑的标题提示词。qwen3 标题链路改为短中文 system prompt，倾向生成具体的 2-8 字标题，并保留校园、教务、路线、API 等专名。
+- 标题上下文只看用户请求。生成标题时不再把助手寒暄、自我介绍和工具输出送入标题模型，避免“你好”被总结成助手回复口吻。
+- 降低标题链路延迟。标题模型继续在请求层关闭思考，并缩小输出 token 预算，匹配超短标题目标。
+- 延续动态提醒打磨。饭点统一走“饭点食堂提醒”，按定位是否可用区分文案；考试提醒可自然询问是否需要推荐自习地点。
+
+### 验证
+
+- `/opt/anaconda3/envs/langchain/bin/python -m pytest tests`
+- `npm --prefix frontend run build`
+- 真实标题链路冒烟：`你好` -> `问候`；`今天晚饭去哪吃` -> `晚餐食堂`；`帮我查一下这学期成绩` -> `学期成绩`
+
+---
+
 ## [v7.3] - 2026-05-20
 
 FZU-Chat v7.3 improves campus route recommendations and fixes a time-zone bug in dynamic meal reminders. Users can now choose whether AMap routes should use walking or bicycling, and that preference lives with location reminders instead of the global sidebar.
