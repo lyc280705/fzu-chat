@@ -287,6 +287,26 @@ class CampusDynamicContextTests(unittest.TestCase):
         self.assertNotIn("26.060123", persisted_text)
         self.assertNotIn("119.195456", persisted_text)
 
+    def test_dinner_location_hint_is_proactive_without_coordinate_wording(self):
+        store = self.make_store()
+        with mock.patch.object(dynamic, "campus_dynamic_context_store", store):
+            context = dynamic.build_dynamic_campus_context(
+                "102304226",
+                message_content="你好",
+                is_first_user_turn=True,
+                location={"lat": 26.060123, "lng": 119.195456, "accuracy": 20},
+                now=datetime(2026, 5, 18, 17, 10),
+            )
+
+        self.assertIn("本次定位可用", context)
+        self.assertIn("晚餐", context)
+        self.assertIn("主动轻声提醒", context)
+        self.assertIn("按你当前位置推荐附近晚餐食堂", context)
+        self.assertIn("步行/骑行路线", context)
+        self.assertIn("若定位已经可用，不要再要求用户授权定位或说明校区", context)
+        self.assertNotIn("经纬度", context)
+        self.assertNotIn("开启定位权限或说明所在校区", context)
+
     def test_user_purge_removes_snapshots_and_reminders(self):
         store = self.make_store()
         store.upsert_snapshot("102304226", "exam", {"digest": "d", "upcoming": []}, timedelta(minutes=30))

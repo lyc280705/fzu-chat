@@ -579,7 +579,7 @@ def _build_meal_time_event(now: datetime, meal: str | None = None) -> Dict[str, 
     return {
         "type": "meal_time",
         "title": "饭点食堂提醒",
-        "summary": f"当前接近{meal}时段；若用户在问候、安排今天或校园生活，可在末尾轻声提醒可开启定位权限或说明所在校区/教学楼，再继续追问附近食堂。",
+        "summary": f"当前接近{meal}时段；若用户在问候、安排今天或校园生活，可在末尾轻声提醒可开启定位权限或说明所在校区/教学楼，我可以继续推荐附近{meal}食堂。",
         "priority": 64,
         "digest": f"meal:{now.date().isoformat()}:{meal}",
         "repeat": "cooldown",
@@ -597,8 +597,8 @@ def _build_location_event(location: Dict[str, Any] | None, now: datetime) -> Dic
     return {
         "type": "transient_location",
         "title": "本次定位可用",
-        "summary": f"本次消息携带浏览器临时定位，可在用户需要校园去处时提醒能按当前位置给出{meal}或自习建议；不要复述经纬度。",
-        "priority": 54,
+        "summary": f"本次消息已有浏览器临时定位可供推荐工具使用，当前接近{meal}时段；若用户在问候、安排今天、校园生活或去处选择，可在末尾主动轻声提醒：我可以按你当前位置推荐附近{meal}食堂、步行/骑行路线，也能顺带找自习点。不要编造具体位置名称；需要地点详情时先调用校园推荐工具。",
+        "priority": 68,
         "digest": f"location:{now.date().isoformat()}:{now.hour}:{meal}",
         "repeat": "cooldown",
         "cooldown_seconds": 2 * 60 * 60,
@@ -663,7 +663,7 @@ def build_dynamic_campus_context(
     ]
     for index, event in enumerate(selected, start=1):
         lines.append(f"{index}. {event['title']}：{event['summary']}")
-    lines.append("提醒约束：先完整回答用户当前问题；考试、成绩、选课这类高优先级事件，在问候、泛问或学习安排场景可优先于末尾轻声提醒一句；专业知识问答等无关场景可忽略。最多提醒 1-2 条；不要保存这些易变事实到长期记忆。")
+    lines.append("提醒约束：先完整回答用户当前问题；考试、成绩、选课这类高优先级事件，在问候、泛问或学习安排场景可优先于末尾轻声提醒一句；饭点或定位可用事件，在问候、安排今天、校园生活、晚餐/自习相关场景也可以主动轻声提醒一句；若定位已经可用，不要再要求用户授权定位或说明校区。专业知识问答等无关场景可忽略。最多提醒 1-2 条；不要保存这些易变事实到长期记忆。")
     text = "\n".join(lines)
     if len(text) <= max_chars:
         return text
