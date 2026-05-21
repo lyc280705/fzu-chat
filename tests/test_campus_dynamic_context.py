@@ -67,7 +67,7 @@ class CampusDynamicContextTests(unittest.TestCase):
             )
 
         self.assertIn("线性代数", first)
-        self.assertIn("可问是否要推荐自习地点", first)
+        self.assertIn("可以询问用户是否需要推荐自习地点", first)
         self.assertEqual(second, "")
 
     def test_exam_event_can_reinject_next_day(self):
@@ -105,9 +105,9 @@ class CampusDynamicContextTests(unittest.TestCase):
             )
 
         self.assertIn("线性代数", first)
-        self.assertIn("可问是否要推荐自习地点", first)
+        self.assertIn("可以询问用户是否需要推荐自习地点", first)
         self.assertIn("线性代数", next_day)
-        self.assertIn("可问是否要推荐自习地点", next_day)
+        self.assertIn("可以询问用户是否需要推荐自习地点", next_day)
 
     def test_non_first_unrelated_message_does_not_inject(self):
         store = self.make_store()
@@ -169,7 +169,7 @@ class CampusDynamicContextTests(unittest.TestCase):
             )
 
         self.assertIn("可穿戴传感器", context)
-        self.assertIn("可问是否要推荐自习地点", context)
+        self.assertIn("可以询问用户是否需要推荐自习地点", context)
         self.assertLess((time.monotonic() - started) * 1000, 100)
 
     def test_meal_period_snapshot_can_inject_dining_hint(self):
@@ -191,7 +191,7 @@ class CampusDynamicContextTests(unittest.TestCase):
 
         self.assertIn("饭点食堂提醒", context)
         self.assertIn("早餐", context)
-        self.assertIn("开定位", context)
+        self.assertIn("开启定位权限", context)
 
     def test_meal_period_recent_class_still_uses_meal_dining_hint(self):
         store = self.make_store()
@@ -309,7 +309,7 @@ class CampusDynamicContextTests(unittest.TestCase):
             )
 
         self.assertIn("饭点食堂提醒", context)
-        self.assertIn("定位已开", context)
+        self.assertIn("本次消息已开启浏览器临时定位", context)
         self.assertNotIn("开启定位权限", context)
         self.assertNotIn("说明所在校区", context)
         rows = store.conn.execute("SELECT event_type, digest, last_injected_at, cooldown_until, expires_at FROM reminder_state").fetchall()
@@ -331,12 +331,10 @@ class CampusDynamicContextTests(unittest.TestCase):
         self.assertIn("饭点食堂提醒", context)
         self.assertNotIn("本次定位可用", context)
         self.assertIn("晚餐", context)
-        self.assertIn("定位已开", context)
-        self.assertIn("按当前位置推荐附近晚餐食堂", context)
+        self.assertIn("本次消息已开启浏览器临时定位", context)
+        self.assertIn("按你当前位置推荐附近晚餐食堂", context)
         self.assertIn("步行/骑行路线", context)
-        self.assertIn("约束：先答问题", context)
-        self.assertIn("饭点仅在问候/安排/校园生活/晚餐/自习相关场景提醒", context)
-        self.assertIn("最多 1-2 条；不存长期记忆", context)
+        self.assertIn("若饭点提示已经说明浏览器临时定位可用，不要再要求用户授权定位或说明校区", context)
         self.assertNotIn("经纬度", context)
         self.assertNotIn("开启定位权限或说明所在校区", context)
 

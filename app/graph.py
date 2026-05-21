@@ -1073,13 +1073,11 @@ def build_graph(edu_session: Dict[str, Any] | None = None, use_checkpointer: boo
 graph = build_graph()
 
 
-TITLE_SUMMARY_PROMPT = """为对话生成标题。只输出标题本身；不加前缀；不超15字；保留校园/教务/食堂/自习/路线场景。
-例：user: 今天晚饭去哪吃 -> 晚餐食堂推荐
-对话：
-{input}"""
+prompt = "请概括对话内容作为对话的标题，标题需要简短概括，不多于15个字。注意你的输出直接作为标题，所以不要有其他输出，不要输出标题二字。请输出标题"
 summary_prompt = ChatPromptTemplate.from_messages(
     [
-        ("system", TITLE_SUMMARY_PROMPT),
+        ("system", prompt),
+        ("human", "{input}"),
     ]
 )
 summary_chain = (
