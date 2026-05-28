@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v7.4](CHANGELOG.md)
+Current tagged release: [v7.5](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -65,7 +65,7 @@ fzu-chat/
 - `DASHSCOPE_API_KEY` – Alibaba Cloud DashScope embeddings for the local knowledge base
 - `BOCHA_API_KEY` – Bocha web search
 - `LANGSMITH_API_KEY` – LangSmith tracing
-- `AMAP_WEB_SERVICE_KEY` – Optional AMap Web Service key for POI supplementation and walking-route distance; local development can also use `amap_web_service_key.txt` or `AMAP_WEB_SERVICE_KEY_FILE`; requests are throttled to at most 5 QPS by default; when unset, campus recommendations fall back to the built-in FZU place library and estimated distance
+- `AMAP_WEB_SERVICE_KEY` – Optional AMap Web Service key for reverse geocoding browser location into text, POI supplementation, and walking/bicycling route distance; local development can also use `amap_web_service_key.txt` or `AMAP_WEB_SERVICE_KEY_FILE`; requests are throttled to at most 5 QPS by default; reverse-geocoding uses a short timeout and 10-minute in-process cache; when unset, campus recommendations fall back to the built-in FZU place library and estimated distance
 
 For local development, the backend also reads root-level key files such as `huaweicloud_maas_api_key.txt`, `dashscope_api_key.txt`, and `bocha_api_key.txt` when container secrets and environment variables are not set.
 
@@ -80,7 +80,7 @@ export HUAWEICLOUD_MAAS_API_KEY=...
 export DASHSCOPE_API_KEY=...
 export BOCHA_API_KEY=...
 export LANGSMITH_API_KEY=...
-export AMAP_WEB_SERVICE_KEY=... # optional, for walking routes in campus recommendations
+export AMAP_WEB_SERVICE_KEY=... # optional, for text location and campus routes
 
 # 3. Start backend
 uvicorn app.server:app --host 0.0.0.0 --port 8000
@@ -131,7 +131,7 @@ docker compose up -d --build
 - `POST /api/recommendations/signal-refresh` – Asynchronously refresh non-sensitive academic summary snapshots used by low-intrusion reminders
 - `POST /api/recommendations/contextual` – Generate one-time campus recommendations from `scenario`, optional browser `location`, `manual_location_id`, and optional `seen_grade_digest`
 
-Low-intrusion reminders no longer render automatic homepage cards and do not synchronously fetch slow educational-system data when a user sends a message. The backend reads cached non-sensitive summaries plus reminder cooldown state, injects a few dynamic events into a second short `SystemMessage`, and stores that runtime context once per conversation so later turns append messages without rewriting prior prompt content. Conversation history uses LangChain's approximate token counter and is only trimmed around the 200k-token boundary, preserving tool results for long chats. Browser coordinates are transient per message and are not persisted to conversation storage or long-term memory. Grade summaries store only digests, term labels, and recorded counts, never concrete scores. Mobile geolocation requires an HTTPS origin; plain HTTP server URLs will not show the browser permission prompt. The AMap key stays server-side through environment variables or Docker secrets.
+Low-intrusion reminders no longer render automatic homepage cards and do not synchronously fetch slow educational-system data when a user sends a message. The backend reads cached non-sensitive summaries plus reminder cooldown state, injects a few dynamic events into a second short `SystemMessage`, and stores that runtime context once per conversation so later turns append messages without rewriting prior prompt content. Conversation history uses LangChain's approximate token counter and is only trimmed around the 200k-token boundary, preserving tool results for long chats. Browser coordinates are transient per message: they are used server-side for campus recommendations and AMap reverse geocoding, while only the resulting text location can be injected into the current model prompt. Coordinates and text locations are not persisted to conversation storage or long-term memory. Grade summaries store only digests, term labels, and recorded counts, never concrete scores. Mobile geolocation requires an HTTPS origin; plain HTTP server URLs will not show the browser permission prompt. The AMap key stays server-side through environment variables or Docker secrets.
 
 ### Educational Tools (via Agent)
 The LLM agent can automatically call these tools when students ask about their academic data:

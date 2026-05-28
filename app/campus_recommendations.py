@@ -19,14 +19,25 @@ from langchain_core.tools import tool
 from .jwch_client import JwchClient, JwchError
 
 AMAP_AROUND_URL = "https://restapi.amap.com/v3/place/around"
+AMAP_REVERSE_GEOCODE_URL = "https://restapi.amap.com/v3/geocode/regeo"
 AMAP_WALKING_URL = "https://restapi.amap.com/v3/direction/walking"
 AMAP_BICYCLING_URL = "https://restapi.amap.com/v4/direction/bicycling"
 AMAP_TIMEOUT_SECONDS = float(os.getenv("AMAP_TIMEOUT_SECONDS", "4"))
+AMAP_REVERSE_GEOCODE_TIMEOUT_SECONDS = max(
+    0.2,
+    min(AMAP_TIMEOUT_SECONDS, float(os.getenv("AMAP_REVERSE_GEOCODE_TIMEOUT_SECONDS", "1.2") or "1.2")),
+)
+AMAP_REVERSE_GEOCODE_CACHE_TTL_SECONDS = max(
+    0,
+    int(os.getenv("AMAP_REVERSE_GEOCODE_CACHE_TTL_SECONDS", "600") or "600"),
+)
 AMAP_MAX_QPS = max(1, min(5, int(os.getenv("AMAP_MAX_QPS", "5") or "5")))
 AMAP_ROUTE_CANDIDATE_LIMIT = max(1, int(os.getenv("AMAP_ROUTE_CANDIDATE_LIMIT", "4") or "4"))
 BASE_DIR = Path(__file__).resolve().parent
 _AMAP_RATE_LOCK = Lock()
 _AMAP_REQUEST_TIMES = deque()
+_AMAP_REVERSE_GEOCODE_CACHE_LOCK = Lock()
+_AMAP_REVERSE_GEOCODE_CACHE: Dict[str, Tuple[float, str]] = {}
 
 AMAP_ROUTE_URLS = {
     "walking": AMAP_WALKING_URL,
@@ -97,6 +108,87 @@ def _amap_error_message(payload: Dict[str, Any] | None) -> str:
     if info and info.upper() != "OK":
         return f"地图服务返回异常：{info}"
     return "地图服务暂不可用"
+
+
+def _clean_location_text(value: Any, limit: int = 120) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    text = re.sub(r"\b\d{1,3}\.\d{4,}\s*,\s*\d{1,3}\.\d{4,}\b", "", text).strip(" ，,;；")
+    return text[:limit].rstrip(" ，,;；")
+
+
+def _component_text(value: Any) -> str:
+    if isinstance(value, dict):
+        value = value.get("name") or value.get("fullname") or ""
+    if isinstance(value, list):
+        value = next((item for item in value if item), "")
+    return _clean_location_text(value, 40)
+
+
+def _append_unique_location_part(parts: List[str], value: Any, limit: int = 80) -> None:
+    text = _clean_location_text(value, limit)
+    if not text:
+        return
+    normalized = re.sub(r"\s+", "", text)
+    if any(normalized and normalized in re.sub(r"\s+", "", part) for part in parts):
+        return
+    parts.append(text)
+
+
+def _format_regeocode_location_text(payload: Dict[str, Any] | None) -> str:
+    regeocode = (payload or {}).get("regeocode") or {}
+    if not isinstance(regeocode, dict):
+        return ""
+
+    parts: List[str] = []
+    formatted_address = _clean_location_text(regeocode.get("formatted_address"), 100)
+    if formatted_address:
+        parts.append(formatted_address)
+    else:
+        component = regeocode.get("addressComponent") or {}
+        if isinstance(component, dict):
+            component_parts = [
+                _component_text(component.get(key))
+                for key in ("province", "city", "district", "township")
+            ]
+            _append_unique_location_part(parts, "".join(part for part in component_parts if part), 100)
+
+    for collection_name, label in (("aois", "所在区域"), ("pois", "附近地点")):
+        collection = regeocode.get(collection_name)
+        if not isinstance(collection, list) or not collection:
+            continue
+        item = next((entry for entry in collection if isinstance(entry, dict) and entry.get("name")), None)
+        if item:
+            name = _clean_location_text(item.get("name"), 50)
+            if name:
+                _append_unique_location_part(parts, f"{label}：{name}", 70)
+
+    return "；".join(parts)[:160].rstrip(" ，,;；")
+
+
+def _reverse_geocode_cache_key(lat: float, lng: float) -> str:
+    return f"{round(lat, 4):.4f},{round(lng, 4):.4f}"
+
+
+def _get_cached_reverse_geocode(key: str) -> str:
+    if AMAP_REVERSE_GEOCODE_CACHE_TTL_SECONDS <= 0:
+        return ""
+    now = time_module.monotonic()
+    with _AMAP_REVERSE_GEOCODE_CACHE_LOCK:
+        cached = _AMAP_REVERSE_GEOCODE_CACHE.get(key)
+        if not cached:
+            return ""
+        cached_at, value = cached
+        if now - cached_at <= AMAP_REVERSE_GEOCODE_CACHE_TTL_SECONDS:
+            return value
+        _AMAP_REVERSE_GEOCODE_CACHE.pop(key, None)
+    return ""
+
+
+def _set_cached_reverse_geocode(key: str, value: str) -> None:
+    if AMAP_REVERSE_GEOCODE_CACHE_TTL_SECONDS <= 0 or not value:
+        return
+    with _AMAP_REVERSE_GEOCODE_CACHE_LOCK:
+        _AMAP_REVERSE_GEOCODE_CACHE[key] = (time_module.monotonic(), value)
 
 
 def _wait_for_amap_slot() -> None:
@@ -768,6 +860,39 @@ class AMapClient:
     def walking_route(self, origin: Dict[str, Any], dest: Dict[str, Any]) -> Dict[str, Any] | None:
         return self.route(origin, dest, "walking")
 
+    def reverse_geocode(self, location: Dict[str, Any]) -> str:
+        if not self.available:
+            self.last_error = "未配置高德地图 Key"
+            return ""
+        lat = _safe_float(location.get("lat"))
+        lng = _safe_float(location.get("lng"))
+        if lat is None or lng is None or not (-90 <= lat <= 90 and -180 <= lng <= 180):
+            self.last_error = "定位坐标无效"
+            return ""
+        params = {
+            "key": self.key,
+            "location": f"{lng:.6f},{lat:.6f}",
+            "radius": "200",
+            "extensions": "all",
+            "batch": "false",
+            "roadlevel": "0",
+        }
+        try:
+            _wait_for_amap_slot()
+            response = requests.get(AMAP_REVERSE_GEOCODE_URL, params=params, timeout=self.timeout)
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            self.last_error = "地图服务请求失败"
+            return ""
+        if str(payload.get("status")) != "1":
+            self.last_error = _amap_error_message(payload)
+            return ""
+        text = _format_regeocode_location_text(payload)
+        if not text:
+            self.last_error = "地图服务未返回文字地址"
+        return text
+
     def around(self, origin: Dict[str, Any], keywords: str, kind: str) -> List[Dict[str, Any]]:
         if not self.available:
             return []
@@ -817,6 +942,25 @@ class AMapClient:
                 }
             )
         return pois
+
+
+def resolve_browser_location_text(location: Dict[str, Any] | None, client: AMapClient | None = None) -> str:
+    lat = _safe_float((location or {}).get("lat"))
+    lng = _safe_float((location or {}).get("lng"))
+    if lat is None or lng is None or not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return ""
+
+    cache_key = _reverse_geocode_cache_key(lat, lng)
+    if client is None:
+        cached = _get_cached_reverse_geocode(cache_key)
+        if cached:
+            return cached
+
+    amap = client or AMapClient(timeout=AMAP_REVERSE_GEOCODE_TIMEOUT_SECONDS)
+    text = amap.reverse_geocode({"lat": lat, "lng": lng})
+    if client is None and text:
+        _set_cached_reverse_geocode(cache_key, text)
+    return text
 
 
 def _meal_period(now: datetime) -> str:

@@ -32,7 +32,11 @@ from .auth import (
     invalidate_session,
     update_session,
 )
-from .campus_recommendations import build_contextual_recommendation, manual_location_options
+from .campus_recommendations import (
+    build_contextual_recommendation,
+    manual_location_options,
+    resolve_browser_location_text,
+)
 from .campus_dynamic_context import (
     build_dynamic_campus_context,
     is_dynamic_context_request,
@@ -47,6 +51,7 @@ from .graph import (
     KIMI_CHAT_MODEL,
     build_graph,
     build_runtime_system_context,
+    build_transient_location_system_context,
     reset_search_citation_counter,
     summary_chain,
     warm_teaching_week_cache_async,
@@ -268,7 +273,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="FZU Chat API", version="7.4.0", lifespan=lifespan)
+app = FastAPI(title="FZU Chat API", version="7.5.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
@@ -1859,6 +1864,10 @@ async def create_message(
     message_location = req.context.location.dict() if req.context and req.context.location else None
     if message_location:
         edu_ctx["message_location"] = message_location
+        message_location_text = resolve_browser_location_text(message_location)
+        if message_location_text:
+            edu_ctx["message_location_text"] = message_location_text
+            edu_ctx["message_location_context"] = build_transient_location_system_context(message_location_text)
     if req.context:
         edu_ctx["travel_mode"] = req.context.travel_mode
     runtime_system_context = str(conv.get("runtime_context") or "").strip()

@@ -3,6 +3,46 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.5] - 2026-05-28
+
+FZU-Chat v7.5 improves location-aware campus prompts. Browser coordinates still stay transient on the server, but when a message carries authorized location, the backend can use AMap reverse geocoding to inject a short text location into the current model prompt so dining, study, and route answers have better local context without exposing raw coordinates.
+
+### Highlights
+
+- Text-only current location. Authorized browser location is converted through AMap reverse geocoding into a concise address/AOI/nearby-POI text before it reaches the runtime prompt.
+- Prompt privacy polish. The model-visible prompt no longer mentions coordinates when coordinates are not present; it only treats the AMap result as map text and keeps it out of long-term memory.
+- Request-layer latency control. Reverse geocoding uses a short configurable timeout and a 10-minute rounded-location cache so repeated nearby messages do not repeatedly wait on the map service.
+- Existing recommendation flow preserved. `recommend_campus_context` still receives the transient server-side location for ranking and route estimates, while the new text location helps normal answers understand the user's campus area.
+
+### Validation
+
+- `/opt/anaconda3/envs/langchain/bin/python -m pytest tests`
+- `/opt/anaconda3/envs/langchain/bin/python -m py_compile app/campus_recommendations.py app/graph.py app/server.py`
+- `npm --prefix frontend run build`
+- `git diff --check`
+
+---
+
+## 福大灵犀 v7.5
+
+福大灵犀 v7.5 优化了带定位的校园问答提示。浏览器经纬度仍只在服务端临时使用；当本条消息携带授权定位时，后端会通过高德逆地理编码生成简短文字位置，再注入当前模型提示词，让食堂、自习和路线类回答能理解用户大致所在区域，同时不暴露原始坐标。
+
+### 版本亮点
+
+- 当前位置改为文字注入。授权浏览器定位会先通过高德逆地理编码转换为地址、AOI 或附近 POI 文本，再进入运行时提示词。
+- 提示词隐私打磨。模型可见提示不再在没有坐标时提到坐标，只把高德返回内容当作地图地点文本，并明确不写入长期记忆。
+- 请求层延迟控制。逆地理编码使用可配置短超时和 10 分钟圆整位置缓存，避免短时间内多次消息反复等待地图服务。
+- 保留原推荐链路。`recommend_campus_context` 仍可使用服务端临时定位做排序和路线估算，新增的文字位置则帮助普通回答理解用户所在校园区域。
+
+### 验证
+
+- `/opt/anaconda3/envs/langchain/bin/python -m pytest tests`
+- `/opt/anaconda3/envs/langchain/bin/python -m py_compile app/campus_recommendations.py app/graph.py app/server.py`
+- `npm --prefix frontend run build`
+- `git diff --check`
+
+---
+
 ## [v7.4] - 2026-05-21
 
 FZU-Chat v7.4 improves conversation title generation after the v7.3 campus recommendation release. Title summaries now use a compact Chinese prompt inspired by ultra-short chat-title guidelines, summarize only user requests, and keep the qwen3 title route in no-thinking mode for lower latency.

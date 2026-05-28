@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-当前已标记版本：[v7.4](CHANGELOG.md)
+当前已标记版本：[v7.5](CHANGELOG.md)
 
 版本记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -65,7 +65,7 @@ fzu-chat/
 - `DASHSCOPE_API_KEY` – 阿里云 DashScope 向量化，用于本地知识库 embedding
 - `BOCHA_API_KEY` – 博查网络搜索
 - `LANGSMITH_API_KEY` – LangSmith 追踪
-- `AMAP_WEB_SERVICE_KEY` – 可选，高德 Web 服务 Key，用于补充周边 POI 和计算步行路线；本地开发也可使用 `amap_web_service_key.txt` 或 `AMAP_WEB_SERVICE_KEY_FILE`；请求默认限速不超过 5 QPS；未配置时校园推荐会使用内置福大地点库和估算距离降级
+- `AMAP_WEB_SERVICE_KEY` – 可选，高德 Web 服务 Key，用于把浏览器定位逆地理编码为文字位置、补充周边 POI 和计算步行/骑行路线；本地开发也可使用 `amap_web_service_key.txt` 或 `AMAP_WEB_SERVICE_KEY_FILE`；请求默认限速不超过 5 QPS；逆地理编码使用短超时和 10 分钟进程内缓存；未配置时校园推荐会使用内置福大地点库和估算距离降级
 
 本地开发时，如果未配置容器 secret 或环境变量，后端也会读取项目根目录下的 `huaweicloud_maas_api_key.txt`、`dashscope_api_key.txt`、`bocha_api_key.txt` 等密钥文件。
 
@@ -80,7 +80,7 @@ export HUAWEICLOUD_MAAS_API_KEY=...
 export DASHSCOPE_API_KEY=...
 export BOCHA_API_KEY=...
 export LANGSMITH_API_KEY=...
-export AMAP_WEB_SERVICE_KEY=... # 可选，用于校园推荐步行路线
+export AMAP_WEB_SERVICE_KEY=... # 可选，用于文字位置和校园路线
 
 # 3. 启动后端
 uvicorn app.server:app --host 0.0.0.0 --port 8000
@@ -131,7 +131,7 @@ docker compose up -d --build
 - `POST /api/recommendations/signal-refresh` – 登录态下异步刷新低侵入提醒所需的非敏感教务摘要快照
 - `POST /api/recommendations/contextual` – 根据 `scenario`、可选浏览器 `location`、`manual_location_id` 和可选 `seen_grade_digest` 生成一次性校园建议
 
-低侵入提醒不会在首页自动展示推荐卡片，也不会在发送消息时同步抓取慢速教务数据。后端只读取已缓存的非敏感摘要和提醒冷却状态，将少量动态事件放入第二条短 `SystemMessage`，并在每个对话中只保存第一次生成的运行时上下文，后续回合仅追加新消息，不改旧提示内容。对话历史使用 LangChain 近似 token 计数，接近 200k token 时才裁剪，尽量保留长对话里的工具结果。浏览器经纬度仅随本次消息临时传入，不写入会话存储或长期记忆；成绩摘要只保存 digest、学期和录入数量，不保存具体分数；高德 Key 仅通过后端环境变量或 Docker secret 使用，不暴露给前端。手机定位需要通过 HTTPS 域名访问，普通服务器 HTTP 地址不会弹出浏览器定位授权。
+低侵入提醒不会在首页自动展示推荐卡片，也不会在发送消息时同步抓取慢速教务数据。后端只读取已缓存的非敏感摘要和提醒冷却状态，将少量动态事件放入第二条短 `SystemMessage`，并在每个对话中只保存第一次生成的运行时上下文，后续回合仅追加新消息，不改旧提示内容。对话历史使用 LangChain 近似 token 计数，接近 200k token 时才裁剪，尽量保留长对话里的工具结果。浏览器经纬度仅随本次消息临时传入：后端用它做校园推荐和高德逆地理编码，模型只会看到逆地理编码后的文字位置。经纬度和文字位置都不会写入会话存储或长期记忆；成绩摘要只保存 digest、学期和录入数量，不保存具体分数；高德 Key 仅通过后端环境变量或 Docker secret 使用，不暴露给前端。手机定位需要通过 HTTPS 域名访问，普通服务器 HTTP 地址不会弹出浏览器定位授权。
 
 ### 教务工具（Agent 自动调用）
 AI 助手在学生询问教务数据时自动调用：

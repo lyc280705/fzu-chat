@@ -7,6 +7,7 @@ from unittest import mock
 from app.campus_recommendations import (
     AMapClient,
     AMAP_BICYCLING_URL,
+    AMAP_REVERSE_GEOCODE_URL,
     CAMPUS_POIS,
     _choose_scenario,
     _amap_error_message,
@@ -18,6 +19,7 @@ from app.campus_recommendations import (
     _upcoming_exams,
     build_contextual_recommendation,
     build_campus_recommendation_tools,
+    resolve_browser_location_text,
 )
 
 
@@ -97,11 +99,47 @@ class CampusRecommendationTests(unittest.TestCase):
         self.assertFalse(client.available)
         self.assertIsNone(client.walking_route({"lat": 26.0, "lng": 119.0}, {"lat": 26.1, "lng": 119.1}))
         self.assertEqual(client.around({"lat": 26.0, "lng": 119.0}, "福州大学 食堂", "dining"), [])
+        self.assertEqual(client.reverse_geocode({"lat": 26.0, "lng": 119.0}), "")
 
     def test_amap_error_message_is_localized(self):
         message = _amap_error_message({"status": "0", "info": "CUQPS_HAS_EXCEEDED_THE_LIMIT"})
 
         self.assertEqual(message, "高德服务访问过于频繁或额度暂时受限")
+
+    def test_amap_client_reverse_geocode_returns_text_location(self):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "status": "1",
+                    "regeocode": {
+                        "formatted_address": "福建省福州市闽侯县福州大学旗山校区",
+                        "aois": [{"name": "福州大学旗山校区"}],
+                        "pois": [{"name": "福州大学图书馆"}],
+                    },
+                }
+
+        with mock.patch("app.campus_recommendations.requests.get", return_value=FakeResponse()) as get_mock:
+            client = AMapClient(key="valid-key", timeout=0.5)
+            text = client.reverse_geocode({"lat": 26.060123, "lng": 119.195456})
+
+        self.assertEqual(get_mock.call_args.args[0], AMAP_REVERSE_GEOCODE_URL)
+        self.assertEqual(get_mock.call_args.kwargs["params"]["location"], "119.195456,26.060123")
+        self.assertIn("福建省福州市闽侯县福州大学旗山校区", text)
+        self.assertIn("附近地点：福州大学图书馆", text)
+        self.assertNotIn("119.195456", text)
+        self.assertNotIn("26.060123", text)
+
+    def test_resolve_browser_location_text_uses_provided_amap_client(self):
+        client = mock.Mock()
+        client.reverse_geocode.return_value = "福建省福州市福州大学旗山校区"
+
+        text = resolve_browser_location_text({"lat": 26.060123, "lng": 119.195456}, client=client)
+
+        self.assertEqual(text, "福建省福州市福州大学旗山校区")
+        client.reverse_geocode.assert_called_once_with({"lat": 26.060123, "lng": 119.195456})
 
     def test_amap_client_bicycling_route_uses_v4_payload_shape(self):
         class FakeResponse:
