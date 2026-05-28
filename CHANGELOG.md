@@ -3,6 +3,48 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.6] - 2026-05-28
+
+FZU-Chat v7.6 moves location and campus-route work off the critical message path. Browser location is refreshed after login or after enabling location reminders, AMap text-location lookup is warmed in the background, and the campus recommendation tool now returns quickly with cached or estimated routes while refreshing live AMap routes asynchronously.
+
+### Highlights
+
+- Background browser location refresh. The frontend no longer waits for `getCurrentPosition` while sending a message; it only attaches a 10-minute cached location when available and refreshes stale location in the background.
+- Background AMap text context. The backend adds a location-context warmup endpoint and reads only cached reverse-geocoded text during message creation, so high-priority exam, grade, and course-selection reminders are not blocked by map latency.
+- Faster `recommend_campus_context`. Tool calls avoid live educational-system and map-route waits by default, use cached or estimated walking/bicycling routes immediately, and schedule route refreshes for later requests.
+- Cache-backed route reuse. AMap route results now have a short in-memory cache and can be reused when network access is disabled for fast recommendation responses.
+
+### Validation
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `git diff --check`
+
+---
+
+## 福大灵犀 v7.6
+
+福大灵犀 v7.6 将定位和校园路线推荐从发送消息的关键路径中移开。浏览器定位会在登录后或开启定位提醒后后台刷新，高德文字位置后台预热；校园推荐工具优先快速返回缓存或估算路线，并异步刷新真实高德路线。
+
+### 版本亮点
+
+- 浏览器定位后台刷新。前端发送消息时不再等待 `getCurrentPosition`，只在有 10 分钟内缓存时携带定位，缓存过期则后台刷新。
+- 高德文字位置后台预热。后端新增位置上下文预热接口，创建消息时只读取已缓存的逆地理编码文字，避免地图延迟阻塞考试、成绩、选课等高优先级提醒。
+- `recommend_campus_context` 更快。工具调用默认不等待实时教务慢查询和高德路线接口，立即使用缓存或估算的步行/骑行路线，并为后续请求后台刷新路线。
+- 路线缓存复用。高德路线结果新增短期内存缓存，快速推荐模式下可直接复用缓存路线。
+
+### 验证
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `git diff --check`
+
+---
+
 ## [v7.5] - 2026-05-28
 
 FZU-Chat v7.5 improves location-aware campus prompts. Browser coordinates still stay transient on the server, but when a message carries authorized location, the backend can use AMap reverse geocoding to inject a short text location into the current model prompt so dining, study, and route answers have better local context without exposing raw coordinates.

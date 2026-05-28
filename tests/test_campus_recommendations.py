@@ -7,6 +7,7 @@ from unittest import mock
 from app.campus_recommendations import (
     AMapClient,
     AMAP_BICYCLING_URL,
+    AMAP_WALKING_URL,
     AMAP_REVERSE_GEOCODE_URL,
     CAMPUS_POIS,
     _choose_scenario,
@@ -19,6 +20,7 @@ from app.campus_recommendations import (
     _upcoming_exams,
     build_contextual_recommendation,
     build_campus_recommendation_tools,
+    get_cached_browser_location_text,
     resolve_browser_location_text,
 )
 
@@ -79,7 +81,8 @@ class CampusRecommendationTests(unittest.TestCase):
             {"message_location": {"lat": 26.0609, "lng": 119.1907, "accuracy": 40}}
         )[0]
 
-        content = tool.invoke({"scenario": "dining"})
+        with mock.patch("app.campus_recommendations._read_amap_key", return_value=""):
+            content = tool.invoke({"scenario": "dining"})
 
         self.assertIn("已使用你本次授权的浏览器定位", content)
         self.assertNotIn("未获得定位", content)
@@ -141,6 +144,28 @@ class CampusRecommendationTests(unittest.TestCase):
         self.assertEqual(text, "福建省福州市福州大学旗山校区")
         client.reverse_geocode.assert_called_once_with({"lat": 26.060123, "lng": 119.195456})
 
+    def test_resolve_browser_location_text_populates_cache_for_fast_message_context(self):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "status": "1",
+                    "regeocode": {"formatted_address": "福建省福州市闽侯县福州大学旗山校区测试点"},
+                }
+
+        location = {"lat": 26.071234, "lng": 119.181234}
+        with (
+            mock.patch("app.campus_recommendations._read_amap_key", return_value="valid-key"),
+            mock.patch("app.campus_recommendations.requests.get", return_value=FakeResponse()) as get_mock,
+        ):
+            text = resolve_browser_location_text(location)
+
+        self.assertEqual(text, "福建省福州市闽侯县福州大学旗山校区测试点")
+        self.assertEqual(get_cached_browser_location_text(location), text)
+        self.assertEqual(get_mock.call_args.args[0], AMAP_REVERSE_GEOCODE_URL)
+
     def test_amap_client_bicycling_route_uses_v4_payload_shape(self):
         class FakeResponse:
             def raise_for_status(self):
@@ -161,6 +186,30 @@ class CampusRecommendationTests(unittest.TestCase):
         self.assertEqual(result["distance_m"], 480)
         self.assertEqual(result["duration_min"], 3)
         self.assertEqual(result["mode"], "bicycling")
+
+    def test_amap_route_returns_cached_result_when_network_is_disabled(self):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "status": "1",
+                    "route": {"paths": [{"distance": "640", "duration": "420"}]},
+                }
+
+        origin = {"lat": 26.071111, "lng": 119.181111}
+        dest = {"lat": 26.072222, "lng": 119.182222}
+        with mock.patch("app.campus_recommendations.requests.get", return_value=FakeResponse()) as get_mock:
+            result = AMapClient(key="valid-key").route(origin, dest, "walking")
+
+        self.assertEqual(get_mock.call_args.args[0], AMAP_WALKING_URL)
+        self.assertEqual(result["duration_min"], 7)
+        with mock.patch("app.campus_recommendations.requests.get") as disabled_get_mock:
+            cached = AMapClient(key="valid-key").route(origin, dest, "walking", allow_network=False)
+
+        disabled_get_mock.assert_not_called()
+        self.assertEqual(cached, result)
 
     def test_recommendation_limits_route_requests(self):
         route_result = {"distance_m": 600, "duration_min": 8, "source": "amap", "mode": "walking", "mode_label": "步行"}
@@ -341,6 +390,38 @@ class CampusRecommendationTests(unittest.TestCase):
 
         names = [item["name"] for item in data["recommendations"]]
         self.assertTrue({"晋江楼学习中心", "旗山校区图书馆"}.intersection(names))
+
+    def test_fast_contextual_recommendation_defers_live_map_requests(self):
+        with (
+            mock.patch("app.campus_recommendations._read_amap_key", return_value="valid-key"),
+            mock.patch.object(AMapClient, "around") as around_mock,
+            mock.patch("app.campus_recommendations.schedule_route_refresh", return_value=True) as schedule_mock,
+            mock.patch("app.campus_recommendations.requests.get") as get_mock,
+        ):
+            data = build_contextual_recommendation(
+                scenario="dining",
+                manual_location_id="qishan_center",
+                now=datetime(2026, 5, 17, 18, 10),
+                allow_live_map=False,
+                background_map_refresh=True,
+            )
+
+        around_mock.assert_not_called()
+        get_mock.assert_not_called()
+        self.assertGreaterEqual(schedule_mock.call_count, 1)
+        self.assertEqual(data["map_status"], "estimated")
+        self.assertIn("快速返回", data["map_note"])
+
+    def test_recommendation_tool_defers_live_edu_queries(self):
+        with (
+            mock.patch("app.campus_recommendations._read_amap_key", return_value=""),
+            mock.patch("app.campus_recommendations._build_client") as build_client_mock,
+        ):
+            tool = build_campus_recommendation_tools({"edu_authenticated": True})[0]
+            content = tool.invoke({"scenario": "auto"})
+
+        build_client_mock.assert_not_called()
+        self.assertIn("推荐", content)
 
 
 if __name__ == "__main__":

@@ -832,6 +832,22 @@ const requestBrowserLocation = ({ timeout = 8000, maximumAge = 60000 } = {}) => 
   )
 })
 
+const browserLocationPayload = (location) => ({
+  lat: location.lat,
+  lng: location.lng,
+  accuracy: location.accuracy,
+})
+
+const warmServerLocationContext = async (location) => {
+  if (!location) return null
+  const response = await api('/api/recommendations/location-context', {
+    method: 'POST',
+    body: JSON.stringify({ location: browserLocationPayload(location) }),
+  })
+  if (!response.ok) return null
+  return response.json().catch(() => null)
+}
+
 const queryGeolocationPermission = async () => {
   const nav = globalThis.navigator
   if (!isSecureGeolocationContext()) return 'insecure'
@@ -2179,7 +2195,7 @@ function PrivacyPolicyView({
         <div className="privacy-card privacy-card--location">
           <div>
             <h3>定位与智能提醒</h3>
-            <p>开启后，灵犀会在你发送消息时复用 10 分钟内的临时浏览器定位，用来判断是否适合在回复末尾轻声提醒附近食堂或自习地点，并避免短时间内反复触发授权。手机访问需要 HTTPS 域名才会弹出定位授权；经纬度不写入会话、长期记忆或服务端日志。</p>
+            <p>开启后，灵犀会在登录后后台刷新临时浏览器定位，并在发送消息时只复用 10 分钟内缓存，用来判断是否适合在回复末尾轻声提醒附近食堂或自习地点，避免发送时等待定位或短时间反复触发授权。手机访问需要 HTTPS 域名才会弹出定位授权；经纬度不写入会话、长期记忆或服务端日志。</p>
             <div className="privacy-location-status">
               <span>应用开关：{locationEnabled ? '已开启' : '未开启'}</span>
               <span>浏览器权限：{locationPermissionLabel(locationPermission)}</span>
@@ -2313,6 +2329,7 @@ function App() {
   const copiedMessageTimerRef = useRef(null)
   const recentLocationRef = useRef(null)
   const lastLocationFailureAtRef = useRef(0)
+  const backgroundLocationRefreshRef = useRef(null)
 
   const activeConv = useMemo(() => conversations.find((c) => c.id === activeId) ?? null, [activeId, conversations])
   const activeMsgs = useMemo(() => normMsgs(msgStore[activeId]?.messages ?? []), [activeId, msgStore])
@@ -2725,6 +2742,52 @@ function App() {
     return state
   }, [])
 
+  const backgroundRefreshBrowserLocation = useCallback(async ({ quiet = true, force = false } = {}) => {
+    if (!force && !locationRecommendationEnabled) return null
+    const now = Date.now()
+    const cachedLocation = recentLocationRef.current
+    if (!force && cachedLocation && now - cachedLocation.capturedAt <= LOCATION_CONTEXT_CACHE_MS) {
+      void warmServerLocationContext(cachedLocation).catch(() => {})
+      return cachedLocation
+    }
+    if (!force && lastLocationFailureAtRef.current && now - lastLocationFailureAtRef.current < LOCATION_CONTEXT_RETRY_COOLDOWN_MS) {
+      return null
+    }
+    if (backgroundLocationRefreshRef.current) return backgroundLocationRefreshRef.current
+
+    const task = (async () => {
+      try {
+        const location = await requestBrowserLocation({ timeout: 5000, maximumAge: LOCATION_CONTEXT_CACHE_MS })
+        const timestamp = new Date().toISOString()
+        const nextLocation = {
+          ...location,
+          timestamp,
+          capturedAt: Date.now(),
+        }
+        recentLocationRef.current = nextLocation
+        lastLocationFailureAtRef.current = 0
+        setLocationPermission('granted')
+        if (!quiet) {
+          setLocationPermissionMessage('已刷新定位缓存。之后发送消息时只使用 10 分钟内缓存，不会临时等待定位。')
+        }
+        void warmServerLocationContext(nextLocation).catch(() => {})
+        return nextLocation
+      } catch (err) {
+        lastLocationFailureAtRef.current = Date.now()
+        const state = await queryGeolocationPermission()
+        setLocationPermission(state)
+        if (!quiet) {
+          setLocationPermissionMessage(refineGeolocationErrorMessage(err.message, state))
+        }
+        return null
+      } finally {
+        backgroundLocationRefreshRef.current = null
+      }
+    })()
+    backgroundLocationRefreshRef.current = task
+    return task
+  }, [locationRecommendationEnabled])
+
   const handleOpenPrivacyView = useCallback(() => {
     setError('')
     setLocationPermissionMessage('')
@@ -2732,6 +2795,11 @@ function App() {
     setViewMode('privacy')
     setSidebarOpen(false)
   }, [refreshLocationPermission])
+
+  useEffect(() => {
+    if (!userId || !locationRecommendationEnabled) return
+    void backgroundRefreshBrowserLocation({ quiet: true })
+  }, [backgroundRefreshBrowserLocation, locationRecommendationEnabled, userId])
 
   const toggleDesktopSidebar = useCallback(() => {
     setSidebarCollapsed((value) => !value)
@@ -2877,15 +2945,17 @@ function App() {
     setLocationPermissionMessage('')
     try {
       const location = await requestBrowserLocation()
-      recentLocationRef.current = {
+      const nextLocation = {
         ...location,
         timestamp: new Date().toISOString(),
         capturedAt: Date.now(),
       }
+      recentLocationRef.current = nextLocation
       lastLocationFailureAtRef.current = 0
       setLocationPermission('granted')
       setLocationRecommendationEnabled(true)
-      setLocationPermissionMessage('已开启。之后你发送消息时，灵犀会复用 10 分钟内的浏览器定位判断是否需要顺路提醒附近食堂或自习地点，不会短时间反复触发授权。')
+      setLocationPermissionMessage('已开启。灵犀会在后台刷新定位缓存，发送消息时只复用 10 分钟内缓存，不会临时等待定位或反复触发授权。')
+      void warmServerLocationContext(nextLocation).catch(() => {})
       void api('/api/recommendations/signal-refresh', { method: 'POST' }).catch(() => {})
     } catch (err) {
       lastLocationFailureAtRef.current = Date.now()
@@ -3088,34 +3158,9 @@ function App() {
         },
       }
     }
-    if (lastLocationFailureAtRef.current && now - lastLocationFailureAtRef.current < LOCATION_CONTEXT_RETRY_COOLDOWN_MS) {
-      return baseContext
-    }
-    try {
-      const location = await requestBrowserLocation({ timeout: 5000, maximumAge: LOCATION_CONTEXT_CACHE_MS })
-      const timestamp = new Date().toISOString()
-      recentLocationRef.current = {
-        ...location,
-        timestamp,
-        capturedAt: Date.now(),
-      }
-      lastLocationFailureAtRef.current = 0
-      setLocationPermission('granted')
-      return {
-        ...baseContext,
-        location: {
-          ...location,
-          timestamp,
-        },
-      }
-    } catch (err) {
-      lastLocationFailureAtRef.current = Date.now()
-      const state = await queryGeolocationPermission()
-      setLocationPermission(state)
-      setLocationPermissionMessage(refineGeolocationErrorMessage(err.message, state))
-      return baseContext
-    }
-  }, [campusTravelMode, locationRecommendationEnabled])
+    void backgroundRefreshBrowserLocation({ quiet: true })
+    return baseContext
+  }, [backgroundRefreshBrowserLocation, campusTravelMode, locationRecommendationEnabled])
 
   const sendPrompt = useCallback(async (rawPrompt, options = {}) => {
     const prompt = String(rawPrompt ?? '').trim()

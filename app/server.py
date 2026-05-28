@@ -34,8 +34,9 @@ from .auth import (
 )
 from .campus_recommendations import (
     build_contextual_recommendation,
+    get_cached_browser_location_text,
     manual_location_options,
-    resolve_browser_location_text,
+    schedule_browser_location_text_refresh,
 )
 from .campus_dynamic_context import (
     build_dynamic_campus_context,
@@ -273,7 +274,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="FZU Chat API", version="7.5.0", lifespan=lifespan)
+app = FastAPI(title="FZU Chat API", version="7.6.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
@@ -381,6 +382,10 @@ class ContextualRecommendationRequest(BaseModel):
     location: RecommendationLocation | None = None
     manual_location_id: str | None = Field(default=None, max_length=80)
     seen_grade_digest: str | None = Field(default=None, max_length=80)
+
+
+class LocationContextWarmupRequest(BaseModel):
+    location: RecommendationLocation
 
 
 class FeedbackUpdateRequest(BaseModel):
@@ -1547,6 +1552,17 @@ def refresh_recommendation_signals(user: AuthUser = Depends(require_auth)) -> Di
     return {"ok": True, "scheduled": bool(edu_ctx.get("edu_authenticated"))}
 
 
+@app.post("/api/recommendations/location-context")
+def warm_recommendation_location_context(
+    req: LocationContextWarmupRequest,
+    user: AuthUser = Depends(require_auth),
+) -> Dict[str, Any]:
+    location = req.location.dict()
+    cached_text = get_cached_browser_location_text(location)
+    scheduled = schedule_browser_location_text_refresh(location)
+    return {"ok": True, "cached": bool(cached_text), "scheduled": scheduled}
+
+
 @app.post("/api/recommendations/contextual")
 def contextual_recommendation(
     req: ContextualRecommendationRequest,
@@ -1864,10 +1880,11 @@ async def create_message(
     message_location = req.context.location.dict() if req.context and req.context.location else None
     if message_location:
         edu_ctx["message_location"] = message_location
-        message_location_text = resolve_browser_location_text(message_location)
+        message_location_text = get_cached_browser_location_text(message_location)
         if message_location_text:
             edu_ctx["message_location_text"] = message_location_text
             edu_ctx["message_location_context"] = build_transient_location_system_context(message_location_text)
+        schedule_browser_location_text_refresh(message_location)
     if req.context:
         edu_ctx["travel_mode"] = req.context.travel_mode
     runtime_system_context = str(conv.get("runtime_context") or "").strip()

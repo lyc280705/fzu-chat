@@ -9,7 +9,7 @@ import math
 import os
 from pathlib import Path
 import re
-from threading import Lock
+from threading import Lock, Thread
 import time as time_module
 from typing import Any, Dict, List, Tuple
 
@@ -31,6 +31,10 @@ AMAP_REVERSE_GEOCODE_CACHE_TTL_SECONDS = max(
     0,
     int(os.getenv("AMAP_REVERSE_GEOCODE_CACHE_TTL_SECONDS", "600") or "600"),
 )
+AMAP_ROUTE_CACHE_TTL_SECONDS = max(
+    0,
+    int(os.getenv("AMAP_ROUTE_CACHE_TTL_SECONDS", "600") or "600"),
+)
 AMAP_MAX_QPS = max(1, min(5, int(os.getenv("AMAP_MAX_QPS", "5") or "5")))
 AMAP_ROUTE_CANDIDATE_LIMIT = max(1, int(os.getenv("AMAP_ROUTE_CANDIDATE_LIMIT", "4") or "4"))
 BASE_DIR = Path(__file__).resolve().parent
@@ -38,6 +42,10 @@ _AMAP_RATE_LOCK = Lock()
 _AMAP_REQUEST_TIMES = deque()
 _AMAP_REVERSE_GEOCODE_CACHE_LOCK = Lock()
 _AMAP_REVERSE_GEOCODE_CACHE: Dict[str, Tuple[float, str]] = {}
+_AMAP_REVERSE_GEOCODE_REFRESHING: set[str] = set()
+_AMAP_ROUTE_CACHE_LOCK = Lock()
+_AMAP_ROUTE_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_AMAP_ROUTE_REFRESHING: set[str] = set()
 
 AMAP_ROUTE_URLS = {
     "walking": AMAP_WALKING_URL,
@@ -189,6 +197,39 @@ def _set_cached_reverse_geocode(key: str, value: str) -> None:
         return
     with _AMAP_REVERSE_GEOCODE_CACHE_LOCK:
         _AMAP_REVERSE_GEOCODE_CACHE[key] = (time_module.monotonic(), value)
+
+
+def _route_cache_key(origin: Dict[str, Any], dest: Dict[str, Any], travel_mode: str) -> str:
+    origin_lat = _safe_float(origin.get("lat"))
+    origin_lng = _safe_float(origin.get("lng"))
+    dest_lat = _safe_float(dest.get("lat"))
+    dest_lng = _safe_float(dest.get("lng"))
+    if None in (origin_lat, origin_lng, dest_lat, dest_lng):
+        return ""
+    mode = _normalize_travel_mode(travel_mode)
+    return f"{mode}:{round(origin_lng, 4):.4f},{round(origin_lat, 4):.4f}->{round(dest_lng, 4):.4f},{round(dest_lat, 4):.4f}"
+
+
+def _get_cached_route(key: str) -> Dict[str, Any] | None:
+    if not key or AMAP_ROUTE_CACHE_TTL_SECONDS <= 0:
+        return None
+    now = time_module.monotonic()
+    with _AMAP_ROUTE_CACHE_LOCK:
+        cached = _AMAP_ROUTE_CACHE.get(key)
+        if not cached:
+            return None
+        cached_at, value = cached
+        if now - cached_at <= AMAP_ROUTE_CACHE_TTL_SECONDS:
+            return dict(value)
+        _AMAP_ROUTE_CACHE.pop(key, None)
+    return None
+
+
+def _set_cached_route(key: str, value: Dict[str, Any] | None) -> None:
+    if not key or AMAP_ROUTE_CACHE_TTL_SECONDS <= 0 or not value:
+        return
+    with _AMAP_ROUTE_CACHE_LOCK:
+        _AMAP_ROUTE_CACHE[key] = (time_module.monotonic(), dict(value))
 
 
 def _wait_for_amap_slot() -> None:
@@ -819,10 +860,23 @@ class AMapClient:
     def available(self) -> bool:
         return bool(self.key)
 
-    def route(self, origin: Dict[str, Any], dest: Dict[str, Any], travel_mode: str = "walking") -> Dict[str, Any] | None:
+    def route(
+        self,
+        origin: Dict[str, Any],
+        dest: Dict[str, Any],
+        travel_mode: str = "walking",
+        *,
+        allow_network: bool = True,
+    ) -> Dict[str, Any] | None:
         if not self.available:
             return None
         mode = _normalize_travel_mode(travel_mode)
+        cache_key = _route_cache_key(origin, dest, mode)
+        cached = _get_cached_route(cache_key)
+        if cached:
+            return cached
+        if not allow_network:
+            return None
         params = {
             "key": self.key,
             "origin": f"{origin['lng']},{origin['lat']}",
@@ -849,13 +903,15 @@ class AMapClient:
         duration = _safe_float(path.get("duration"))
         if distance is None and duration is None:
             return None
-        return {
+        result = {
             "distance_m": int(round(distance)) if distance is not None else None,
             "duration_min": int(math.ceil(duration / 60)) if duration is not None else None,
             "source": "amap",
             "mode": mode,
             "mode_label": ROUTE_MODE_LABELS[mode],
         }
+        _set_cached_route(cache_key, result)
+        return result
 
     def walking_route(self, origin: Dict[str, Any], dest: Dict[str, Any]) -> Dict[str, Any] | None:
         return self.route(origin, dest, "walking")
@@ -961,6 +1017,72 @@ def resolve_browser_location_text(location: Dict[str, Any] | None, client: AMapC
     if client is None and text:
         _set_cached_reverse_geocode(cache_key, text)
     return text
+
+
+def get_cached_browser_location_text(location: Dict[str, Any] | None) -> str:
+    lat = _safe_float((location or {}).get("lat"))
+    lng = _safe_float((location or {}).get("lng"))
+    if lat is None or lng is None or not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return ""
+    return _get_cached_reverse_geocode(_reverse_geocode_cache_key(lat, lng))
+
+
+def schedule_browser_location_text_refresh(location: Dict[str, Any] | None) -> bool:
+    lat = _safe_float((location or {}).get("lat"))
+    lng = _safe_float((location or {}).get("lng"))
+    if lat is None or lng is None or not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return False
+    cache_key = _reverse_geocode_cache_key(lat, lng)
+    if _get_cached_reverse_geocode(cache_key):
+        return False
+
+    with _AMAP_REVERSE_GEOCODE_CACHE_LOCK:
+        if cache_key in _AMAP_REVERSE_GEOCODE_REFRESHING:
+            return False
+        _AMAP_REVERSE_GEOCODE_REFRESHING.add(cache_key)
+
+    def runner() -> None:
+        try:
+            resolve_browser_location_text({"lat": lat, "lng": lng})
+        finally:
+            with _AMAP_REVERSE_GEOCODE_CACHE_LOCK:
+                _AMAP_REVERSE_GEOCODE_REFRESHING.discard(cache_key)
+
+    Thread(target=runner, name="amap-reverse-geocode-refresh", daemon=True).start()
+    return True
+
+
+def schedule_route_refresh(origin: Dict[str, Any], dest: Dict[str, Any], travel_mode: str = "walking") -> bool:
+    route_mode = _normalize_travel_mode(travel_mode)
+    cache_key = _route_cache_key(origin, dest, route_mode)
+    if not cache_key or _get_cached_route(cache_key):
+        return False
+
+    with _AMAP_ROUTE_CACHE_LOCK:
+        if cache_key in _AMAP_ROUTE_REFRESHING:
+            return False
+        _AMAP_ROUTE_REFRESHING.add(cache_key)
+
+    origin_lat = _safe_float(origin.get("lat"))
+    origin_lng = _safe_float(origin.get("lng"))
+    dest_lat = _safe_float(dest.get("lat"))
+    dest_lng = _safe_float(dest.get("lng"))
+    if None in (origin_lat, origin_lng, dest_lat, dest_lng):
+        with _AMAP_ROUTE_CACHE_LOCK:
+            _AMAP_ROUTE_REFRESHING.discard(cache_key)
+        return False
+    origin_snapshot = {"lat": origin_lat, "lng": origin_lng}
+    dest_snapshot = {"lat": dest_lat, "lng": dest_lng}
+
+    def runner() -> None:
+        try:
+            AMapClient().route(origin_snapshot, dest_snapshot, route_mode)
+        finally:
+            with _AMAP_ROUTE_CACHE_LOCK:
+                _AMAP_ROUTE_REFRESHING.discard(cache_key)
+
+    Thread(target=runner, name="amap-route-refresh", daemon=True).start()
+    return True
 
 
 def _meal_period(now: datetime) -> str:
@@ -1069,6 +1191,9 @@ def build_contextual_recommendation(
     seen_grade_digest: str = "",
     edu_session: Dict[str, Any] | None = None,
     now: datetime | None = None,
+    allow_live_edu: bool = True,
+    allow_live_map: bool = True,
+    background_map_refresh: bool = False,
 ) -> Dict[str, Any]:
     now = now or _beijing_now().replace(tzinfo=None)
     requested = scenario if scenario in {"auto", "dining", "study"} else "auto"
@@ -1081,8 +1206,10 @@ def build_contextual_recommendation(
     selection_overview: Dict[str, Any] | None = None
     marks: List[Dict[str, Any]] = []
     edu_status = "available"
-    client = _build_client(edu_session)
-    if client is None:
+    client = _build_client(edu_session) if allow_live_edu else None
+    if not allow_live_edu:
+        edu_status = "deferred"
+    elif client is None:
         edu_status = "unavailable"
     else:
         try:
@@ -1126,7 +1253,7 @@ def build_contextual_recommendation(
     built_in_candidates = [item for item in CAMPUS_POIS if item["kind"] == kind]
     candidates = list(built_in_candidates)
     used_poi_search = False
-    if amap.available and len(candidates) < 8:
+    if allow_live_map and amap.available and len(candidates) < 8:
         keyword = "福州大学 食堂" if kind == "dining" else "福州大学 图书馆 自习室"
         seen_names = {_normalize_place_name(item["name"]) for item in candidates}
         used_poi_search = True
@@ -1150,8 +1277,10 @@ def build_contextual_recommendation(
     route_failures = 0
     for index, (poi, distance_m) in enumerate(candidate_distances):
         should_route = amap.available and index < route_limit
-        route = amap.route(origin, poi, route_mode) if should_route else None
-        if should_route and route is None:
+        route = amap.route(origin, poi, route_mode, allow_network=allow_live_map) if should_route else None
+        if should_route and route is None and not allow_live_map and background_map_refresh:
+            schedule_route_refresh(origin, poi, route_mode)
+        if should_route and allow_live_map and route is None:
             route_failures += 1
         route_distance_m = route.get("distance_m") if route else None
         route_minutes = route.get("duration_min") if route else None
@@ -1184,7 +1313,9 @@ def build_contextual_recommendation(
     limited = ranked[:3]
     map_status = "amap" if any(item["route_source"] == "amap" for item in limited) else "estimated"
     map_note = ""
-    if not amap.available:
+    if not allow_live_map and amap.available:
+        map_note = f"已优先快速返回，路线时间使用缓存或校内距离估算；高德{route_mode_label}路线会在后台刷新。"
+    elif not amap.available:
         map_note = f"未配置高德地图 Key，已按校内地点库和直线距离估算{route_mode_label}时间。"
     elif route_failures:
         map_note = f"{amap.last_error or '地图路线服务暂不可用'}，部分结果已按直线距离估算。"
@@ -1344,6 +1475,9 @@ def build_campus_recommendation_tools(request_context: Dict[str, Any] | None = N
             manual_location_id=manual_location_id,
             travel_mode=selected_travel_mode,
             edu_session=request_context,
+            allow_live_edu=False,
+            allow_live_map=False,
+            background_map_refresh=True,
         )
         return _format_recommendation_markdown(data), data
 
