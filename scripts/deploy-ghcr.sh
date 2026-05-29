@@ -30,6 +30,10 @@ if [[ -z "${REDIS_PASSWORD:-}" ]]; then
   echo "REDIS_PASSWORD must be set for production deploy." >&2
   exit 1
 fi
+if [[ ! "$REDIS_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ ]]; then
+  echo "REDIS_PASSWORD must be URL-safe because it is embedded in FZU_CHAT_REDIS_URL; use openssl rand -hex 32 or percent-encode it." >&2
+  exit 1
+fi
 
 export FZU_CHAT_VERSION="$VERSION"
 

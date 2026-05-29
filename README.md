@@ -110,7 +110,7 @@ docker compose up -d --build
 # 3. Visit http://localhost:80
 ```
 
-Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set `REDIS_PASSWORD` and run `FZU_CHAT_VERSION=v7.7 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local build.
+Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, then run `FZU_CHAT_VERSION=v7.7 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build.
 
 Useful production environment variables:
 

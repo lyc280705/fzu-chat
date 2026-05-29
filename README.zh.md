@@ -110,7 +110,7 @@ docker compose up -d --build
 # 3. 访问 http://localhost:80
 ```
 
-生产环境可使用 `docker-compose.prod.yml` 启动内部 Redis。设置 `REDIS_PASSWORD` 后执行 `FZU_CHAT_VERSION=v7.7 ./scripts/deploy-ghcr.sh`；如果 GHCR 镜像拉取失败，脚本会回退到本地构建。
+生产环境可使用 `docker-compose.prod.yml` 启动内部 Redis。设置 URL-safe 的 `REDIS_PASSWORD`，例如 `openssl rand -hex 32`，再执行 `FZU_CHAT_VERSION=v7.7 ./scripts/deploy-ghcr.sh`；如果 GHCR 镜像拉取失败，脚本会回退到本地生产镜像构建。
 
 常用生产环境变量：
 
