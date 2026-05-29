@@ -28,9 +28,9 @@ export FZU_CHAT_VERSION="$VERSION"
 if docker compose -f "$COMPOSE_FILE" pull fzu-chat redis; then
   docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
 else
-  echo "Image pull failed; falling back to local build with docker-compose.yml." >&2
-  docker compose -f docker-compose.yml build fzu-chat
-  docker compose -f docker-compose.yml up -d --remove-orphans
+  echo "Image pull failed; building the production image locally and using $COMPOSE_FILE." >&2
+  docker build -t "ghcr.io/lyc280705/fzu-chat:${VERSION}" .
+  docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
 fi
 
 docker compose -f "$COMPOSE_FILE" ps
