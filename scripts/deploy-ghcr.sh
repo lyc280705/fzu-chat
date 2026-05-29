@@ -2,12 +2,20 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+cd "$ROOT_DIR"
+
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+fi
+
 COMPOSE_FILE="${FZU_CHAT_COMPOSE_FILE:-docker-compose.prod.yml}"
 VERSION="${FZU_CHAT_VERSION:-latest}"
 WARN_THRESHOLD="${FZU_CHAT_DISK_WARN_THRESHOLD:-85}"
 BLOCK_THRESHOLD="${FZU_CHAT_DISK_BLOCK_THRESHOLD:-90}"
-
-cd "$ROOT_DIR"
 
 usage_percent="$(df -P . | awk 'NR==2 {gsub("%", "", $5); print $5}')"
 if [[ -n "$usage_percent" && "$usage_percent" -ge "$BLOCK_THRESHOLD" ]]; then
