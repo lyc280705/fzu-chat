@@ -3,6 +3,56 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.7] - 2026-05-29
+
+FZU-Chat v7.7 hardens the current single-node deployment for an initial campus-wide launch. It keeps SQLite for durable chat, memory, and campus data, adds internal Redis for volatile runtime state, and improves traffic hygiene, readiness, metrics, pagination, backups, and rollback operations without moving to a multi-node architecture yet.
+
+### Highlights
+
+- Launch traffic hardening. Production docs are off by default, scanner paths return 404 before SPA fallback, `/ui/*` assets can be cached immutably, and `/`/`index.html` remain no-cache.
+- Internal Redis runtime state. Login sessions, rate-limit buckets, active stream slots, and background task dedupe locks use Redis when configured, with process-memory fallback for local development.
+- More realistic concurrency defaults. Active SSE generation defaults to 80 globally and 5 per user, while educational-system login/reconnect concurrency defaults to 8 with fast 429 backpressure.
+- Faster conversation sidebar. `GET /api/conversations` now supports `limit` and `cursor`; SQLite aggregates preview and message counts without loading every message, and the frontend loads older conversations on demand.
+- Operational visibility and recovery. `/api/ready` checks Redis and SQLite writeability, `/api/metrics` exposes restricted Prometheus-style counters, production Compose includes Redis/health/log limits, and scripts cover GHCR deploy, rollback, disk-threshold deploy guard, and encrypted SQLite backup retention.
+- Request-layer degradation. Model, Bocha search, AMap, and JWCH timeouts are configurable; slow Bocha failures return a graceful tool message instead of waiting indefinitely.
+
+### Validation
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.7 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.7 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
+## 福大灵犀 v7.7
+
+福大灵犀 v7.7 面向初期校内全量开放加固当前单机部署：SQLite 继续保存对话、记忆和校园动态数据，新增内部 Redis 承载易失运行态，并补齐流量卫生、ready 检查、指标、分页、备份和回滚能力，暂不切到多节点架构。
+
+### 版本亮点
+
+- 上线流量加固。生产默认关闭公开文档，扫描路径在 SPA fallback 前直接 404，`/ui/*` 可长期缓存，`/` 和 `index.html` 不缓存。
+- 内部 Redis 运行态。登录 session、限流 bucket、活跃生成槽位和后台任务去重锁在配置 Redis 时写入 Redis，本地开发可自动退回进程内存。
+- 更贴近数百人使用的并发默认值。SSE 生成默认全局 80、单用户 5；教务登录/重连并发默认 8，并在拥堵时快速返回 429。
+- 侧栏列表更轻。`GET /api/conversations` 支持 `limit` 和 `cursor`；SQLite 直接聚合 preview 和 message_count，不再为列表页加载全部消息，前端按需加载更早对话。
+- 运维可观测与恢复。新增 `/api/ready` 检查 Redis 和 SQLite 可写性，新增受保护 `/api/metrics`，生产 Compose 包含 Redis、健康检查和日志限制，脚本覆盖 GHCR 部署、回滚、磁盘阈值保护和加密 SQLite 备份保留。
+- 请求层降级。模型、博查、高德、教务超时均可配置；博查慢失败会返回温和降级文案，避免无限等待。
+
+### 验证
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.7 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.7 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
 ## [v7.6] - 2026-05-28
 
 FZU-Chat v7.6 moves location and campus-route work off the critical message path. Browser location is refreshed after login or after enabling location reminders, AMap text-location lookup is warmed in the background, and the campus recommendation tool now returns quickly with cached or estimated routes while refreshing live AMap routes asynchronously.

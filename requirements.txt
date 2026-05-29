@@ -12,3 +12,4 @@ requests
 fastapi
 uvicorn
 beautifulsoup4
+redis

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import ipaddress
 import json
 import logging
 import os
@@ -18,7 +19,7 @@ from uuid import uuid4
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
@@ -59,7 +60,19 @@ from .graph import (
 )
 from .jwch_client import JwchClient, JwchLoginError, JwchSessionError
 from .memory_store import user_memory_store
-from .security_utils import mask_user_id
+from .runtime_state import (
+    acquire_dedupe_lock,
+    acquire_pair_slot,
+    acquire_slot,
+    fixed_window_rate_limit,
+    increment_counter,
+    record_http_request,
+    redis_health,
+    release_slot,
+    render_prometheus_metrics,
+    set_gauge,
+)
+from .security_utils import env_flag, mask_user_id
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
@@ -79,6 +92,14 @@ CONVERSATION_CREATE_RATE_LIMIT_MAX_ATTEMPTS = max(1, int(os.getenv("FZU_CHAT_CON
 MESSAGE_RATE_LIMIT_WINDOW_SECONDS = max(10, int(os.getenv("FZU_CHAT_MESSAGE_RATE_LIMIT_WINDOW", "60")))
 MESSAGE_RATE_LIMIT_MAX_ATTEMPTS = max(1, int(os.getenv("FZU_CHAT_MESSAGE_RATE_LIMIT_ATTEMPTS", "12")))
 TOOL_HISTORY_MAX_CHARS = max(2000, int(os.getenv("FZU_CHAT_TOOL_HISTORY_MAX_CHARS", "120000")))
+PUBLIC_DOCS = env_flag("FZU_CHAT_PUBLIC_DOCS", False)
+GLOBAL_STREAM_LIMIT = max(1, int(os.getenv("FZU_CHAT_GLOBAL_STREAM_LIMIT", "80")))
+USER_STREAM_LIMIT = max(1, int(os.getenv("FZU_CHAT_USER_STREAM_LIMIT", "5")))
+STREAM_SLOT_TTL_SECONDS = max(60, int(os.getenv("FZU_CHAT_STREAM_SLOT_TTL_SECONDS", "900")))
+EDU_LOGIN_CONCURRENCY_LIMIT = max(1, int(os.getenv("FZU_CHAT_EDU_LOGIN_CONCURRENCY", "8")))
+STATIC_FALLBACK_MODE = os.getenv("FZU_CHAT_STATIC_FALLBACK", "strict").strip().lower()
+METRICS_ENABLED = env_flag("FZU_CHAT_METRICS_ENABLED", True)
+METRICS_TOKEN = os.getenv("FZU_CHAT_METRICS_TOKEN", "").strip()
 API_NO_STORE = "no-store, no-cache, must-revalidate, max-age=0, private"
 BROWSER_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 CONTENT_SECURITY_POLICY = "; ".join(
@@ -128,8 +149,43 @@ pending_title_updates: Dict[tuple[str, str], asyncio.Task[None]] = {}
 pending_title_updates_lock = Lock()
 conversation_event_subscribers: Dict[str, List[asyncio.Queue[Dict[str, Any]]]] = {}
 conversation_event_subscribers_lock = Lock()
-rate_limit_buckets: Dict[str, List[float]] = {}
-rate_limit_buckets_lock = Lock()
+SCAN_PATH_EXACT = {
+    "/.env",
+    "/env",
+    "/containers/json",
+    "/server-status",
+    "/server-info",
+}
+SCAN_PATH_PREFIXES = (
+    "/.git",
+    "/.svn",
+    "/.hg",
+    "/.aws",
+    "/.ssh",
+    "/phpunit",
+    "/vendor",
+    "/wp",
+    "/wordpress",
+    "/thinkphp",
+    "/geoserver",
+    "/webui",
+    "/actuator",
+    "/cgi-bin",
+    "/boaform",
+    "/manager",
+    "/solr",
+    "/hudson",
+    "/jenkins",
+)
+SCAN_PATH_SUBSTRINGS = (
+    "phpunit",
+    "thinkphp",
+    "geoserver",
+    "wp-admin",
+    "wp-login",
+    "laravel",
+    "eval-stdin",
+)
 
 
 class SecurityHeadersMiddleware:
@@ -214,20 +270,65 @@ def _client_ip(request: Request) -> str:
     return "unknown"
 
 
+def _request_socket_ip(request: Request) -> str:
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _is_private_or_loopback_ip(value: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_private
+
+
+def _metrics_allowed(request: Request) -> bool:
+    if METRICS_TOKEN:
+        auth = request.headers.get("authorization", "").strip()
+        if auth == f"Bearer {METRICS_TOKEN}":
+            return True
+    forwarded_for = request.headers.get("x-forwarded-for", "").strip()
+    if forwarded_for:
+        return _is_private_or_loopback_ip(forwarded_for.split(",", 1)[0].strip())
+    return _is_private_or_loopback_ip(_request_socket_ip(request))
+
+
+def _is_scan_path(path: str) -> bool:
+    normalized = "/" + path.lstrip("/")
+    lower_path = normalized.lower()
+    if lower_path in SCAN_PATH_EXACT:
+        return True
+    if any(lower_path.startswith(prefix) for prefix in SCAN_PATH_PREFIXES):
+        return True
+    if any(part in lower_path for part in SCAN_PATH_SUBSTRINGS):
+        return True
+    if "/." in lower_path and not lower_path.startswith("/.well-known/"):
+        return True
+    return False
+
+
+def _route_metric_label(request: Request) -> str:
+    route = request.scope.get("route")
+    label = getattr(route, "path", "") if route is not None else ""
+    if label:
+        return str(label)
+    path = request.url.path
+    path = re.sub(r"/[0-9a-f]{8}-[0-9a-f-]{27,}", "/{uuid}", path, flags=re.IGNORECASE)
+    path = re.sub(r"/\d+", "/{id}", path)
+    return path or "/"
+
+
 def _rate_limit_key(prefix: str, request: Request, subject: str = "") -> str:
     normalized_subject = re.sub(r"\s+", "", subject).strip()[:64] or "-"
     return f"{prefix}:{_client_ip(request)}:{normalized_subject}"
 
 
 def _enforce_rate_limit(key: str, limit: int, window_seconds: int, detail: str) -> None:
-    now = time.time()
-    with rate_limit_buckets_lock:
-        recent = [ts for ts in rate_limit_buckets.get(key, []) if now - ts < window_seconds]
-        if len(recent) >= limit:
-            rate_limit_buckets[key] = recent
-            raise HTTPException(status_code=429, detail=detail)
-        recent.append(now)
-        rate_limit_buckets[key] = recent
+    if not fixed_window_rate_limit(key, limit, window_seconds):
+        increment_counter("fzu_chat_rate_limit_rejections_total")
+        raise HTTPException(status_code=429, detail=detail)
 
 
 def _use_secure_cookie(request: Request) -> bool:
@@ -274,7 +375,14 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="FZU Chat API", version="7.6.0", lifespan=lifespan)
+app = FastAPI(
+    title="FZU Chat API",
+    version="7.7.0",
+    lifespan=lifespan,
+    docs_url="/docs" if PUBLIC_DOCS else None,
+    redoc_url="/redoc" if PUBLIC_DOCS else None,
+    openapi_url="/openapi.json" if PUBLIC_DOCS else None,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
@@ -287,12 +395,31 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 
 @app.middleware("http")
-async def enforce_browser_write_guards(request: Request, call_next):
+async def request_hardening_and_metrics(request: Request, call_next):
+    started_at = time.perf_counter()
+    if _is_scan_path(request.url.path):
+        increment_counter("fzu_chat_scan_path_rejections_total")
+        response = JSONResponse({"detail": "Not found"}, status_code=404)
+        record_http_request(request.method, "scan_path", response.status_code, time.perf_counter() - started_at)
+        return response
     try:
         _enforce_browser_request_integrity(request)
     except HTTPException as exc:
-        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-    return await call_next(request)
+        response = JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+        record_http_request(request.method, request.url.path, response.status_code, time.perf_counter() - started_at)
+        return response
+    try:
+        response = await call_next(request)
+    except Exception:
+        record_http_request(request.method, _route_metric_label(request), 500, time.perf_counter() - started_at)
+        raise
+    duration = time.perf_counter() - started_at
+    record_http_request(request.method, _route_metric_label(request), response.status_code, duration)
+    if request.url.path == "/" or request.url.path.endswith("/index.html"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    elif request.url.path.startswith("/ui/"):
+        response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +554,11 @@ class ConversationSummary(BaseModel):
     updated_at: str
     preview: str
     message_count: int
+
+
+class ConversationListResponse(BaseModel):
+    items: List[ConversationSummary]
+    next_cursor: str | None = None
 
 
 class UserDataSummary(BaseModel):
@@ -1328,6 +1460,8 @@ def _edu_context_from_session(user_id: str, session: Dict[str, Any] | None) -> D
 def schedule_signal_snapshot_refresh(user_id: str, edu_ctx: Dict[str, Any] | None) -> None:
     if not user_id or not edu_ctx or not edu_ctx.get("edu_authenticated"):
         return
+    if not acquire_dedupe_lock(f"signal-refresh:{user_id}", 120):
+        return
 
     def runner() -> None:
         refresh_signal_snapshots(user_id, edu_ctx)
@@ -1380,6 +1514,41 @@ def healthcheck() -> Dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/ready")
+def readiness() -> JSONResponse:
+    redis_status = redis_health()
+    sqlite_status: Dict[str, Any]
+    try:
+        sqlite_status = chat_store.healthcheck()
+    except Exception as exc:
+        increment_counter("fzu_chat_sqlite_errors_total")
+        logger.warning("SQLite readiness check failed: %s", type(exc).__name__)
+        sqlite_status = {"ok": False, "detail": type(exc).__name__}
+    ok = bool(redis_status.get("ok")) and bool(sqlite_status.get("ok"))
+    payload = {
+        "status": "ready" if ok else "degraded",
+        "redis": redis_status,
+        "sqlite": sqlite_status,
+        "limits": {
+            "global_stream": GLOBAL_STREAM_LIMIT,
+            "user_stream": USER_STREAM_LIMIT,
+            "edu_login_concurrency": EDU_LOGIN_CONCURRENCY_LIMIT,
+        },
+    }
+    return JSONResponse(payload, status_code=200 if ok else 503)
+
+
+@app.get("/api/metrics")
+def metrics(request: Request) -> PlainTextResponse:
+    if not METRICS_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not _metrics_allowed(request):
+        raise HTTPException(status_code=403, detail="Metrics endpoint is restricted")
+    with active_stream_stops_lock:
+        set_gauge("fzu_chat_active_streams", float(len(active_stream_stops)))
+    return PlainTextResponse(render_prometheus_metrics(), media_type="text/plain; version=0.0.4")
+
+
 @app.post("/api/auth/login")
 def login(req: LoginRequest, request: Request) -> JSONResponse:
     _enforce_rate_limit(
@@ -1395,15 +1564,21 @@ def login(req: LoginRequest, request: Request) -> JSONResponse:
     if req.student_type != "undergraduate":
         raise HTTPException(status_code=403, detail="当前仅支持本科生通过教务系统登录，研究生登录暂未开放。")
 
+    login_slot = acquire_slot("edu-login", EDU_LOGIN_CONCURRENCY_LIMIT, ttl_seconds=60)
+    if login_slot is None:
+        raise HTTPException(status_code=429, detail="教务登录请求较多，请稍后再试。")
     try:
-        client = JwchClient(req.student_id, req.password)
-        client.login()
-    except JwchLoginError as exc:
-        logger.warning("Edu login rejected for %s: %s", mask_user_id(req.student_id), type(exc).__name__)
-        raise HTTPException(status_code=401, detail="教务系统登录失败，请检查学号和密码。") from exc
-    except Exception as exc:
-        logger.warning("Edu login unavailable for %s: %s", mask_user_id(req.student_id), type(exc).__name__)
-        raise HTTPException(status_code=503, detail="教务系统连接失败，请稍后重试。") from exc
+        try:
+            client = JwchClient(req.student_id, req.password)
+            client.login()
+        except JwchLoginError as exc:
+            logger.warning("Edu login rejected for %s: %s", mask_user_id(req.student_id), type(exc).__name__)
+            raise HTTPException(status_code=401, detail="教务系统登录失败，请检查学号和密码。") from exc
+        except Exception as exc:
+            logger.warning("Edu login unavailable for %s: %s", mask_user_id(req.student_id), type(exc).__name__)
+            raise HTTPException(status_code=503, detail="教务系统连接失败，请稍后重试。") from exc
+    finally:
+        release_slot(login_slot)
 
     existing_token = request.cookies.get(AUTH_COOKIE_NAME)
     if existing_token:
@@ -1447,15 +1622,21 @@ def relogin_edu(req: EduReloginRequest, request: Request, user: AuthUser = Depen
     if user.student_type != "undergraduate":
         raise HTTPException(status_code=403, detail="当前账号不支持重新连接教务。")
 
+    relogin_slot = acquire_slot("edu-login", EDU_LOGIN_CONCURRENCY_LIMIT, ttl_seconds=60)
+    if relogin_slot is None:
+        raise HTTPException(status_code=429, detail="教务登录请求较多，请稍后再试。")
     try:
-        client = JwchClient(user.user_id, req.password)
-        client.login()
-    except JwchLoginError as exc:
-        logger.warning("Edu relogin rejected for %s: %s", mask_user_id(user.user_id), type(exc).__name__)
-        raise HTTPException(status_code=400, detail="教务系统重新连接失败，请检查密码后重试。") from exc
-    except Exception as exc:
-        logger.warning("Edu relogin unavailable for %s: %s", mask_user_id(user.user_id), type(exc).__name__)
-        raise HTTPException(status_code=503, detail="教务系统连接失败，请稍后重试。") from exc
+        try:
+            client = JwchClient(user.user_id, req.password)
+            client.login()
+        except JwchLoginError as exc:
+            logger.warning("Edu relogin rejected for %s: %s", mask_user_id(user.user_id), type(exc).__name__)
+            raise HTTPException(status_code=400, detail="教务系统重新连接失败，请检查密码后重试。") from exc
+        except Exception as exc:
+            logger.warning("Edu relogin unavailable for %s: %s", mask_user_id(user.user_id), type(exc).__name__)
+            raise HTTPException(status_code=503, detail="教务系统连接失败，请稍后重试。") from exc
+    finally:
+        release_slot(relogin_slot)
 
     update_session(user.token, _build_edu_session_state(client))
     warm_teaching_week_cache_async()
@@ -1592,9 +1773,13 @@ def contextual_recommendation(
 # ---------------------------------------------------------------------------
 
 
-@app.get("/api/conversations", response_model=List[ConversationSummary])
-def list_conversations(user: AuthUser = Depends(require_auth)):
-    return chat_store.list_conversations(user.user_id)
+@app.get("/api/conversations", response_model=ConversationListResponse)
+def list_conversations(
+    limit: int = 50,
+    cursor: str | None = None,
+    user: AuthUser = Depends(require_auth),
+):
+    return chat_store.list_conversations_page(user.user_id, limit=limit, cursor=cursor)
 
 
 @app.get("/api/conversations/events")
@@ -1913,6 +2098,17 @@ async def create_message(
             "thinking_enabled": req.thinking_enabled,
         }
     }
+    stream_slot = acquire_pair_slot(
+        "chat-stream",
+        "chat-stream:global",
+        GLOBAL_STREAM_LIMIT,
+        f"chat-stream:user:{user.user_id}",
+        USER_STREAM_LIMIT,
+        ttl_seconds=STREAM_SLOT_TTL_SECONDS,
+    )
+    if stream_slot is None:
+        clear_active_stream_stop(user.user_id, cid, stop_event)
+        raise HTTPException(status_code=429, detail="当前生成请求较多，请稍后再试。")
 
     async def event_stream() -> AsyncIterator[bytes]:
         set_current_edu_session(edu_ctx)
@@ -2089,6 +2285,7 @@ async def create_message(
             )
         finally:
             clear_active_stream_stop(user.user_id, cid, stop_event)
+            release_slot(stream_slot)
             reset_search_citation_counter()
             set_current_edu_session(None)
 
@@ -2108,8 +2305,11 @@ if (FRONTEND_DIST / "ui").exists():
 @app.get("/{full_path:path}")
 def serve_frontend(full_path: str) -> Any:
     index = FRONTEND_DIST / "index.html"
-    if index.exists():
+    normalized = full_path.strip("/")
+    if index.exists() and (normalized in {"", "index.html"} or STATIC_FALLBACK_MODE != "strict"):
         return FileResponse(index)
+    if index.exists():
+        return JSONResponse({"detail": "Not found"}, status_code=404)
     return JSONResponse(
         {"message": "Frontend build not found. Run `npm run build` in /frontend or use the Vite dev server."},
         status_code=503,

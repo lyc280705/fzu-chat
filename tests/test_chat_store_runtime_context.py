@@ -46,6 +46,64 @@ class ChatStoreRuntimeContextTests(unittest.TestCase):
         self.assertEqual(second["runtime_context"], "runtime-v1")
         self.assertEqual(second["messages"][0]["content"], "你好")
 
+    def test_conversation_page_uses_aggregate_preview_and_cursor(self):
+        store = self.make_store()
+        for index in range(3):
+            conversation_id = f"conversation-{index}"
+            timestamp = f"2026-05-18T00:0{index}:00+00:00"
+            store.create_conversation(
+                "102304226",
+                {
+                    "id": conversation_id,
+                    "title": f"对话{index}",
+                    "model": "glm-5.1",
+                    "thread_id": f"thread-{index}",
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                    "messages": [],
+                },
+            )
+            store.append_message(
+                "102304226",
+                conversation_id,
+                {
+                    "id": f"user-{index}",
+                    "role": "user",
+                    "content": f"问题{index}",
+                    "timestamp": timestamp,
+                    "parts": [{"type": "text", "content": f"问题{index}"}],
+                },
+            )
+            store.append_message(
+                "102304226",
+                conversation_id,
+                {
+                    "id": f"assistant-{index}",
+                    "role": "assistant",
+                    "content": f"回答{index}",
+                    "timestamp": timestamp,
+                    "parts": [{"type": "text", "content": f"回答{index}"}],
+                },
+            )
+
+        first = store.list_conversations_page("102304226", limit=2)
+        second = store.list_conversations_page("102304226", limit=2, cursor=first["next_cursor"])
+
+        self.assertEqual([item["id"] for item in first["items"]], ["conversation-2", "conversation-1"])
+        self.assertEqual(first["items"][0]["preview"], "回答2")
+        self.assertEqual(first["items"][0]["message_count"], 2)
+        self.assertIsNotNone(first["next_cursor"])
+        self.assertEqual([item["id"] for item in second["items"]], ["conversation-0"])
+        self.assertIsNone(second["next_cursor"])
+
+    def test_healthcheck_writes_marker(self):
+        store = self.make_store()
+
+        result = store.healthcheck()
+
+        self.assertTrue(result["ok"])
+        self.assertIn("checked_at", result)
+
 
 if __name__ == "__main__":
     unittest.main()

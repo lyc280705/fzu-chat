@@ -17,6 +17,7 @@ import requests
 from langchain_core.tools import tool
 
 from .jwch_client import JwchClient, JwchError
+from .runtime_state import acquire_dedupe_lock
 
 AMAP_AROUND_URL = "https://restapi.amap.com/v3/place/around"
 AMAP_REVERSE_GEOCODE_URL = "https://restapi.amap.com/v3/geocode/regeo"
@@ -1035,6 +1036,8 @@ def schedule_browser_location_text_refresh(location: Dict[str, Any] | None) -> b
     cache_key = _reverse_geocode_cache_key(lat, lng)
     if _get_cached_reverse_geocode(cache_key):
         return False
+    if not acquire_dedupe_lock(f"amap-reverse-geocode:{cache_key}", max(30, AMAP_REVERSE_GEOCODE_CACHE_TTL_SECONDS)):
+        return False
 
     with _AMAP_REVERSE_GEOCODE_CACHE_LOCK:
         if cache_key in _AMAP_REVERSE_GEOCODE_REFRESHING:
@@ -1056,6 +1059,8 @@ def schedule_route_refresh(origin: Dict[str, Any], dest: Dict[str, Any], travel_
     route_mode = _normalize_travel_mode(travel_mode)
     cache_key = _route_cache_key(origin, dest, route_mode)
     if not cache_key or _get_cached_route(cache_key):
+        return False
+    if not acquire_dedupe_lock(f"amap-route:{cache_key}", max(30, AMAP_ROUTE_CACHE_TTL_SECONDS)):
         return False
 
     with _AMAP_ROUTE_CACHE_LOCK:

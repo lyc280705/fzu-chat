@@ -48,6 +48,7 @@ const LOCATION_TRAVEL_MODE_STORAGE_KEY = 'fzu_location_travel_mode'
 const MESSAGE_MAX_LENGTH = 4000
 const LOCATION_CONTEXT_CACHE_MS = 10 * 60 * 1000
 const LOCATION_CONTEXT_RETRY_COOLDOWN_MS = 10 * 60 * 1000
+const CONVERSATION_PAGE_LIMIT = 50
 
 const TOOL_ICONS = {
   retrieve: '📚',
@@ -560,6 +561,14 @@ const conversationMessageCount = (conversation) => {
 }
 
 const isReusableDraftConversation = (conversation) => Boolean(conversation) && conversation.title === '新对话' && conversationMessageCount(conversation) === 0
+
+const normalizeConversationPage = (payload) => {
+  if (Array.isArray(payload)) return { items: payload, nextCursor: null }
+  return {
+    items: Array.isArray(payload?.items) ? payload.items : [],
+    nextCursor: payload?.next_cursor || payload?.nextCursor || null,
+  }
+}
 
 const localError = (c = '暂时无法生成回复，请稍后再试。') => ({
   id: `err-${createUuid()}`,
@@ -2277,6 +2286,8 @@ function App() {
   // Chat state
   const [models, setModels] = useState([])
   const [conversations, setConversations] = useState([])
+  const [conversationCursor, setConversationCursor] = useState(null)
+  const [conversationLoadingMore, setConversationLoadingMore] = useState(false)
   const [activeId, setActiveId] = useState(null)
   const [msgStore, setMsgStore] = useState({})
   const [input, setInput] = useState('')
@@ -2438,6 +2449,8 @@ function App() {
     setEduError('')
     setViewMode('chat')
     setConversations([])
+    setConversationCursor(null)
+    setConversationLoadingMore(false)
     setMsgStore({})
     setActiveId(null)
     setStreamingConversations({})
@@ -2550,18 +2563,39 @@ function App() {
     if (!userId) return
     const go = async () => {
       try {
-        const [mr, cr] = await Promise.all([api('/api/models'), api('/api/conversations')])
+        const [mr, cr] = await Promise.all([api('/api/models'), api(`/api/conversations?limit=${CONVERSATION_PAGE_LIMIT}`)])
         if (!mr.ok || !cr.ok) throw new Error('初始化失败')
-        const [mp, cp] = await Promise.all([mr.json(), cr.json()])
+        const [mp, conversationPayload] = await Promise.all([mr.json(), cr.json()])
+        const cp = normalizeConversationPage(conversationPayload)
         setModels(mp)
         if (mp.length) setSelModel(mp[0].id)
         setPendingTitles({})
-        setConversations(cp)
-        if (cp.length) setActiveId(cp[0].id)
+        setConversations(cp.items)
+        setConversationCursor(cp.nextCursor)
+        if (cp.items.length) setActiveId(cp.items[0].id)
       } catch (e) { setError(e.message) }
     }
     go()
   }, [userId])
+
+  const loadMoreConversations = useCallback(async () => {
+    if (!conversationCursor || conversationLoadingMore) return
+    setConversationLoadingMore(true)
+    try {
+      const response = await api(`/api/conversations?limit=${CONVERSATION_PAGE_LIMIT}&cursor=${encodeURIComponent(conversationCursor)}`)
+      if (!response.ok) throw new Error('加载历史对话失败')
+      const page = normalizeConversationPage(await response.json())
+      setConversations((prev) => {
+        const seen = new Set(prev.map((item) => item.id))
+        return [...prev, ...page.items.filter((item) => item?.id && !seen.has(item.id))]
+      })
+      setConversationCursor(page.nextCursor)
+    } catch (err) {
+      setError(err.message || '加载历史对话失败')
+    } finally {
+      setConversationLoadingMore(false)
+    }
+  }, [conversationCursor, conversationLoadingMore])
 
   const loadUserDataSummary = useCallback(async () => {
     setUserDataLoading(true)
@@ -2897,6 +2931,8 @@ function App() {
       if (!response.ok) throw new Error(payload.detail || '清空数据失败')
 
       setConversations([])
+      setConversationCursor(null)
+      setConversationLoadingMore(false)
       setMsgStore({})
       setActiveId(null)
       setStreamingConversations({})
@@ -3501,6 +3537,17 @@ function App() {
                 </div>
               ))
             }
+            {!conversationQuery.trim() && conversationCursor && (
+              <button
+                type="button"
+                className="convo-load-more"
+                onClick={loadMoreConversations}
+                disabled={conversationLoadingMore}
+              >
+                <ChevronDown size={15} aria-hidden="true" />
+                <span>{conversationLoadingMore ? '加载中' : '加载更多'}</span>
+              </button>
+            )}
           </div>
         </div>
       </aside>

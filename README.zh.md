@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-当前已标记版本：[v7.6](CHANGELOG.md)
+当前已标记版本：[v7.7](CHANGELOG.md)
 
 版本记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -30,7 +30,8 @@
 - **多模型支持**：华为云 MaaS 的 GLM-5.1、Kimi K2.6、DeepSeek V4 Pro 可选，标题总结内部使用 qwen3-30b-a3b
 - **福大场景个性化记忆**：在用户确认后保存称呼、回答风格、选课习惯、教务查询展示、校园生活、餐饮与校区等长期偏好；成绩、绩点、课表、考场等易变教务事实仍通过工具实时查询
 - **知识库 + 网络搜索**：FAISS 本地检索 + 博查网络搜索兜底
-- **Docker 部署**：多阶段构建，React 前端 + Python 后端
+- **单机上线加固**：严格 SPA fallback、扫描路径 404、Redis 会话/限流/生成槽位、ready 检查和 Prometheus 风格指标
+- **Docker 部署**：多阶段构建，React 前端 + Python 后端，并提供带内部 Redis 的生产 Compose
 
 ## 项目结构
 
@@ -55,6 +56,8 @@ fzu-chat/
 │   ├── src/App.css        # 现代暗色主题样式
 │   └── vite.config.js     # Vite 配置
 ├── Dockerfile
+├── docker-compose.prod.yml
+├── scripts/              # 部署、回滚和 SQLite 备份脚本
 ├── docker-compose.yml
 └── requirements.txt
 ```
@@ -101,11 +104,21 @@ echo "your-key" > bocha_api_key.txt
 echo "your-key" > langsmith_api_key.txt
 echo "your-key" > amap_web_service_key.txt # 可选，用于情境推荐
 
-# 2. 构建并运行
+# 2. 本地 Compose 构建并运行
 docker compose up -d --build
 
 # 3. 访问 http://localhost:80
 ```
+
+生产环境可使用 `docker-compose.prod.yml` 启动内部 Redis。设置 `REDIS_PASSWORD` 后执行 `FZU_CHAT_VERSION=v7.7 ./scripts/deploy-ghcr.sh`；如果 GHCR 镜像拉取失败，脚本会回退到本地构建。
+
+常用生产环境变量：
+
+- `FZU_CHAT_REDIS_URL` – Redis 地址，用于登录会话、限流、生成槽位和后台任务去重
+- `FZU_CHAT_PUBLIC_DOCS=false` – 默认关闭公开 `/openapi.json`、Swagger 和 ReDoc
+- `FZU_CHAT_GLOBAL_STREAM_LIMIT=80`、`FZU_CHAT_USER_STREAM_LIMIT=5` – 初期校内规模的活跃 SSE 生成上限
+- `FZU_CHAT_STATIC_FALLBACK=strict` – 仅 `/` 和 `index.html` 返回前端页面
+- `FZU_CHAT_METRICS_ENABLED=true` – 启用受保护的 `/api/metrics`
 
 ## API 接口
 
@@ -116,7 +129,10 @@ docker compose up -d --build
 
 ### 聊天
 - `GET /api/models` – 可用模型列表
-- `GET /api/conversations` – 用户对话列表
+- `GET /api/health` – 轻量存活检查
+- `GET /api/ready` – Redis、SQLite 可写性和运行时限制检查
+- `GET /api/metrics` – 受保护的 Prometheus 风格运行指标
+- `GET /api/conversations?limit=50&cursor=...` – 分页对话列表，包含预览和消息数
 - `POST /api/conversations` – 创建新对话
 - `GET /api/conversations/{id}` – 对话详情
 - `DELETE /api/conversations/{id}` – 删除对话

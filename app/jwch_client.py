@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import hashlib
 import imghdr
 import logging
+import os
 import re
 from urllib.parse import parse_qs, urlparse
 from typing import Any, Dict, List, Tuple
@@ -43,6 +44,9 @@ GPA_URL = f"{JWCH_PREFIX}/student/xyzk/jdpm/GPA_sheet.aspx"
 EXAM_ROOM_URL = f"{JWCH_PREFIX}/student/xkjg/examination/exam_list.aspx"
 CULTIVATE_PLAN_URL = f"{JWCH_PREFIX}/pyfa/pyjh/pyjh_list.aspx"
 CAPTCHA_AI_URL = "https://statistics.fzuhelper.w2fzu.com/api/login/validateCode?validateCode"
+JWCH_LOGIN_TIMEOUT_SECONDS = float(os.getenv("FZU_CHAT_JWCH_LOGIN_TIMEOUT_SECONDS", "10"))
+JWCH_QUERY_TIMEOUT_SECONDS = float(os.getenv("FZU_CHAT_JWCH_QUERY_TIMEOUT_SECONDS", "15"))
+JWCH_CAPTCHA_TIMEOUT_SECONDS = float(os.getenv("FZU_CHAT_JWCH_CAPTCHA_TIMEOUT_SECONDS", "10"))
 SEMESTER_CODE_RE = re.compile(r"^(20\d{2})(0[12])$")
 SELECTION_TIME_RE = re.compile(
     r"(?P<label>[\u4e00-\u9fffA-Za-z（）()]+?)\s*时间[:：]\s*"
@@ -655,7 +659,7 @@ class JwchClient:
             self.session.cookies.clear()
 
             # 1 – CAPTCHA
-            resp = self.session.get(CAPTCHA_URL, timeout=10, allow_redirects=False)
+            resp = self.session.get(CAPTCHA_URL, timeout=JWCH_LOGIN_TIMEOUT_SECONDS, allow_redirects=False)
             resp.raise_for_status()
             captcha_text = self._recognise_captcha(resp.content)
             if not captcha_text:
@@ -667,7 +671,7 @@ class JwchClient:
                 LOGIN_URL,
                 headers={"Referer": LOGIN_REFERER, "Origin": LOGIN_REFERER},
                 data={"Verifycode": captcha_text, "muser": self.student_id, "passwd": md5_pw},
-                timeout=10,
+                timeout=JWCH_LOGIN_TIMEOUT_SECONDS,
                 allow_redirects=False,
             )
             location = resp.headers.get("Location", "")
@@ -686,7 +690,7 @@ class JwchClient:
                 SSO_LOGIN_URL,
                 headers={"X-Requested-With": "XMLHttpRequest"},
                 data={"token": token},
-                timeout=10,
+                timeout=JWCH_LOGIN_TIMEOUT_SECONDS,
             )
             resp.raise_for_status()
             sso_payload = resp.json()
@@ -704,7 +708,7 @@ class JwchClient:
                     "hosturl": JWCH_PREFIX,
                     "ssologin": "",
                 },
-                timeout=10,
+                timeout=JWCH_LOGIN_TIMEOUT_SECONDS,
                 allow_redirects=False,
             )
             if resp.status_code not in (301, 302):
@@ -730,7 +734,7 @@ class JwchClient:
         image_type = imghdr.what(None, image_bytes) or "gif"
         data_url = f"data:image/{image_type};base64,{base64.b64encode(image_bytes).decode()}"
         try:
-            resp = requests.post(CAPTCHA_AI_URL, data={"validateCode": data_url}, timeout=10, verify=False)
+            resp = requests.post(CAPTCHA_AI_URL, data={"validateCode": data_url}, timeout=JWCH_CAPTCHA_TIMEOUT_SECONDS, verify=False)
             if resp.status_code == 200:
                 payload = resp.json()
                 code = payload.get("message") or payload.get("data") or ""
@@ -741,7 +745,7 @@ class JwchClient:
 
         try:
             b64 = base64.b64encode(image_bytes).decode()
-            resp = requests.post(CAPTCHA_AI_URL.rsplit("?", 1)[0], json={"image": b64}, timeout=10, verify=False)
+            resp = requests.post(CAPTCHA_AI_URL.rsplit("?", 1)[0], json={"image": b64}, timeout=JWCH_CAPTCHA_TIMEOUT_SECONDS, verify=False)
             if resp.status_code == 200:
                 return str(resp.json().get("data", "")).strip()
         except Exception as exc:  # noqa: BLE001
@@ -768,7 +772,7 @@ class JwchClient:
 
     def _get(self, url: str) -> BeautifulSoup:
         params = self._request_params(url)
-        resp = self.session.get(url, params=params, headers={"Referer": f"{JWCH_PORTAL}/"}, timeout=15, allow_redirects=False)
+        resp = self.session.get(url, params=params, headers={"Referer": f"{JWCH_PORTAL}/"}, timeout=JWCH_QUERY_TIMEOUT_SECONDS, allow_redirects=False)
         if resp.status_code in (301, 302):
             raise JwchSessionError("教务系统会话已过期，请重新登录")
         resp.raise_for_status()
@@ -784,7 +788,7 @@ class JwchClient:
             params=params,
             headers={"Referer": f"{JWCH_PORTAL}/", "Origin": JWCH_PREFIX},
             data=data,
-            timeout=15,
+            timeout=JWCH_QUERY_TIMEOUT_SECONDS,
             allow_redirects=False,
         )
         if resp.status_code in (301, 302):
@@ -887,14 +891,14 @@ class JwchClient:
         params = {"id": self.identifier} if self.identifier else None
         headers = {"Referer": referer or f"{JWCH_PREFIX}/Home/index"}
         if data is None:
-            resp = self.session.get(url, params=params, headers=headers, timeout=15, allow_redirects=allow_redirects)
+            resp = self.session.get(url, params=params, headers=headers, timeout=JWCH_QUERY_TIMEOUT_SECONDS, allow_redirects=allow_redirects)
         else:
             resp = self.session.post(
                 url,
                 params=params,
                 headers={**headers, "Origin": JWCH_PREFIX},
                 data=data,
-                timeout=15,
+                timeout=JWCH_QUERY_TIMEOUT_SECONDS,
                 allow_redirects=allow_redirects,
             )
         if not allow_redirects and resp.status_code in (301, 302):

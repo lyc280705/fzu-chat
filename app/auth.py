@@ -17,6 +17,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Optional
 
+from .runtime_state import redis_delete, redis_get_json, redis_set_json
 from .security_utils import ensure_private_dir
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,15 @@ def user_store_path(user_id: str) -> Path:
     return user_dir(user_id) / "conversations.json"
 
 
+def _session_key(token: str) -> str:
+    return f"session:{token}"
+
+
+def _remaining_session_ttl(session: Dict[str, Any]) -> int:
+    created_at = float(session.get("created_at") or time.time())
+    return max(1, int(SESSION_TTL - (time.time() - created_at)))
+
+
 # ---------------------------------------------------------------------------
 # Session management
 # ---------------------------------------------------------------------------
@@ -64,21 +74,29 @@ def create_session(
 ) -> str:
     """Create a new authentication session and return the bearer token."""
     token = secrets.token_urlsafe(32)
-    with _lock:
-        _sessions[token] = {
-            "user_id": user_id,
-            "student_type": student_type,
-            "display_name": display_name or user_id,
-            "created_at": time.time(),
-            "edu_authenticated": edu_authenticated,
-            "edu_cookies": edu_cookies,
-        }
+    session = {
+        "user_id": user_id,
+        "student_type": student_type,
+        "display_name": display_name or user_id,
+        "created_at": time.time(),
+        "edu_authenticated": edu_authenticated,
+        "edu_cookies": edu_cookies,
+    }
+    if not redis_set_json(_session_key(token), session, SESSION_TTL):
+        with _lock:
+            _sessions[token] = session
     user_dir(user_id)  # ensure directory exists
     return token
 
 
 def get_session(token: str) -> Optional[Dict[str, Any]]:
     """Return session data for *token*, or ``None`` if invalid / expired."""
+    session = redis_get_json(_session_key(token))
+    if session is not None:
+        if time.time() - float(session.get("created_at") or 0) > SESSION_TTL:
+            invalidate_session(token)
+            return None
+        return session
     with _lock:
         session = _sessions.get(token)
     if session is None:
@@ -90,11 +108,19 @@ def get_session(token: str) -> Optional[Dict[str, Any]]:
 
 
 def invalidate_session(token: str) -> None:
+    redis_delete(_session_key(token))
     with _lock:
         _sessions.pop(token, None)
 
 
 def update_session(token: str, updates: Dict[str, Any]) -> None:
+    session = redis_get_json(_session_key(token))
+    if session is not None:
+        session.update(updates)
+        if not redis_set_json(_session_key(token), session, _remaining_session_ttl(session)):
+            with _lock:
+                _sessions[token] = session
+        return
     with _lock:
         if token in _sessions:
             _sessions[token].update(updates)

@@ -899,6 +899,33 @@ summary:focus-visible {
   text-align: center;
 }
 
+.convo-load-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  width: 100%;
+  min-height: 2.2rem;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.42);
+  color: #94a3b8;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.convo-load-more:hover:not(:disabled),
+.convo-load-more:focus-visible {
+  border-color: rgba(125, 211, 252, 0.3);
+  color: #e2e8f0;
+}
+
+.convo-load-more:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
 .convo-item {
   display: flex;
   align-items: center;

@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v7.6](CHANGELOG.md)
+Current tagged release: [v7.7](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -30,7 +30,8 @@ FZU-Chat provides a ChatGPT-style conversation experience for Fuzhou University 
 - **Multi-model support**: Huawei Cloud MaaS GLM-5.1, Kimi K2.6, and DeepSeek V4 Pro selection, with qwen3-30b-a3b for title summarization
 - **FZU-aware personalized memory**: Confirmed long-term preferences for names, answer style, course-selection habits, academic-query presentation, campus-life needs, and dining/campus preferences, while volatile educational facts remain live tool queries
 - **Knowledge + web search**: FAISS retrieval plus Bocha web search fallback
-- **Docker deployment**: Multi-stage build for React frontend + Python backend
+- **Launch-ready single-node hardening**: Strict SPA fallback, scanner-path 404s, Redis-backed sessions/rate limits, readiness and Prometheus-style metrics
+- **Docker deployment**: Multi-stage build for React frontend + Python backend, plus production Compose with internal Redis
 
 ## Project Structure
 
@@ -55,6 +56,8 @@ fzu-chat/
 │   ├── src/App.css        # Modern dark theme styles
 │   └── vite.config.js     # Vite config with API proxy
 ├── Dockerfile
+├── docker-compose.prod.yml
+├── scripts/              # Deploy, rollback, and SQLite backup helpers
 ├── docker-compose.yml
 └── requirements.txt
 ```
@@ -101,11 +104,21 @@ echo "your-key" > bocha_api_key.txt
 echo "your-key" > langsmith_api_key.txt
 echo "your-key" > amap_web_service_key.txt # optional, for contextual recommendations
 
-# 2. Build and run
+# 2. Build and run local Compose
 docker compose up -d --build
 
 # 3. Visit http://localhost:80
 ```
+
+Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set `REDIS_PASSWORD` and run `FZU_CHAT_VERSION=v7.7 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local build.
+
+Useful production environment variables:
+
+- `FZU_CHAT_REDIS_URL` – Redis URL for session, rate-limit, stream-slot, and background-task dedupe state
+- `FZU_CHAT_PUBLIC_DOCS=false` – keep `/openapi.json`, Swagger, and ReDoc private by default
+- `FZU_CHAT_GLOBAL_STREAM_LIMIT=80`, `FZU_CHAT_USER_STREAM_LIMIT=5` – active SSE generation caps for initial campus-scale launch
+- `FZU_CHAT_STATIC_FALLBACK=strict` – return the SPA only for `/` and `index.html`
+- `FZU_CHAT_METRICS_ENABLED=true` – enable restricted `/api/metrics`
 
 ## API Endpoints
 
@@ -116,7 +129,10 @@ docker compose up -d --build
 
 ### Chat
 - `GET /api/models` – Available chat models
-- `GET /api/conversations` – User's conversation list
+- `GET /api/health` – Lightweight liveness check
+- `GET /api/ready` – Readiness check for Redis, SQLite writeability, and configured runtime limits
+- `GET /api/metrics` – Restricted Prometheus-style operational metrics
+- `GET /api/conversations?limit=50&cursor=...` – Paginated conversation list with preview and message counts
 - `POST /api/conversations` – Create new conversation
 - `GET /api/conversations/{id}` – Conversation detail
 - `DELETE /api/conversations/{id}` – Delete conversation

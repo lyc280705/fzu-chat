@@ -40,6 +40,7 @@ from langgraph.graph import END, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from .memory_store import user_memory_store
+from .runtime_state import increment_counter
 from .security_utils import ensure_private_dir, ensure_private_file, env_flag
 
 try:
@@ -80,6 +81,9 @@ SEARCH_CITATION_COUNTER: ContextVar[int] = ContextVar("search_citation_counter",
 MAX_HISTORY_TOKENS = 200_000
 JWCH_LOCATE_DATE_URL = "https://jwcjwxt2.fzu.edu.cn:82/week.asp"
 JWCH_LOCATE_DATE_TIMEOUT = 5
+MODEL_REQUEST_TIMEOUT_SECONDS = float(os.getenv("FZU_CHAT_MODEL_TIMEOUT_SECONDS", "60"))
+MODEL_MAX_RETRIES = max(0, int(os.getenv("FZU_CHAT_MODEL_MAX_RETRIES", "1")))
+BOCHA_SEARCH_TIMEOUT_SECONDS = float(os.getenv("FZU_CHAT_BOCHA_TIMEOUT_SECONDS", "6"))
 JWCH_LOCATE_DATE_RE = re.compile(
     r'var\s+week\s*=\s*"(?P<week>\d+)".*?var\s+xn\s*=\s*"(?P<year>\d{4})".*?var\s+xq\s*=\s*"(?P<term>\d{2})"',
     re.S,
@@ -744,6 +748,8 @@ def build_chat_llm(
         "streaming": streaming,
         "api_key": huawei_maas_api_key,
         "base_url": HUAWEICLOUD_OPENAI_BASE_URL,
+        "timeout": MODEL_REQUEST_TIMEOUT_SECONDS,
+        "max_retries": MODEL_MAX_RETRIES,
     }
     if stop:
         init_kwargs["stop_sequences"] = stop
@@ -790,13 +796,19 @@ def bocha_websearch_tool(query: str,freshness: str) -> tuple[str, Any]:
         "count": 3
     }
 
-    response = requests.post(url, headers=headers, json=data)
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=BOCHA_SEARCH_TIMEOUT_SECONDS)
+    except requests.RequestException as exc:
+        increment_counter("fzu_chat_tool_errors_total")
+        logger.warning("Bocha search failed: %s", type(exc).__name__)
+        return "联网搜索暂时较慢或不可用，可以先基于已有信息回答；如必须联网核验，请稍后重试。", None
 
     if response.status_code == 200:
         json_response = response.json()
         try:
             if json_response["code"] != 200 or not json_response["data"]:
-                return f"搜索API请求失败，原因是: {response.msg or '未知错误'}", None
+                increment_counter("fzu_chat_tool_errors_total")
+                return f"搜索API请求失败，原因是: {json_response.get('msg') or json_response.get('message') or '未知错误'}", None
             
             webpages = json_response["data"]["webPages"]["value"]
             if not webpages:
@@ -805,8 +817,10 @@ def bocha_websearch_tool(query: str,freshness: str) -> tuple[str, Any]:
             formatted_results = "\n\n".join(format_web_search_citation_item(item) for item in citation_items)
             return formatted_results.strip(), citation_items
         except Exception as e:
+            increment_counter("fzu_chat_tool_errors_total")
             return f"搜索API请求失败，原因是：搜索结果解析失败 {str(e)}", None
     else:
+        increment_counter("fzu_chat_tool_errors_total")
         return f"搜索API请求失败，状态码: {response.status_code}, 错误信息: {response.text}", None
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
 import json
 import sqlite3
@@ -57,6 +58,9 @@ class ChatStore:
                 CREATE INDEX IF NOT EXISTS idx_conversations_user_updated
                 ON conversations (user_id, updated_at DESC);
 
+                CREATE INDEX IF NOT EXISTS idx_conversations_user_updated_id
+                ON conversations (user_id, updated_at DESC, id DESC);
+
                 CREATE TABLE IF NOT EXISTS messages (
                     id TEXT PRIMARY KEY,
                     conversation_id TEXT NOT NULL,
@@ -73,6 +77,11 @@ class ChatStore:
 
                 CREATE INDEX IF NOT EXISTS idx_messages_conversation_position
                 ON messages (conversation_id, position);
+
+                CREATE TABLE IF NOT EXISTS health_checks (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    checked_at TEXT NOT NULL
+                );
                 """
             )
             self._ensure_conversation_columns()
@@ -186,6 +195,39 @@ class ChatStore:
             "message_count": len(messages),
         }
 
+    def _summary_from_aggregate_row(self, row: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "model": row["model"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "preview": str(row["preview"] or "").strip()[:80],
+            "message_count": int(row["message_count"] or 0),
+        }
+
+    def _encode_cursor(self, row: sqlite3.Row | Dict[str, Any]) -> str:
+        payload = json.dumps(
+            {"updated_at": row["updated_at"], "id": row["id"]},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+    def _decode_cursor(self, cursor: str | None) -> tuple[str, str] | None:
+        if not cursor:
+            return None
+        try:
+            padded = cursor + "=" * (-len(cursor) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+        except Exception:
+            return None
+        updated_at = str(payload.get("updated_at") or "")
+        conversation_id = str(payload.get("id") or "")
+        if not updated_at or not conversation_id:
+            return None
+        return updated_at, conversation_id
+
     def _next_position(self, cur: sqlite3.Cursor, conversation_id: str) -> int:
         cur.execute(
             "SELECT COALESCE(MAX(position), -1) + 1 FROM messages WHERE conversation_id = ?",
@@ -215,18 +257,81 @@ class ChatStore:
         )
 
     def list_conversations(self, user_id: str) -> List[Dict[str, Any]]:
+        return self.list_conversations_page(user_id, limit=50)["items"]
+
+    def list_conversations_page(self, user_id: str, limit: int = 50, cursor: str | None = None) -> Dict[str, Any]:
+        limit = min(max(1, int(limit or 50)), 100)
+        cursor_values = self._decode_cursor(cursor)
+        params: list[Any] = [user_id]
+        cursor_clause = ""
+        if cursor_values is not None:
+            cursor_updated_at, cursor_id = cursor_values
+            cursor_clause = "AND (c.updated_at < ? OR (c.updated_at = ? AND c.id < ?))"
+            params.extend([cursor_updated_at, cursor_updated_at, cursor_id])
+        params.append(limit + 1)
+        with self._cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT
+                    c.id,
+                    c.title,
+                    c.model,
+                    c.created_at,
+                    c.updated_at,
+                    COALESCE(
+                        (
+                            SELECT m.content
+                            FROM messages m
+                            WHERE m.conversation_id = c.id
+                              AND m.is_error_fallback = 0
+                              AND trim(m.content) != ''
+                            ORDER BY m.position DESC
+                            LIMIT 1
+                        ),
+                        (
+                            SELECT m.content
+                            FROM messages m
+                            WHERE m.conversation_id = c.id
+                              AND trim(m.content) != ''
+                            ORDER BY m.position DESC
+                            LIMIT 1
+                        ),
+                        ''
+                    ) AS preview,
+                    (
+                        SELECT COUNT(*)
+                        FROM messages m
+                        WHERE m.conversation_id = c.id
+                    ) AS message_count
+                FROM conversations c
+                WHERE c.user_id = ?
+                {cursor_clause}
+                ORDER BY c.updated_at DESC, c.id DESC
+                LIMIT ?
+                """,
+                params,
+            )
+            rows = cur.fetchall()
+            page_rows = rows[:limit]
+            return {
+                "items": [self._summary_from_aggregate_row(row) for row in page_rows],
+                "next_cursor": self._encode_cursor(page_rows[-1]) if len(rows) > limit and page_rows else None,
+            }
+
+    def healthcheck(self) -> Dict[str, Any]:
+        started_at = datetime.now(timezone.utc)
         with self._cursor() as cur:
             cur.execute(
                 """
-                SELECT id, user_id, title, model, thread_id, created_at, updated_at, runtime_context
-                FROM conversations
-                WHERE user_id = ?
-                ORDER BY updated_at DESC
+                INSERT INTO health_checks (id, checked_at)
+                VALUES (1, ?)
+                ON CONFLICT(id) DO UPDATE SET checked_at = excluded.checked_at
                 """,
-                (user_id,),
+                (started_at.isoformat(),),
             )
-            rows = cur.fetchall()
-            return [self._summary_from_row(cur, row) for row in rows]
+            cur.execute("SELECT checked_at FROM health_checks WHERE id = 1")
+            checked_at = cur.fetchone()[0]
+        return {"ok": True, "checked_at": checked_at}
 
     def get_user_data_summary(self, user_id: str) -> Dict[str, int]:
         with self._cursor() as cur:
