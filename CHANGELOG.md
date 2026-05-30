@@ -3,6 +3,54 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.8] - 2026-05-30
+
+FZU-Chat v7.8 adds a visitor mode for external users. WeChat and QQ OAuth can now create isolated visitor sessions that keep public campus Q&A available while explicitly excluding personal academic-affairs tools.
+
+### Highlights
+
+- WeChat/QQ visitor login. New OAuth provider discovery, start, and callback endpoints create visitor sessions after legal consent, with Redis-backed one-time state when available.
+- Visitor privacy model. The backend stores only the provider, display name, avatar URL, and an irreversible provider-subject hash; third-party access tokens are used only during the callback and are not persisted.
+- No academic-affairs tools for visitors. LangGraph no longer binds grade, schedule, selection, exam-room, student-info, or course-selection tools for `student_type=visitor`, and the system prompt tells the model to explain the limitation instead of promising a query.
+- Visitor-aware interface. The login page adds WeChat and QQ visitor buttons, the sidebar shows visitor identity and avatar when available, and legal copy documents the visitor data boundary.
+- Deployment config. Docker Compose exposes optional WeChat/QQ OAuth environment variables so production can enable each provider independently.
+
+### Validation
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.8 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.8 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
+## 福大灵犀 v7.8
+
+福大灵犀 v7.8 新增面向校外人员的访客模式。微信和 QQ OAuth 现在可以创建隔离的访客会话，让公共校园问答继续可用，同时明确排除个人教务工具。
+
+### 版本亮点
+
+- 微信/QQ 访客登录。新增 OAuth 配置查询、登录跳转和回调接口；用户同意协议后创建访客会话，OAuth state 在可用时使用 Redis 做一次性校验。
+- 访客隐私边界。后端只保存登录来源、昵称、头像 URL 和不可逆的平台用户标识哈希；第三方 access token 仅在回调期间使用，不落盘。
+- 访客无个人教务工具。`student_type=visitor` 时 LangGraph 不再绑定成绩、课表、选课、考场、学生信息等个人教务工具，并在系统提示词中要求模型说明限制而不是承诺查询。
+- 前端识别访客身份。登录页新增微信和 QQ 访客按钮，侧栏展示访客身份和头像，用户协议/隐私政策补充访客数据处理说明。
+- 部署配置补齐。Docker Compose 增加可选微信/QQ OAuth 环境变量，生产环境可按提供方独立启用。
+
+### 验证
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.8 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.8 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
 ## [v7.7] - 2026-05-29
 
 FZU-Chat v7.7 hardens the current single-node deployment for an initial campus-wide launch. It keeps SQLite for durable chat, memory, and campus data, adds internal Redis for volatile runtime state, and improves traffic hygiene, readiness, metrics, pagination, backups, and rollback operations without moving to a multi-node architecture yet.

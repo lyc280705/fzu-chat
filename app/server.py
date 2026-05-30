@@ -9,6 +9,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import requests
 import time
 from threading import Event
 from threading import Lock
@@ -19,7 +20,7 @@ from uuid import uuid4
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
@@ -60,6 +61,17 @@ from .graph import (
 )
 from .jwch_client import JwchClient, JwchLoginError, JwchSessionError
 from .memory_store import user_memory_store
+from .oauth import (
+    OAuthConfigError,
+    OAuthError,
+    build_authorization_url,
+    consume_oauth_state,
+    create_oauth_state,
+    fetch_visitor_profile,
+    get_provider_config,
+    list_provider_status,
+    provider_display_name,
+)
 from .runtime_state import (
     acquire_dedupe_lock,
     acquire_pair_slot,
@@ -466,6 +478,12 @@ class LoginRequest(BaseModel):
 
 class EduReloginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=100)
+
+
+class OAuthProviderStatus(BaseModel):
+    provider: Literal["wechat", "qq"]
+    label: str
+    configured: bool
 
 
 class ConversationCreateRequest(BaseModel):
@@ -1450,6 +1468,8 @@ def _edu_context_from_session(user_id: str, session: Dict[str, Any] | None) -> D
     session = session or {}
     return {
         "user_id": user_id,
+        "student_type": session.get("student_type", ""),
+        "auth_provider": session.get("auth_provider", ""),
         "edu_authenticated": session.get("edu_authenticated", False),
         "edu_cookies": session.get("edu_cookies"),
         "edu_identifier": session.get("edu_identifier", ""),
@@ -1547,6 +1567,85 @@ def metrics(request: Request) -> PlainTextResponse:
     with active_stream_stops_lock:
         set_gauge("fzu_chat_active_streams", float(len(active_stream_stops)))
     return PlainTextResponse(render_prometheus_metrics(), media_type="text/plain; version=0.0.4")
+
+
+def _oauth_redirect_base(request: Request) -> str:
+    return f"{_request_origin(request).rstrip('/')}/api/auth/oauth"
+
+
+@app.get("/api/auth/oauth/providers", response_model=List[OAuthProviderStatus])
+def oauth_providers(request: Request):
+    return list_provider_status(_oauth_redirect_base(request))
+
+
+@app.get("/api/auth/oauth/{provider}/start")
+def oauth_start(provider: Literal["wechat", "qq"], request: Request, accepted_legal: bool = False):
+    _enforce_rate_limit(
+        _rate_limit_key("oauth-start", request, provider),
+        LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
+        LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+        "登录尝试过于频繁，请稍后再试。",
+    )
+    if not accepted_legal:
+        raise HTTPException(status_code=400, detail="请先阅读并同意用户协议与隐私政策。")
+
+    redirect_uri = f"{_oauth_redirect_base(request)}/{provider}/callback"
+    try:
+        config = get_provider_config(provider, redirect_uri)
+        state = create_oauth_state(provider, redirect_uri)
+        return RedirectResponse(build_authorization_url(config, state), status_code=302)
+    except OAuthConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/auth/oauth/{provider}/callback")
+def oauth_callback(
+    provider: Literal["wechat", "qq"],
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+):
+    if error:
+        logger.warning("OAuth callback rejected by %s: %s", provider, error)
+        raise HTTPException(status_code=400, detail=error_description or "第三方登录已取消或失败。")
+    try:
+        state_payload = consume_oauth_state(state or "", provider)
+        config = get_provider_config(provider, str(state_payload.get("redirect_uri") or ""))
+        profile = fetch_visitor_profile(config, code or "")
+    except OAuthConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except OAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except requests.RequestException as exc:
+        logger.warning("OAuth provider request failed for %s: %s", provider, type(exc).__name__)
+        raise HTTPException(status_code=503, detail=f"{provider_display_name(provider)}登录服务暂不可用，请稍后再试。") from exc
+
+    existing_token = request.cookies.get(AUTH_COOKIE_NAME)
+    if existing_token:
+        invalidate_session(existing_token)
+
+    token = create_session(
+        user_id=profile["user_id"],
+        student_type="visitor",
+        display_name=profile["display_name"],
+        edu_authenticated=False,
+        edu_cookies=None,
+    )
+    update_session(
+        token,
+        {
+            "auth_provider": provider,
+            "provider_subject_hash": profile["provider_subject_hash"],
+            "avatar_url": profile.get("avatar_url", ""),
+            "edu_status_message": "",
+            "edu_session_expires_at": None,
+        },
+    )
+    response = RedirectResponse("/", status_code=302)
+    _set_auth_cookie(response, token, request)
+    return response
 
 
 @app.post("/api/auth/login")
@@ -1678,6 +1777,8 @@ def auth_me(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
         "user_id": session.get("user_id", user.user_id),
         "student_type": session.get("student_type", user.student_type),
         "display_name": session.get("display_name", user.display_name),
+        "auth_provider": session.get("auth_provider", ""),
+        "avatar_url": session.get("avatar_url", ""),
         "edu_authenticated": session.get("edu_authenticated", user.edu_authenticated),
         "edu_error": session.get("edu_status_message", ""),
     }
@@ -1750,13 +1851,7 @@ def contextual_recommendation(
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
     session = refresh_edu_session_status(user.token) or get_session(user.token) or {}
-    edu_ctx = {
-        "user_id": user.user_id,
-        "edu_authenticated": session.get("edu_authenticated", False),
-        "edu_cookies": session.get("edu_cookies"),
-        "edu_identifier": session.get("edu_identifier", ""),
-        "edu_status_message": session.get("edu_status_message", ""),
-    }
+    edu_ctx = _edu_context_from_session(user.user_id, session)
     location = req.location.dict() if req.location else None
     return build_contextual_recommendation(
         scenario=req.scenario,

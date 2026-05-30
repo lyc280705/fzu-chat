@@ -114,6 +114,16 @@ const CAMPUS_RECOMMENDATION_TRAVEL_MODE_LABELS = {
   自行车: '骑行',
 }
 
+const OAUTH_PROVIDER_LABELS = {
+  wechat: '微信',
+  qq: 'QQ',
+}
+
+const DEFAULT_OAUTH_PROVIDERS = [
+  { provider: 'wechat', label: OAUTH_PROVIDER_LABELS.wechat, configured: null },
+  { provider: 'qq', label: OAUTH_PROVIDER_LABELS.qq, configured: null },
+]
+
 const FALLBACK_HEX = Array.from({ length: 256 }, (_, index) => index.toString(16).padStart(2, '0'))
 
 const PRIVACY_POLICY_SECTIONS = [
@@ -129,6 +139,7 @@ const PRIVACY_POLICY_SECTIONS = [
     title: '二、我们处理的数据类型',
     items: [
       '账号与认证信息：登录时提交的学号、学生类型，以及为保持登录状态而生成的安全 Cookie。',
+      '访客登录信息：通过微信或 QQ 授权返回的昵称、头像和不可逆哈希后的平台用户标识；系统不保存第三方 access token。',
       '教务认证信息：你主动输入的教务密码仅用于即时认证与会话续连，前端不会长期保存该密码。',
       '业务内容数据：包括你的提问内容、助手回复、工具调用结果、消息反馈和会话标题。',
       '个性化记忆数据：仅在你明确确认后，系统才会保存长期偏好、常用称呼、输出风格等可复用信息。',
@@ -191,6 +202,7 @@ const USER_AGREEMENT_SECTIONS = [
     title: '二、服务内容',
     items: [
       '本软件提供福州大学相关知识问答、联网辅助检索、教务数据查询、历史会话管理和个性化辅助能力。',
+      '访客模式面向校外人员或临时访问场景开放，可使用公共问答和校园生活建议，不提供成绩、课表、选课等个人教务工具。',
       '部分能力依赖第三方模型服务、检索服务或学校教务接口，服务范围可能随实际运行情况调整。',
       '研究生登录、特定工具或实验性能力如未开放，系统可通过界面提示、禁用按钮或其他限制方式说明。',
     ],
@@ -939,6 +951,8 @@ function LoginPage({ onLogin }) {
   const [submitted, setSubmitted] = useState(false)
   const [logoFailed, setLogoFailed] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [oauthProviders, setOauthProviders] = useState(DEFAULT_OAUTH_PROVIDERS)
+  const [oauthLoadingProvider, setOauthLoadingProvider] = useState('')
   const [error, setError] = useState('')
   const studentIdRef = useRef(null)
   const passwordRef = useRef(null)
@@ -946,6 +960,31 @@ function LoginPage({ onLogin }) {
   const studentIdError = submitted && !studentId.trim() ? '请输入学号。' : ''
   const passwordError = submitted && !password.trim() ? '请输入教务系统密码。' : ''
   const legalError = submitted && !acceptedLegal ? '请先阅读并同意协议。' : ''
+  const oauthProviderMap = useMemo(
+    () => new Map(oauthProviders.map((provider) => [provider.provider, provider])),
+    [oauthProviders],
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/auth/oauth/providers', { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('访客登录配置获取失败'))))
+      .then((providers) => {
+        if (cancelled || !Array.isArray(providers)) return
+        const byKey = new Map(providers.map((provider) => [provider.provider, provider]))
+        setOauthProviders(DEFAULT_OAUTH_PROVIDERS.map((fallback) => ({
+          ...fallback,
+          ...(byKey.get(fallback.provider) || {}),
+          label: byKey.get(fallback.provider)?.label || fallback.label,
+        })))
+      })
+      .catch(() => {
+        if (!cancelled) setOauthProviders(DEFAULT_OAUTH_PROVIDERS)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   if (legalDocumentKey) {
     return <LegalDocumentPage documentKey={legalDocumentKey} onBack={() => setLegalDocumentKey(null)} />
@@ -987,6 +1026,23 @@ function LoginPage({ onLogin }) {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleOauthLogin = (provider) => {
+    if (loading || oauthLoadingProvider) return
+    if (!acceptedLegal) {
+      setError('请先阅读并勾选同意《用户协议》和《隐私政策》。')
+      return
+    }
+    const providerStatus = oauthProviderMap.get(provider)
+    const label = providerStatus?.label || OAUTH_PROVIDER_LABELS[provider] || provider
+    if (providerStatus?.configured === false) {
+      setError(`${label}访客登录尚未配置，请先使用本科生教务登录。`)
+      return
+    }
+    setError('')
+    setOauthLoadingProvider(provider)
+    window.location.assign(`/api/auth/oauth/${provider}/start?accepted_legal=true`)
   }
 
   return (
@@ -1074,11 +1130,34 @@ function LoginPage({ onLogin }) {
           </div>
           {legalError && <span className="field-error field-error--standalone">{legalError}</span>}
 
-          <button type="submit" className="login-btn" disabled={loading}>
+          <button type="submit" className="login-btn" disabled={loading || Boolean(oauthLoadingProvider)}>
             {loading ? '登录中…' : '登 录'}
           </button>
+
+          <div className="login-divider"><span>或访客登录</span></div>
+          <div className="oauth-login-grid" aria-label="访客登录方式">
+            {DEFAULT_OAUTH_PROVIDERS.map((fallback) => {
+              const providerStatus = oauthProviderMap.get(fallback.provider) || fallback
+              const label = providerStatus.label || fallback.label
+              const configured = providerStatus.configured !== false
+              const isLoading = oauthLoadingProvider === fallback.provider
+              return (
+                <button
+                  key={fallback.provider}
+                  type="button"
+                  className={`oauth-login-btn oauth-login-btn--${fallback.provider}`}
+                  disabled={loading || Boolean(oauthLoadingProvider) || !configured}
+                  onClick={() => handleOauthLogin(fallback.provider)}
+                >
+                  <span className="oauth-login-mark" aria-hidden="true">{fallback.provider === 'wechat' ? '微' : 'Q'}</span>
+                  <span>{isLoading ? '跳转中…' : configured ? `${label}登录` : `${label}未配置`}</span>
+                </button>
+              )
+            })}
+          </div>
+          <p className="oauth-login-note">访客模式可使用公共问答、知识库、联网搜索和校园生活建议，不包含成绩、课表、选课等个人教务工具。</p>
         </form>
-        <p className="login-footer">密码仅用于即时教务认证，登录态通过站点安全 Cookie 保存；登录前请先阅读并同意相关协议。</p>
+        <p className="login-footer">教务密码仅用于即时认证；访客登录只保存第三方昵称、头像和不可逆平台标识哈希。</p>
       </div>
     </div>
   )
@@ -2357,6 +2436,12 @@ function App() {
   }, [conversationQuery, conversations])
   const userId = user?.user_id ?? ''
   const needsEduRelogin = user?.student_type === 'undergraduate' && !user?.edu_authenticated
+  const isVisitorUser = user?.student_type === 'visitor'
+  const authProviderLabel = OAUTH_PROVIDER_LABELS[user?.auth_provider] || '访客'
+  const userModeText = isVisitorUser
+    ? `${authProviderLabel}访客`
+    : `${user?.student_type === 'undergraduate' ? '本科生' : '研究生'}${user?.edu_authenticated ? ' · 教务已连接' : needsEduRelogin ? ' · 教务待重新连接' : ''}`
+  const userAvatarUrl = typeof user?.avatar_url === 'string' ? user.avatar_url.trim() : ''
   const isActiveConversationStreaming = Boolean(activeId && streamingConversations[activeId])
   const isActiveConversationStopPending = Boolean(activeId && stopPendingConversations[activeId])
   const hasStreamingConversation = Object.keys(streamingConversations).length > 0
@@ -3411,16 +3496,17 @@ function App() {
             <img src="/assets/FZU.png" alt="福州大学" className="brand-logo" />
             <div>
               <h1>福大灵犀</h1>
-              <p className="brand-sub">智能问答 · 教务查询</p>
+              <p className="brand-sub">{isVisitorUser ? '公共问答 · 访客模式' : '智能问答 · 教务查询'}</p>
             </div>
           </div>
 
           <div className="user-card">
-            <div className="user-avatar">{user.display_name?.charAt(0) || 'U'}</div>
+            <div className={userAvatarUrl ? 'user-avatar user-avatar--image' : 'user-avatar'}>
+              {userAvatarUrl ? <img src={userAvatarUrl} alt="" referrerPolicy="no-referrer" /> : (user.display_name?.charAt(0) || 'U')}
+            </div>
             <div className="user-info">
               <strong>{user.display_name}</strong>
-              <span>{user.student_type === 'undergraduate' ? '本科生' : '研究生'}
-                {user.edu_authenticated ? ' · 教务已连接' : needsEduRelogin ? ' · 教务待重新连接' : ''}</span>
+              <span>{userModeText}</span>
             </div>
             <IconButton className="logout-btn" label="退出登录" onClick={handleLogout}>
               <LogOut size={17} aria-hidden="true" />
@@ -3567,7 +3653,7 @@ function App() {
               <h2 id="chat-heading" className={`chat-header-title ${!isPrivacyView && activeConv && pendingTitles[activeConv.id] ? 'chat-header-title--pending' : ''}`.trim()} aria-label={isPrivacyView ? '隐私与数据' : (activeConv && pendingTitles[activeConv.id] ? '正在生成标题' : (activeConv?.title ?? '新的对话'))}>
                 {isPrivacyView ? '隐私与数据' : (activeConv && pendingTitles[activeConv.id] ? <PendingTitle /> : (activeConv?.title ?? '新的对话'))}
               </h2>
-              <p>{isPrivacyView ? '查看隐私政策、数据统计和一键清空入口' : '福州大学知识库 · 联网搜索 · 教务系统'}</p>
+              <p>{isPrivacyView ? '查看隐私政策、数据统计和一键清空入口' : (isVisitorUser ? '福州大学知识库 · 联网搜索 · 访客模式' : '福州大学知识库 · 联网搜索 · 教务系统')}</p>
             </div>
           </div>
           {!isPrivacyView && (
@@ -3641,7 +3727,9 @@ function App() {
                   aria-label={`${m.role === 'user' ? user.display_name : '福大灵犀'}的消息`}
                 >
                   <div className={`avatar ${m.role === 'user' ? 'avatar--user' : 'avatar--bot'}`} aria-hidden="true">
-                    {m.role === 'user' ? (user.display_name?.charAt(0) || 'U') : <img src="/assets/FZU.png" alt="" />}
+                    {m.role === 'user'
+                      ? (userAvatarUrl ? <img src={userAvatarUrl} alt="" referrerPolicy="no-referrer" /> : (user.display_name?.charAt(0) || 'U'))
+                      : <img src="/assets/FZU.png" alt="" />}
                   </div>
                   <div className="msg-body">
                     <div className="msg-meta">

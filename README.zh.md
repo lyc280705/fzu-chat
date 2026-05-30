@@ -9,17 +9,18 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-当前已标记版本：[v7.7](CHANGELOG.md)
+当前已标记版本：[v7.8](CHANGELOG.md)
 
 版本记录：[CHANGELOG.md](CHANGELOG.md)
 
 ## 概述
 
-福大灵犀为福州大学学生提供类 ChatGPT 的对话体验。每个学生使用学号登录后，拥有独立的对话记录，并可通过 AI 助手查询成绩、课表等教务信息。
+福大灵犀为福州大学学生提供类 ChatGPT 的对话体验。每个学生使用学号登录后，拥有独立的对话记录，并可通过 AI 助手查询成绩、课表等教务信息；校外人员也可通过微信或 QQ 以访客模式使用公共问答和校园生活建议。
 
 ## 功能特性
 
 - **学生登录认证**：基于学号的登录系统，每个学生对话完全隔离
+- **微信/QQ 访客模式**：第三方授权后创建访客会话，仅开放公共问答、知识库、联网搜索和校园生活建议，不绑定成绩、课表、选课等个人教务工具
 - **教务系统工具**：查询成绩、课表、考试成绩、学生信息（基于 [west2-online/jwch](https://github.com/west2-online/jwch) 对接教务系统）
 - **教务会话安全清理**：登录时仅在服务端暂存教务系统会话 Cookie，不保存教务密码；退出登录会同时清除站点登录态和暂存的教务会话 Cookie
 - **ChatGPT 风格界面**：现代暗色主题，侧边栏历史记录、快捷操作、流式回复
@@ -41,6 +42,7 @@ fzu-chat/
 │   ├── server.py          # FastAPI 后端（认证 + 按用户隔离对话）
 │   ├── graph.py           # LangGraph 工作流（含教务工具）
 │   ├── auth.py            # Token 认证与会话管理
+│   ├── oauth.py           # 微信/QQ 访客登录 OAuth 封装
 │   ├── jwch_client.py     # 福大本科教务系统客户端（Python 实现）
 │   ├── edu_tools.py       # LangGraph 教务查询工具
 │   ├── campus_recommendations.py # 情境食堂/自习推荐服务
@@ -69,6 +71,7 @@ fzu-chat/
 - `BOCHA_API_KEY` – 博查网络搜索
 - `LANGSMITH_API_KEY` – LangSmith 追踪
 - `AMAP_WEB_SERVICE_KEY` – 可选，高德 Web 服务 Key，用于把浏览器定位逆地理编码为文字位置、补充周边 POI 和计算步行/骑行路线；本地开发也可使用 `amap_web_service_key.txt` 或 `AMAP_WEB_SERVICE_KEY_FILE`；请求默认限速不超过 5 QPS；逆地理编码使用短超时和 10 分钟进程内缓存；未配置时校园推荐会使用内置福大地点库和估算距离降级
+- `FZU_CHAT_WECHAT_CLIENT_ID` / `FZU_CHAT_WECHAT_CLIENT_SECRET`、`FZU_CHAT_QQ_CLIENT_ID` / `FZU_CHAT_QQ_CLIENT_SECRET` – 可选，启用微信与 QQ 访客 OAuth 登录；可通过对应 `*_REDIRECT_URI` 覆盖回调地址，默认回调为 `/api/auth/oauth/{provider}/callback`
 
 本地开发时，如果未配置容器 secret 或环境变量，后端也会读取项目根目录下的 `huaweicloud_maas_api_key.txt`、`dashscope_api_key.txt`、`bocha_api_key.txt` 等密钥文件。
 
@@ -84,6 +87,8 @@ export DASHSCOPE_API_KEY=...
 export BOCHA_API_KEY=...
 export LANGSMITH_API_KEY=...
 export AMAP_WEB_SERVICE_KEY=... # 可选，用于文字位置和校园路线
+export FZU_CHAT_QQ_CLIENT_ID=... # 可选，访客 QQ 登录
+export FZU_CHAT_QQ_CLIENT_SECRET=...
 
 # 3. 启动后端
 uvicorn app.server:app --host 0.0.0.0 --port 8000
@@ -110,7 +115,7 @@ docker compose up -d --build
 # 3. 访问 http://localhost:80
 ```
 
-生产环境可使用 `docker-compose.prod.yml` 启动内部 Redis。设置 URL-safe 的 `REDIS_PASSWORD`，例如 `openssl rand -hex 32`，再执行 `FZU_CHAT_VERSION=v7.7 ./scripts/deploy-ghcr.sh`；如果 GHCR 镜像拉取失败，脚本会回退到本地生产镜像构建。
+生产环境可使用 `docker-compose.prod.yml` 启动内部 Redis。设置 URL-safe 的 `REDIS_PASSWORD`，例如 `openssl rand -hex 32`，再执行 `FZU_CHAT_VERSION=v7.8 ./scripts/deploy-ghcr.sh`；如果 GHCR 镜像拉取失败，脚本会回退到本地生产镜像构建。
 
 常用生产环境变量：
 
@@ -119,11 +124,15 @@ docker compose up -d --build
 - `FZU_CHAT_GLOBAL_STREAM_LIMIT=80`、`FZU_CHAT_USER_STREAM_LIMIT=5` – 初期校内规模的活跃 SSE 生成上限
 - `FZU_CHAT_STATIC_FALLBACK=strict` – 仅 `/` 和 `index.html` 返回前端页面
 - `FZU_CHAT_METRICS_ENABLED=true` – 启用受保护的 `/api/metrics`
+- `FZU_CHAT_WECHAT_CLIENT_ID` / `FZU_CHAT_WECHAT_CLIENT_SECRET`、`FZU_CHAT_QQ_CLIENT_ID` / `FZU_CHAT_QQ_CLIENT_SECRET` – 启用对应访客登录入口；未配置时前端按钮会显示为未配置
 
 ## API 接口
 
 ### 认证
 - `POST /api/auth/login` – 学号 + 密码登录
+- `GET /api/auth/oauth/providers` – 查询微信/QQ 访客登录配置状态
+- `GET /api/auth/oauth/{provider}/start` – 发起微信或 QQ 访客登录跳转
+- `GET /api/auth/oauth/{provider}/callback` – 第三方授权回调，创建不含教务工具的访客会话
 - `POST /api/auth/logout` – 退出登录，同时清除站点登录态和服务端暂存的教务会话 Cookie
 - `GET /api/auth/me` – 当前用户信息
 
@@ -150,7 +159,7 @@ docker compose up -d --build
 低侵入提醒不会在首页自动展示推荐卡片，也不会在发送消息时同步抓取慢速教务数据。后端只读取已缓存的非敏感摘要和提醒冷却状态，将少量动态事件放入第二条短 `SystemMessage`，并在每个对话中只保存第一次生成的运行时上下文，后续回合仅追加新消息，不改旧提示内容。对话历史使用 LangChain 近似 token 计数，接近 200k token 时才裁剪，尽量保留长对话里的工具结果。浏览器经纬度仅随本次消息临时传入：后端用它做校园推荐和高德逆地理编码，模型只会看到逆地理编码后的文字位置。经纬度和文字位置都不会写入会话存储或长期记忆；成绩摘要只保存 digest、学期和录入数量，不保存具体分数；高德 Key 仅通过后端环境变量或 Docker secret 使用，不暴露给前端。手机定位需要通过 HTTPS 域名访问，普通服务器 HTTP 地址不会弹出浏览器定位授权。
 
 ### 教务工具（Agent 自动调用）
-AI 助手在学生询问教务数据时自动调用：
+AI 助手仅在本科生教务登录会话中自动调用以下工具；微信/QQ 访客模式不会绑定这些个人教务工具：
 - `query_grades` – 课程成绩和绩点
 - `query_courses` – 课程表
 - `query_student_info` – 学生个人信息
