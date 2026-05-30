@@ -260,7 +260,7 @@ def _enforce_browser_request_integrity(request: Request) -> None:
         return
     if not request.url.path.startswith("/api/"):
         return
-    if request.method.upper() == "POST" and re.fullmatch(r"/api/auth/oauth/[a-z0-9_-]+/callback", request.url.path):
+    if request.method.upper() == "POST" and re.fullmatch(r"/api/auth/(?:oauth/[a-z0-9_-]+/callback|callback/[a-z0-9_-]+)", request.url.path):
         return
 
     sec_fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
@@ -392,7 +392,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="FZU Chat API",
-    version="7.9.0",
+    version="7.10.0",
     lifespan=lifespan,
     docs_url="/docs" if PUBLIC_DOCS else None,
     redoc_url="/redoc" if PUBLIC_DOCS else None,
@@ -484,6 +484,17 @@ class EduReloginRequest(BaseModel):
 
 
 OAuthProviderName = Literal["wechat", "qq", "microsoft", "apple", "github"]
+
+OAUTH_CALLBACK_PROVIDER_ALIASES: Dict[str, OAuthProviderName] = {
+    "wechat": "wechat",
+    "qq": "qq",
+    "microsoft": "microsoft",
+    "microsoft-entra-id": "microsoft",
+    "microsoft_entra_id": "microsoft",
+    "entra": "microsoft",
+    "apple": "apple",
+    "github": "github",
+}
 
 
 class OAuthProviderStatus(BaseModel):
@@ -1652,6 +1663,27 @@ def _finish_oauth_callback(provider: OAuthProviderName, request: Request, payloa
     return response
 
 
+def _oauth_callback_payload(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+) -> Dict[str, Any]:
+    return {
+        "code": code or "",
+        "state": state or "",
+        "error": error or "",
+        "error_description": error_description or "",
+    }
+
+
+def _resolve_oauth_callback_provider(provider_alias: str) -> OAuthProviderName:
+    provider = OAUTH_CALLBACK_PROVIDER_ALIASES.get((provider_alias or "").strip().lower())
+    if not provider:
+        raise HTTPException(status_code=404, detail="登录方式不可用。")
+    return provider
+
+
 @app.get("/api/auth/oauth/{provider}/callback")
 def oauth_callback(
     provider: OAuthProviderName,
@@ -1661,20 +1693,33 @@ def oauth_callback(
     error: str | None = None,
     error_description: str | None = None,
 ):
-    return _finish_oauth_callback(
-        provider,
-        request,
-        {
-            "code": code or "",
-            "state": state or "",
-            "error": error or "",
-            "error_description": error_description or "",
-        },
-    )
+    return _finish_oauth_callback(provider, request, _oauth_callback_payload(code, state, error, error_description))
 
 
 @app.post("/api/auth/oauth/{provider}/callback")
 async def oauth_callback_post(provider: OAuthProviderName, request: Request):
+    raw_body = (await request.body()).decode("utf-8", errors="replace")
+    form_values = parse_qs(raw_body, keep_blank_values=True)
+    payload = {key: values[0] if values else "" for key, values in form_values.items()}
+    return _finish_oauth_callback(provider, request, payload)
+
+
+@app.get("/api/auth/callback/{provider_alias}")
+def oauth_callback_alias(
+    provider_alias: str,
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+):
+    provider = _resolve_oauth_callback_provider(provider_alias)
+    return _finish_oauth_callback(provider, request, _oauth_callback_payload(code, state, error, error_description))
+
+
+@app.post("/api/auth/callback/{provider_alias}")
+async def oauth_callback_alias_post(provider_alias: str, request: Request):
+    provider = _resolve_oauth_callback_provider(provider_alias)
     raw_body = (await request.body()).decode("utf-8", errors="replace")
     form_values = parse_qs(raw_body, keep_blank_values=True)
     payload = {key: values[0] if values else "" for key, values in form_values.items()}

@@ -123,10 +123,7 @@ class VisitorOAuthTests(unittest.TestCase):
                     }
                 ),
             ):
-                callback = self.client.get(
-                    f"/api/auth/oauth/github/callback?code=oauth-code&state={state}",
-                    follow_redirects=False,
-                )
+                callback = self.client.get(f"/api/auth/callback/github?code=oauth-code&state={state}", follow_redirects=False)
 
         self.assertEqual(callback.status_code, 302)
         me = self.client.get("/api/auth/me")
@@ -135,6 +132,47 @@ class VisitorOAuthTests(unittest.TestCase):
         self.assertEqual(payload["display_name"], "GitHub 访客")
         self.assertEqual(payload["auth_provider"], "github")
         self.assertTrue(payload["user_id"].startswith("visitor_github_"))
+
+    def test_microsoft_legacy_callback_alias_creates_visitor_session(self):
+        env = {
+            **os.environ,
+            "FZU_CHAT_OAUTH_PROVIDERS": "microsoft",
+            "FZU_CHAT_MICROSOFT_CLIENT_ID": "microsoft-client-id",
+            "FZU_CHAT_MICROSOFT_CLIENT_SECRET": "microsoft-client-secret",
+            "FZU_CHAT_MICROSOFT_REDIRECT_URI": "http://testserver/api/auth/callback/microsoft-entra-id",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            start = self.client.get("/api/auth/oauth/microsoft/start?accepted_legal=true", follow_redirects=False)
+            self.assertEqual(start.status_code, 302)
+            parsed = urlparse(start.headers["location"])
+            self.assertEqual(parse_qs(parsed.query)["redirect_uri"], ["http://testserver/api/auth/callback/microsoft-entra-id"])
+            state = parse_qs(parsed.query)["state"][0]
+
+            with patch(
+                "app.oauth.requests.post",
+                return_value=FakeOAuthResponse({"access_token": "microsoft-token"}),
+            ), patch(
+                "app.oauth.requests.get",
+                return_value=FakeOAuthResponse(
+                    {
+                        "sub": "microsoft-subject-1",
+                        "name": "Microsoft 访客",
+                        "email": "microsoft@example.com",
+                    }
+                ),
+            ):
+                callback = self.client.get(
+                    f"/api/auth/callback/microsoft-entra-id?code=oauth-code&state={state}",
+                    follow_redirects=False,
+                )
+
+        self.assertEqual(callback.status_code, 302)
+        me = self.client.get("/api/auth/me")
+        payload = me.json()
+        self.assertEqual(payload["student_type"], "visitor")
+        self.assertEqual(payload["display_name"], "Microsoft 访客")
+        self.assertEqual(payload["auth_provider"], "microsoft")
+        self.assertTrue(payload["user_id"].startswith("visitor_microsoft_"))
 
     def test_apple_form_post_callback_creates_visitor_session(self):
         id_token = _unsigned_jwt({"sub": "apple-subject-1", "email": "apple@example.com"})

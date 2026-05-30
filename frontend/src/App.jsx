@@ -122,14 +122,6 @@ const OAUTH_PROVIDER_LABELS = {
   github: 'GitHub',
 }
 
-const OAUTH_PROVIDER_MARKS = {
-  wechat: '微',
-  qq: 'Q',
-  microsoft: 'M',
-  apple: 'A',
-  github: 'G',
-}
-
 const DEFAULT_OAUTH_PROVIDERS = Object.entries(OAUTH_PROVIDER_LABELS).map(([provider, label]) => ({
   provider,
   label,
@@ -911,6 +903,52 @@ const formatDistanceMeters = (value) => {
   return `${Math.max(1, Math.round(meters))} 米`
 }
 
+function OAuthProviderLogo({ provider, label }) {
+  if (provider === 'microsoft') {
+    return (
+      <svg className="oauth-login-logo oauth-login-logo--microsoft" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <rect x="3" y="3" width="8" height="8" rx="1" fill="#f25022" />
+        <rect x="13" y="3" width="8" height="8" rx="1" fill="#7fba00" />
+        <rect x="3" y="13" width="8" height="8" rx="1" fill="#00a4ef" />
+        <rect x="13" y="13" width="8" height="8" rx="1" fill="#ffb900" />
+      </svg>
+    )
+  }
+  if (provider === 'github') {
+    return (
+      <svg className="oauth-login-logo oauth-login-logo--github" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.58 7.58 0 0 1 8 3.87c.68 0 1.36.09 2 .26 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+      </svg>
+    )
+  }
+  if (provider === 'apple') {
+    return (
+      <svg className="oauth-login-logo oauth-login-logo--apple" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M16.35 1.72c.11 1.16-.34 2.3-1.05 3.14-.75.9-1.98 1.61-3.09 1.52-.14-1.1.42-2.27 1.08-3.03.75-.87 2.08-1.53 3.06-1.63Zm3.88 15.83c-.54 1.24-.8 1.8-1.5 2.89-.98 1.5-2.35 3.37-4.05 3.39-1.51.02-1.9-.98-3.95-.97-2.05.01-2.48 1-3.99.98-1.7-.02-3-1.7-3.98-3.2-2.73-4.19-3.02-9.1-1.33-11.72 1.2-1.86 3.09-2.95 4.86-2.95 1.8 0 2.94.99 4.43.99 1.45 0 2.33-.99 4.42-.99 1.58 0 3.26.86 4.45 2.35-3.91 2.14-3.28 7.73.64 9.23Z" />
+      </svg>
+    )
+  }
+  if (provider === 'wechat') {
+    return (
+      <svg className="oauth-login-logo oauth-login-logo--wechat" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M9.4 4.4c-4.08 0-7.4 2.72-7.4 6.08 0 1.94 1.13 3.67 2.86 4.78l-.7 2.1 2.52-1.22c.83.27 1.75.42 2.72.42 4.08 0 7.4-2.72 7.4-6.08S13.48 4.4 9.4 4.4Zm-2.48 4.54a.83.83 0 1 1 0-1.66.83.83 0 0 1 0 1.66Zm4.96 0a.83.83 0 1 1 0-1.66.83.83 0 0 1 0 1.66Z" />
+        <path fill="currentColor" d="M22 14.42c0-2.78-2.74-5.04-6.12-5.04h-.23c.08.36.12.73.12 1.1 0 3.95-3.9 7.16-8.7 7.16h-.4c1.1 1.1 2.83 1.81 4.77 1.81.8 0 1.55-.12 2.24-.35l2.08 1.01-.57-1.73C18.82 17.43 22 16.11 22 14.42Zm-8.3-1.58a.7.7 0 1 1 0-1.4.7.7 0 0 1 0 1.4Zm4.12 0a.7.7 0 1 1 0-1.4.7.7 0 0 1 0 1.4Z" opacity="0.72" />
+      </svg>
+    )
+  }
+  if (provider === 'qq') {
+    return (
+      <svg className="oauth-login-logo oauth-login-logo--qq" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <circle cx="12" cy="7.2" r="3.8" fill="currentColor" />
+        <path fill="currentColor" d="M6.1 15.9c.38-3.46 2.58-6.14 5.9-6.14 3.33 0 5.53 2.68 5.9 6.14.18 1.66-.73 3.1-2.17 3.88.46.34.96.73 1.5 1.18-1.73.22-3.31-.06-4.48-.86-.25.03-.5.04-.75.04s-.5-.01-.75-.04c-1.17.8-2.75 1.08-4.48.86.54-.45 1.04-.84 1.5-1.18-1.44-.78-2.35-2.22-2.17-3.88Z" />
+        <circle cx="10.62" cy="6.85" r="0.5" fill="#111827" />
+        <circle cx="13.38" cy="6.85" r="0.5" fill="#111827" />
+      </svg>
+    )
+  }
+  return <span className="oauth-login-fallback-mark" aria-hidden="true">{String(label || provider).slice(0, 1)}</span>
+}
+
 /* ================================================================== */
 /*  Login Page                                                         */
 /* ================================================================== */
@@ -1162,7 +1200,6 @@ function LoginPage({ onLogin }) {
               const label = providerStatus.label || fallback?.label || providerKey
               const configured = providerStatus.configured !== false
               const isLoading = oauthLoadingProvider === providerKey
-              const mark = OAUTH_PROVIDER_MARKS[providerKey] || label.slice(0, 1)
               return (
                 <button
                   key={providerKey}
@@ -1171,7 +1208,9 @@ function LoginPage({ onLogin }) {
                   disabled={loading || Boolean(oauthLoadingProvider) || !configured}
                   onClick={() => handleOauthLogin(providerKey)}
                 >
-                  <span className="oauth-login-mark" aria-hidden="true">{mark}</span>
+                  <span className="oauth-login-mark" aria-hidden="true">
+                    <OAuthProviderLogo provider={providerKey} label={label} />
+                  </span>
                   <span>{isLoading ? '跳转中…' : configured ? `${label}登录` : `${label}未配置`}</span>
                 </button>
               )

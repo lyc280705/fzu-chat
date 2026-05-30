@@ -87,18 +87,25 @@ summary:focus-visible {
 /* ================================================================== */
 
 .login-page {
+  box-sizing: border-box;
   display: grid;
   place-items: center;
   min-height: 100vh;
   min-height: 100dvh;
   overflow: auto;
+  padding: 1rem;
   background: radial-gradient(ellipse at 30% 20%, rgba(34, 197, 94, 0.12), transparent 50%),
               radial-gradient(ellipse at 70% 80%, rgba(37, 99, 235, 0.08), transparent 50%),
               #0a0f1a;
 }
 
 .login-card {
+  box-sizing: border-box;
   width: min(420px, calc(100% - 2rem));
+  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 2.5rem 2rem;
   border-radius: 24px;
   background: rgba(15, 23, 42, 0.85);
@@ -366,13 +373,27 @@ summary:focus-visible {
 }
 
 .oauth-login-mark {
-  display: grid;
+  display: inline-grid;
   place-items: center;
   width: 1.5rem;
   height: 1.5rem;
   border-radius: 8px;
   color: #fff;
   font-size: 0.78rem;
+  flex: 0 0 auto;
+}
+
+.oauth-login-logo {
+  display: block;
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.oauth-login-fallback-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
 }
 
 .oauth-login-btn--wechat .oauth-login-mark {
@@ -384,7 +405,7 @@ summary:focus-visible {
 }
 
 .oauth-login-btn--microsoft .oauth-login-mark {
-  background: #0078d4;
+  background: #f8fafc;
 }
 
 .oauth-login-btn--apple .oauth-login-mark {
@@ -393,7 +414,20 @@ summary:focus-visible {
 }
 
 .oauth-login-btn--github .oauth-login-mark {
-  background: #24292f;
+  background: #f8fafc;
+  color: #24292f;
+}
+
+.oauth-login-logo--microsoft {
+  width: 1rem;
+  height: 1rem;
+}
+
+.oauth-login-logo--apple,
+.oauth-login-logo--github,
+.oauth-login-logo--qq,
+.oauth-login-logo--wechat {
+  color: currentColor;
 }
 
 .oauth-login-note {
@@ -416,6 +450,110 @@ summary:focus-visible {
   text-align: center;
   color: #64748b;
   font-size: 0.8rem;
+}
+
+@media (max-height: 820px) and (min-width: 769px) {
+  .login-page {
+    padding: 0.75rem;
+  }
+
+  .login-card {
+    width: min(390px, calc(100% - 1.5rem));
+    max-height: calc(100vh - 1.5rem);
+    max-height: calc(100dvh - 1.5rem);
+    padding: 1.35rem 1.35rem 1.2rem;
+    border-radius: 20px;
+  }
+
+  .login-brand {
+    margin-bottom: 1rem;
+  }
+
+  .login-logo {
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
+    margin-bottom: 0.45rem;
+  }
+
+  .login-brand h1 {
+    font-size: 1.28rem;
+  }
+
+  .login-brand p {
+    font-size: 0.82rem;
+  }
+
+  .login-form {
+    gap: 0.72rem;
+  }
+
+  .login-form label {
+    gap: 0.28rem;
+    font-size: 0.8rem;
+  }
+
+  .login-form input,
+  .login-form select {
+    padding: 0.65rem 0.8rem;
+    border-radius: 12px;
+  }
+
+  .password-toggle {
+    width: 2rem;
+    height: 2rem;
+  }
+
+  .field-hint,
+  .field-error {
+    font-size: 0.7rem;
+  }
+
+  .login-consent {
+    font-size: 0.72rem;
+  }
+
+  .login-btn {
+    margin-top: 0.15rem;
+    padding: 0.72rem;
+    border-radius: 12px;
+    font-size: 0.92rem;
+  }
+
+  .login-divider {
+    gap: 0.55rem;
+    font-size: 0.72rem;
+  }
+
+  .oauth-login-grid {
+    gap: 0.55rem;
+  }
+
+  .oauth-login-btn {
+    min-height: 2.45rem;
+    padding: 0.48rem 0.6rem;
+    border-radius: 12px;
+    font-size: 0.84rem;
+  }
+
+  .oauth-login-mark {
+    width: 1.3rem;
+    height: 1.3rem;
+    border-radius: 7px;
+    font-size: 0.72rem;
+  }
+
+  .oauth-login-note {
+    margin-top: -0.1rem;
+    font-size: 0.68rem;
+    line-height: 1.4;
+  }
+
+  .login-footer {
+    margin-top: 0.85rem;
+    font-size: 0.7rem;
+    line-height: 1.45;
+  }
 }
 
 .login-page--legal {

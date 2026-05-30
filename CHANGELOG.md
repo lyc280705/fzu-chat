@@ -3,6 +3,52 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.10] - 2026-05-30
+
+FZU-Chat v7.10 fixes the production OAuth callback mismatch that could show `{"detail":"Not found"}` after a third-party login, and tightens the login page layout for low-height desktop viewports.
+
+### Highlights
+
+- OAuth callback aliases. The backend now accepts `/api/auth/callback/github` and `/api/auth/callback/microsoft-entra-id` in addition to `/api/auth/oauth/{provider}/callback`, so provider dashboards that use those callback paths no longer land on a 404 after successful authorization.
+- Brand logos in visitor login. Visitor buttons now use inline provider logos for Microsoft, GitHub, Apple, WeChat, and QQ instead of letter placeholders.
+- Compact low-height login layout. The login card gains viewport padding, a max-height scroll fallback, and a denser desktop layout under 820px viewport height so 1024x768 screens no longer crop the card.
+- Regression coverage. Tests cover the GitHub callback alias, the Microsoft Entra ID callback alias, Apple form POST, and the existing provider allowlist behavior.
+
+### Validation
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.10 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.10 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
+## 福大灵犀 v7.10
+
+福大灵犀 v7.10 修复第三方登录成功后可能显示 `{"detail":"Not found"}` 的生产回调路径不匹配问题，并优化低高度桌面视口下的登录页尺寸。
+
+### 版本亮点
+
+- 兼容 OAuth 回调别名。后端现在同时接受 `/api/auth/callback/github`、`/api/auth/callback/microsoft-entra-id` 和 `/api/auth/oauth/{provider}/callback`，第三方平台后台使用这些回调地址时不会在授权成功后落到 404。
+- 访客登录使用品牌图形。Microsoft、GitHub、Apple、微信和 QQ 按钮改为内联 provider logo，不再使用字母占位。
+- 低高度登录页压缩。登录卡片新增视口边距、最大高度滚动兜底，并在 820px 以下桌面高度使用更紧凑的间距，1024x768 下不会再裁掉卡片内容。
+- 回归测试补齐。新增 GitHub 回调别名、Microsoft Entra ID 回调别名、Apple form POST 和 provider 白名单测试覆盖。
+
+### 验证
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.10 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.10 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
 ## [v7.9] - 2026-05-30
 
 FZU-Chat v7.9 expands visitor login to Microsoft, Apple, and GitHub while keeping WeChat and QQ support in the repository. Production can now show only Microsoft, Apple, and GitHub through a provider allowlist.
