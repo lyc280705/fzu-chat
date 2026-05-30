@@ -1595,59 +1595,127 @@ summary:focus-visible {
 
 @media (max-width: 768px) {
   .login-page {
-    place-items: center;
-    padding: 1rem;
+    place-items: start center;
+    align-content: start;
+    padding: 0.85rem;
   }
 
   .login-card {
-    width: min(100%, 32rem);
-    padding: 1.5rem 1.1rem;
+    width: min(100%, 26rem);
+    padding: 1.35rem 1.15rem;
     border-radius: 20px;
   }
 
   .login-brand {
-    margin-bottom: 1.35rem;
+    margin-bottom: 1.05rem;
   }
 
   .login-logo {
-    width: 56px;
-    height: 56px;
-    border-radius: 16px;
-    margin-bottom: 0.6rem;
+    width: 52px;
+    height: 52px;
+    border-radius: 15px;
+    margin-bottom: 0.5rem;
   }
 
   .login-brand h1 {
-    font-size: 1.32rem;
+    font-size: 1.28rem;
   }
 
   .login-brand p {
-    font-size: 0.84rem;
+    font-size: 0.82rem;
   }
 
   .login-form {
-    gap: 1rem;
+    gap: 0.78rem;
   }
 
   .login-form label {
-    font-size: 0.84rem;
+    gap: 0.28rem;
+    font-size: 0.82rem;
   }
 
   .login-form input,
   .login-form select {
-    padding: 0.78rem 0.9rem;
-    border-radius: 13px;
+    min-height: 2.8rem;
+    padding: 0.68rem 0.85rem;
+    border-radius: 12px;
+  }
+
+  .password-field input {
+    padding-right: 2.85rem;
+  }
+
+  .password-toggle {
+    right: 0.45rem;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 9px;
+  }
+
+  .field-hint,
+  .field-error {
+    font-size: 0.7rem;
+    line-height: 1.35;
+  }
+
+  .login-consent {
+    justify-content: center;
+    white-space: normal;
+    text-align: center;
+    font-size: 0.72rem;
+    line-height: 1.35;
   }
 
   .login-btn {
-    margin-top: 0.25rem;
-    padding: 0.88rem;
-    font-size: 0.95rem;
+    min-height: 2.85rem;
+    margin-top: 0.05rem;
+    padding: 0.72rem;
+    border-radius: 13px;
+    font-size: 0.94rem;
+  }
+
+  .login-divider {
+    gap: 0.55rem;
+    font-size: 0.72rem;
+  }
+
+  .oauth-login-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.55rem;
+  }
+
+  .oauth-login-btn {
+    gap: 0.42rem;
+    min-height: 2.55rem;
+    padding: 0.56rem 0.62rem;
+    border-radius: 12px;
+    font-size: 0.84rem;
+  }
+
+  .oauth-login-mark {
+    width: 1.32rem;
+    height: 1.32rem;
+    border-radius: 7px;
+  }
+
+  .oauth-login-logo {
+    width: 0.95rem;
+    height: 0.95rem;
+  }
+
+  .login-error {
+    padding: 0.55rem 0.7rem;
+    border-radius: 11px;
+    font-size: 0.76rem;
+    line-height: 1.35;
+  }
+
+  .oauth-login-note {
+    display: none;
   }
 
   .login-footer {
-    margin-top: 1.1rem;
-    font-size: 0.76rem;
-    line-height: 1.65;
+    display: none;
   }
 
   .login-page--legal {
@@ -1664,25 +1732,67 @@ summary:focus-visible {
 
 @media (max-width: 520px) {
   .login-page {
-    place-items: start center;
-    padding: 0.75rem;
+    display: block;
+    padding: 0;
+    background: radial-gradient(ellipse at 50% -10%, rgba(34, 197, 94, 0.14), transparent 48%),
+                radial-gradient(ellipse at 70% 105%, rgba(56, 189, 248, 0.1), transparent 50%),
+                #0a0f1a;
   }
 
   .login-card {
-    width: min(100%, 28rem);
-    padding: 1.2rem 1rem;
-    border-radius: 18px;
+    width: 100%;
+    min-height: 100vh;
+    min-height: 100svh;
+    padding: max(0.95rem, env(safe-area-inset-top)) 1.35rem max(1rem, env(safe-area-inset-bottom));
+    border: none;
+    border-radius: 0;
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(9, 14, 26, 0.96));
+    backdrop-filter: none;
+  }
+
+  .login-brand {
+    margin-bottom: 0.85rem;
+  }
+
+  .login-logo {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    margin-bottom: 0.42rem;
+  }
+
+  .login-brand h1 {
+    font-size: 1.22rem;
+  }
+
+  .login-brand p {
+    font-size: 0.78rem;
+  }
+
+  .login-form {
+    gap: 0.68rem;
+  }
+
+  .login-form input,
+  .login-form select {
+    min-height: 2.62rem;
+    padding: 0.6rem 0.78rem;
+  }
+
+  .field-hint {
+    display: none;
   }
 
   .oauth-login-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.55rem;
   }
 
   .oauth-login-btn {
-    justify-content: flex-start;
-    min-height: 2.55rem;
-    padding-inline: 0.85rem;
+    justify-content: center;
+    min-height: 2.48rem;
+    padding-inline: 0.48rem;
+    font-size: 0.82rem;
   }
 
   .login-consent {

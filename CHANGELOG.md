@@ -3,6 +3,50 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.13] - 2026-05-30
+
+FZU-Chat v7.13 redesigns the mobile login page so phone-sized screens can complete student or visitor login without cramped desktop-card proportions.
+
+### Highlights
+
+- Mobile-first login surface. Screens under 520px now use a full-height app-style panel instead of a shrunken desktop card, giving the form cleaner edges and better touch spacing.
+- Better first-screen fit. The phone layout compacts the brand area, fields, consent row, and error banner, hides long helper text, and keeps the login button plus Microsoft/GitHub visitor buttons visible on a 375px by 667px viewport.
+- Visitor buttons stay usable. Microsoft and GitHub remain side by side on mobile with real provider logos, avoiding the tall stacked layout that pushed the visitor choices off-screen.
+
+### Validation
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.13 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.13 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
+## 福大灵犀 v7.13
+
+福大灵犀 v7.13 重新设计手机端登录页，让手机尺寸下的教务登录和访客登录不再像桌面卡片硬缩小，能正常、顺手地使用。
+
+### 版本亮点
+
+- 手机优先的登录界面。520px 以下屏幕改为整屏应用式面板，去掉窄边卡片的拥挤感，边距和触控间距更自然。
+- 首屏更完整。手机布局压缩品牌区、输入框、协议行和错误提示，隐藏较长辅助说明，在 375px × 667px 视口下也能看到登录按钮和 Microsoft/GitHub 访客入口。
+- 访客按钮保持可用。Microsoft 和 GitHub 在手机端保持双列展示并使用真实 logo，避免改成纵向堆叠后把入口推到屏幕外。
+
+### 验证
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.13 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.13 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
 ## [v7.12] - 2026-05-30
 
 FZU-Chat v7.12 finalizes the login-page polish by removing the initial provider-list flash while keeping the v7.11 OAuth cancellation and layout fixes.
