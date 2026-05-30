@@ -330,7 +330,7 @@ summary:focus-visible {
 
 .oauth-login-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(8.6rem, 1fr));
   gap: 0.75rem;
 }
 
@@ -381,6 +381,19 @@ summary:focus-visible {
 
 .oauth-login-btn--qq .oauth-login-mark {
   background: #2563eb;
+}
+
+.oauth-login-btn--microsoft .oauth-login-mark {
+  background: #0078d4;
+}
+
+.oauth-login-btn--apple .oauth-login-mark {
+  background: #111827;
+  border: 1px solid rgba(226, 232, 240, 0.24);
+}
+
+.oauth-login-btn--github .oauth-login-mark {
+  background: #24292f;
 }
 
 .oauth-login-note {
@@ -1521,6 +1534,28 @@ summary:focus-visible {
 }
 
 @media (max-width: 520px) {
+  .login-page {
+    place-items: start center;
+    padding: 0.75rem;
+  }
+
+  .login-card {
+    width: min(100%, 28rem);
+    padding: 1.2rem 1rem;
+    border-radius: 18px;
+  }
+
+  .oauth-login-grid {
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
+  }
+
+  .oauth-login-btn {
+    justify-content: flex-start;
+    min-height: 2.55rem;
+    padding-inline: 0.85rem;
+  }
+
   .login-consent {
     flex-wrap: wrap;
     justify-content: center;

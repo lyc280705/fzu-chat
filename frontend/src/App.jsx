@@ -117,12 +117,25 @@ const CAMPUS_RECOMMENDATION_TRAVEL_MODE_LABELS = {
 const OAUTH_PROVIDER_LABELS = {
   wechat: '微信',
   qq: 'QQ',
+  microsoft: 'Microsoft',
+  apple: 'Apple',
+  github: 'GitHub',
 }
 
-const DEFAULT_OAUTH_PROVIDERS = [
-  { provider: 'wechat', label: OAUTH_PROVIDER_LABELS.wechat, configured: null },
-  { provider: 'qq', label: OAUTH_PROVIDER_LABELS.qq, configured: null },
-]
+const OAUTH_PROVIDER_MARKS = {
+  wechat: '微',
+  qq: 'Q',
+  microsoft: 'M',
+  apple: 'A',
+  github: 'G',
+}
+
+const DEFAULT_OAUTH_PROVIDERS = Object.entries(OAUTH_PROVIDER_LABELS).map(([provider, label]) => ({
+  provider,
+  label,
+  configured: null,
+}))
+const DEFAULT_OAUTH_PROVIDER_MAP = new Map(DEFAULT_OAUTH_PROVIDERS.map((provider) => [provider.provider, provider]))
 
 const FALLBACK_HEX = Array.from({ length: 256 }, (_, index) => index.toString(16).padStart(2, '0'))
 
@@ -139,7 +152,7 @@ const PRIVACY_POLICY_SECTIONS = [
     title: '二、我们处理的数据类型',
     items: [
       '账号与认证信息：登录时提交的学号、学生类型，以及为保持登录状态而生成的安全 Cookie。',
-      '访客登录信息：通过微信或 QQ 授权返回的昵称、头像和不可逆哈希后的平台用户标识；系统不保存第三方 access token。',
+      '访客登录信息：通过微信、QQ、Microsoft、Apple 或 GitHub 授权返回的昵称、头像和不可逆哈希后的平台用户标识；系统不保存第三方 access token。',
       '教务认证信息：你主动输入的教务密码仅用于即时认证与会话续连，前端不会长期保存该密码。',
       '业务内容数据：包括你的提问内容、助手回复、工具调用结果、消息反馈和会话标题。',
       '个性化记忆数据：仅在你明确确认后，系统才会保存长期偏好、常用称呼、输出风格等可复用信息。',
@@ -971,12 +984,19 @@ function LoginPage({ onLogin }) {
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error('访客登录配置获取失败'))))
       .then((providers) => {
         if (cancelled || !Array.isArray(providers)) return
-        const byKey = new Map(providers.map((provider) => [provider.provider, provider]))
-        setOauthProviders(DEFAULT_OAUTH_PROVIDERS.map((fallback) => ({
-          ...fallback,
-          ...(byKey.get(fallback.provider) || {}),
-          label: byKey.get(fallback.provider)?.label || fallback.label,
-        })))
+        const normalizedProviders = providers
+          .map((provider) => {
+            const providerKey = String(provider?.provider || '').trim()
+            if (!providerKey) return null
+            const fallback = DEFAULT_OAUTH_PROVIDER_MAP.get(providerKey)
+            return {
+              provider: providerKey,
+              label: provider?.label || fallback?.label || providerKey,
+              configured: provider?.configured ?? fallback?.configured ?? null,
+            }
+          })
+          .filter(Boolean)
+        setOauthProviders(normalizedProviders.length > 0 ? normalizedProviders : DEFAULT_OAUTH_PROVIDERS)
       })
       .catch(() => {
         if (!cancelled) setOauthProviders(DEFAULT_OAUTH_PROVIDERS)
@@ -1136,20 +1156,22 @@ function LoginPage({ onLogin }) {
 
           <div className="login-divider"><span>或访客登录</span></div>
           <div className="oauth-login-grid" aria-label="访客登录方式">
-            {DEFAULT_OAUTH_PROVIDERS.map((fallback) => {
-              const providerStatus = oauthProviderMap.get(fallback.provider) || fallback
-              const label = providerStatus.label || fallback.label
+            {oauthProviders.map((providerStatus) => {
+              const providerKey = providerStatus.provider
+              const fallback = DEFAULT_OAUTH_PROVIDER_MAP.get(providerKey)
+              const label = providerStatus.label || fallback?.label || providerKey
               const configured = providerStatus.configured !== false
-              const isLoading = oauthLoadingProvider === fallback.provider
+              const isLoading = oauthLoadingProvider === providerKey
+              const mark = OAUTH_PROVIDER_MARKS[providerKey] || label.slice(0, 1)
               return (
                 <button
-                  key={fallback.provider}
+                  key={providerKey}
                   type="button"
-                  className={`oauth-login-btn oauth-login-btn--${fallback.provider}`}
+                  className={`oauth-login-btn oauth-login-btn--${providerKey}`}
                   disabled={loading || Boolean(oauthLoadingProvider) || !configured}
-                  onClick={() => handleOauthLogin(fallback.provider)}
+                  onClick={() => handleOauthLogin(providerKey)}
                 >
-                  <span className="oauth-login-mark" aria-hidden="true">{fallback.provider === 'wechat' ? '微' : 'Q'}</span>
+                  <span className="oauth-login-mark" aria-hidden="true">{mark}</span>
                   <span>{isLoading ? '跳转中…' : configured ? `${label}登录` : `${label}未配置`}</span>
                 </button>
               )

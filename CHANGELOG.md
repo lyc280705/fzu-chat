@@ -3,6 +3,54 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.9] - 2026-05-30
+
+FZU-Chat v7.9 expands visitor login to Microsoft, Apple, and GitHub while keeping WeChat and QQ support in the repository. Production can now show only Microsoft, Apple, and GitHub through a provider allowlist.
+
+### Highlights
+
+- More visitor providers. The OAuth layer now supports WeChat, QQ, Microsoft, Apple, and GitHub with shared state validation, visitor-session creation, and non-persistent third-party access tokens.
+- Production provider allowlist. `FZU_CHAT_OAUTH_PROVIDERS=microsoft,apple,github` hides WeChat/QQ from the server login surface and rejects hidden provider starts, while local or future deployments can still enable any supported provider.
+- Apple callback compatibility. The backend accepts both GET callbacks and Apple `form_post` callbacks, then creates the same restricted visitor session without educational tools.
+- Mobile login polish. The login page renders the visible provider list returned by the backend, adds Microsoft/Apple/GitHub button styling, and stacks visitor-login buttons cleanly on narrow screens.
+- Deployment config. Compose exposes Microsoft, Apple, GitHub, and visible-provider environment variables in addition to the existing WeChat/QQ settings.
+
+### Validation
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.9 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.9 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
+## 福大灵犀 v7.9
+
+福大灵犀 v7.9 将访客登录扩展到 Microsoft、Apple 和 GitHub，同时仓库继续保留微信与 QQ 支持。生产环境可通过可见 provider 白名单只展示 Microsoft、Apple 和 GitHub。
+
+### 版本亮点
+
+- 更多访客登录方式。OAuth 层现在支持微信、QQ、Microsoft、Apple 和 GitHub，并共用 state 校验、访客会话创建和第三方 access token 不落盘策略。
+- 生产环境白名单。`FZU_CHAT_OAUTH_PROVIDERS=microsoft,apple,github` 会从服务器登录入口隐藏微信/QQ，并拒绝隐藏登录方式的发起请求；本地或后续部署仍可启用任意已支持 provider。
+- 兼容 Apple 回调。后端同时支持 GET 回调和 Apple `form_post` 回调，并创建同样不含教务工具的受限访客会话。
+- 移动端登录页优化。登录页按后端返回的可见 provider 列表渲染，补齐 Microsoft/Apple/GitHub 按钮样式，并在窄屏下垂直排列访客登录按钮。
+- 部署配置补齐。Compose 在原有微信/QQ 配置外，增加 Microsoft、Apple、GitHub 和可见 provider 环境变量。
+
+### 验证
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.9 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.9 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
 ## [v7.8] - 2026-05-30
 
 FZU-Chat v7.8 adds a visitor mode for external users. WeChat and QQ OAuth can now create isolated visitor sessions that keep public campus Q&A available while explicitly excluding personal academic-affairs tools.

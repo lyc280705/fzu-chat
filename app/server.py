@@ -15,7 +15,7 @@ from threading import Event
 from threading import Lock
 from threading import Thread
 from typing import Any, AsyncIterator, Dict, Iterable, List, Literal
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
@@ -71,6 +71,7 @@ from .oauth import (
     get_provider_config,
     list_provider_status,
     provider_display_name,
+    visible_provider_keys,
 )
 from .runtime_state import (
     acquire_dedupe_lock,
@@ -119,7 +120,7 @@ CONTENT_SECURITY_POLICY = "; ".join(
         "default-src 'self'",
         "script-src 'self'",
         "connect-src 'self'",
-        "img-src 'self' data:",
+        "img-src 'self' data: https:",
         "style-src 'self' 'unsafe-inline'",
         "font-src 'self' data:",
         "object-src 'none'",
@@ -259,6 +260,8 @@ def _enforce_browser_request_integrity(request: Request) -> None:
         return
     if not request.url.path.startswith("/api/"):
         return
+    if request.method.upper() == "POST" and re.fullmatch(r"/api/auth/oauth/[a-z0-9_-]+/callback", request.url.path):
+        return
 
     sec_fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
     if sec_fetch_site and sec_fetch_site not in {"same-origin", "same-site", "none"}:
@@ -389,7 +392,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="FZU Chat API",
-    version="7.7.0",
+    version="7.9.0",
     lifespan=lifespan,
     docs_url="/docs" if PUBLIC_DOCS else None,
     redoc_url="/redoc" if PUBLIC_DOCS else None,
@@ -480,8 +483,11 @@ class EduReloginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=100)
 
 
+OAuthProviderName = Literal["wechat", "qq", "microsoft", "apple", "github"]
+
+
 class OAuthProviderStatus(BaseModel):
-    provider: Literal["wechat", "qq"]
+    provider: OAuthProviderName
     label: str
     configured: bool
 
@@ -1579,7 +1585,9 @@ def oauth_providers(request: Request):
 
 
 @app.get("/api/auth/oauth/{provider}/start")
-def oauth_start(provider: Literal["wechat", "qq"], request: Request, accepted_legal: bool = False):
+def oauth_start(provider: OAuthProviderName, request: Request, accepted_legal: bool = False):
+    if provider not in visible_provider_keys():
+        raise HTTPException(status_code=404, detail="登录方式不可用。")
     _enforce_rate_limit(
         _rate_limit_key("oauth-start", request, provider),
         LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
@@ -1598,22 +1606,18 @@ def oauth_start(provider: Literal["wechat", "qq"], request: Request, accepted_le
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@app.get("/api/auth/oauth/{provider}/callback")
-def oauth_callback(
-    provider: Literal["wechat", "qq"],
-    request: Request,
-    code: str | None = None,
-    state: str | None = None,
-    error: str | None = None,
-    error_description: str | None = None,
-):
+def _finish_oauth_callback(provider: OAuthProviderName, request: Request, payload: Dict[str, Any]) -> RedirectResponse:
+    error = str(payload.get("error") or "").strip()
+    error_description = str(payload.get("error_description") or "").strip()
+    code = str(payload.get("code") or "").strip()
+    state = str(payload.get("state") or "").strip()
     if error:
         logger.warning("OAuth callback rejected by %s: %s", provider, error)
         raise HTTPException(status_code=400, detail=error_description or "第三方登录已取消或失败。")
     try:
-        state_payload = consume_oauth_state(state or "", provider)
+        state_payload = consume_oauth_state(state, provider)
         config = get_provider_config(provider, str(state_payload.get("redirect_uri") or ""))
-        profile = fetch_visitor_profile(config, code or "")
+        profile = fetch_visitor_profile(config, code, payload)
     except OAuthConfigError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except OAuthError as exc:
@@ -1646,6 +1650,35 @@ def oauth_callback(
     response = RedirectResponse("/", status_code=302)
     _set_auth_cookie(response, token, request)
     return response
+
+
+@app.get("/api/auth/oauth/{provider}/callback")
+def oauth_callback(
+    provider: OAuthProviderName,
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+):
+    return _finish_oauth_callback(
+        provider,
+        request,
+        {
+            "code": code or "",
+            "state": state or "",
+            "error": error or "",
+            "error_description": error_description or "",
+        },
+    )
+
+
+@app.post("/api/auth/oauth/{provider}/callback")
+async def oauth_callback_post(provider: OAuthProviderName, request: Request):
+    raw_body = (await request.body()).decode("utf-8", errors="replace")
+    form_values = parse_qs(raw_body, keep_blank_values=True)
+    payload = {key: values[0] if values else "" for key, values in form_values.items()}
+    return _finish_oauth_callback(provider, request, payload)
 
 
 @app.post("/api/auth/login")
