@@ -1023,7 +1023,7 @@ function LoginPage({ onLogin }) {
   const [submitted, setSubmitted] = useState(false)
   const [logoFailed, setLogoFailed] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [oauthProviders, setOauthProviders] = useState(DEFAULT_OAUTH_PROVIDERS)
+  const [oauthProviders, setOauthProviders] = useState([])
   const [oauthLoadingProvider, setOauthLoadingProvider] = useState('')
   const [error, setError] = useState('')
   const studentIdRef = useRef(null)
@@ -1219,31 +1219,35 @@ function LoginPage({ onLogin }) {
             {loading ? '登录中…' : '登 录'}
           </button>
 
-          <div className="login-divider"><span>或访客登录</span></div>
-          <div className="oauth-login-grid" aria-label="访客登录方式">
-            {oauthProviders.map((providerStatus) => {
-              const providerKey = providerStatus.provider
-              const fallback = DEFAULT_OAUTH_PROVIDER_MAP.get(providerKey)
-              const label = providerStatus.label || fallback?.label || providerKey
-              const configured = providerStatus.configured !== false
-              const isLoading = oauthLoadingProvider === providerKey
-              return (
-                <button
-                  key={providerKey}
-                  type="button"
-                  className={`oauth-login-btn oauth-login-btn--${providerKey}`}
-                  disabled={loading || Boolean(oauthLoadingProvider) || !configured}
-                  onClick={() => handleOauthLogin(providerKey)}
-                >
-                  <span className="oauth-login-mark" aria-hidden="true">
-                    <OAuthProviderLogo provider={providerKey} label={label} />
-                  </span>
-                  <span>{isLoading ? '跳转中…' : configured ? `${label}登录` : `${label}未配置`}</span>
-                </button>
-              )
-            })}
-          </div>
-          {showLoginNotes && <p className="oauth-login-note">访客模式可用公共问答、联网搜索和校园生活建议，不含个人教务工具。</p>}
+          {oauthProviders.length > 0 && (
+            <>
+              <div className="login-divider"><span>或访客登录</span></div>
+              <div className="oauth-login-grid" aria-label="访客登录方式">
+                {oauthProviders.map((providerStatus) => {
+                  const providerKey = providerStatus.provider
+                  const fallback = DEFAULT_OAUTH_PROVIDER_MAP.get(providerKey)
+                  const label = providerStatus.label || fallback?.label || providerKey
+                  const configured = providerStatus.configured !== false
+                  const isLoading = oauthLoadingProvider === providerKey
+                  return (
+                    <button
+                      key={providerKey}
+                      type="button"
+                      className={`oauth-login-btn oauth-login-btn--${providerKey}`}
+                      disabled={loading || Boolean(oauthLoadingProvider) || !configured}
+                      onClick={() => handleOauthLogin(providerKey)}
+                    >
+                      <span className="oauth-login-mark" aria-hidden="true">
+                        <OAuthProviderLogo provider={providerKey} label={label} />
+                      </span>
+                      <span>{isLoading ? '跳转中…' : configured ? `${label}登录` : `${label}未配置`}</span>
+                    </button>
+                  )
+                })}
+              </div>
+              {showLoginNotes && <p className="oauth-login-note">访客模式可用公共问答、联网搜索和校园生活建议，不含个人教务工具。</p>}
+            </>
+          )}
         </form>
         {showLoginNotes && <p className="login-footer">教务密码仅用于即时认证；访客登录仅保存昵称、头像和不可逆平台标识。</p>}
       </div>

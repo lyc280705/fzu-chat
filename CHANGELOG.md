@@ -3,6 +3,50 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.12] - 2026-05-30
+
+FZU-Chat v7.12 finalizes the login-page polish by removing the initial provider-list flash while keeping the v7.11 OAuth cancellation and layout fixes.
+
+### Highlights
+
+- No hidden-provider flash. The login page now waits for `/api/auth/oauth/providers` before rendering visitor login buttons, so production no longer briefly shows WeChat, QQ, or Apple before the backend-visible Microsoft/GitHub list arrives.
+- Keeps the rebalanced login layout. The desktop login card remains close to the original 420px vertical-card proportions, with only gentle low-height spacing reductions.
+- Keeps friendly OAuth cancellation handling. Denied Microsoft/GitHub authorization returns to the login page with a local Chinese message instead of a raw JSON response.
+
+### Validation
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.12 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.12 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
+## 福大灵犀 v7.12
+
+福大灵犀 v7.12 完成登录页视觉优化的最后一处细节：去掉第三方入口初始列表闪动，同时保留 v7.11 的授权取消提示和比例修复。
+
+### 版本亮点
+
+- 不再闪现隐藏登录方式。登录页会等 `/api/auth/oauth/providers` 返回后再渲染访客登录按钮，生产环境不会再短暂显示微信、QQ 或 Apple。
+- 保留重新平衡后的登录页。桌面登录卡片维持接近最初版的 420px 竖卡片比例，只在低高度下轻量收缩间距。
+- 保留友好的 OAuth 取消处理。Microsoft/GitHub 授权拒绝后会回到登录页显示中文提示，不再显示原始 JSON 响应。
+
+### 验证
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.12 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.12 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
 ## [v7.11] - 2026-05-30
 
 FZU-Chat v7.11 improves the visitor login experience after the v7.10 OAuth callback fix: denied third-party authorization now returns to the login page with a local Chinese message, and the compact login layout has been rebalanced.
