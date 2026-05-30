@@ -3,6 +3,52 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.11] - 2026-05-30
+
+FZU-Chat v7.11 improves the visitor login experience after the v7.10 OAuth callback fix: denied third-party authorization now returns to the login page with a local Chinese message, and the compact login layout has been rebalanced.
+
+### Highlights
+
+- Friendly OAuth failure handling. Provider callbacks with `error=access_denied` now redirect back to `/?oauth_error=cancelled` instead of exposing a raw JSON error page such as `{"detail":"The user has denied access to the scope requested by the client application."}`.
+- Login-page error display. The React login page reads the OAuth callback error, shows a concise Chinese message, and removes the transient query parameters from the address bar.
+- Rebalanced desktop proportions. The login card keeps the provider logos and low-height fit, but uses a wider card, larger logo, more natural spacing, and less aggressive 1024x768 compression.
+- Regression coverage. Tests cover denied Microsoft callback aliases so authorization cancellation stays a UI flow rather than a JSON response.
+
+### Validation
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.11 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.11 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
+## 福大灵犀 v7.11
+
+福大灵犀 v7.11 优化 v7.10 第三方登录回调修复后的登录体验：用户拒绝第三方授权时会回到登录页显示中文提示，登录页紧凑布局也重新调整为更协调的比例。
+
+### 版本亮点
+
+- 友好的 OAuth 失败处理。第三方回调携带 `error=access_denied` 时，后端改为跳回 `/?oauth_error=cancelled`，不再直接暴露 `{"detail":"The user has denied access to the scope requested by the client application."}` 这类 JSON 页面。
+- 登录页错误提示。React 登录页会读取 OAuth 回调错误，展示简洁中文提示，并清理地址栏中的临时参数。
+- 桌面比例重新平衡。登录卡片保留 provider logo 和低高度适配，但改为更宽的卡片、更大的校徽、更自然的间距，并减少 1024x768 下的过度压缩。
+- 回归测试补齐。新增 Microsoft 回调别名拒绝授权测试，确保取消授权保持为 UI 流程而不是 JSON 响应。
+
+### 验证
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.11 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.11 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
 ## [v7.10] - 2026-05-30
 
 FZU-Chat v7.10 fixes the production OAuth callback mismatch that could show `{"detail":"Not found"}` after a third-party login, and tightens the login page layout for low-height desktop viewports.

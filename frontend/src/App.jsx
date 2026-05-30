@@ -129,6 +129,27 @@ const DEFAULT_OAUTH_PROVIDERS = Object.entries(OAUTH_PROVIDER_LABELS).map(([prov
 }))
 const DEFAULT_OAUTH_PROVIDER_MAP = new Map(DEFAULT_OAUTH_PROVIDERS.map((provider) => [provider.provider, provider]))
 
+const OAUTH_CALLBACK_ERROR_MESSAGES = {
+  cancelled: (provider) => `${provider}授权已取消，未完成访客登录。可以重新点击登录或改用教务登录。`,
+  failed: (provider) => `${provider}登录未完成或已过期，请重新发起访客登录。`,
+  unavailable: (provider) => `${provider}登录服务暂时不可用，请稍后再试。`,
+}
+
+const oauthCallbackErrorFromUrl = () => {
+  if (typeof window === 'undefined') return ''
+  const params = new URLSearchParams(window.location.search)
+  const errorCode = params.get('oauth_error')
+  if (!errorCode) return ''
+  const provider = params.get('oauth_provider') || '第三方'
+  const buildMessage = OAUTH_CALLBACK_ERROR_MESSAGES[errorCode] || OAUTH_CALLBACK_ERROR_MESSAGES.failed
+  params.delete('oauth_error')
+  params.delete('oauth_provider')
+  const query = params.toString()
+  const nextUrl = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`
+  window.history.replaceState(null, '', nextUrl)
+  return buildMessage(provider)
+}
+
 const FALLBACK_HEX = Array.from({ length: 256 }, (_, index) => index.toString(16).padStart(2, '0'))
 
 const PRIVACY_POLICY_SECTIONS = [
@@ -1011,6 +1032,7 @@ function LoginPage({ onLogin }) {
   const studentIdError = submitted && !studentId.trim() ? '请输入学号。' : ''
   const passwordError = submitted && !password.trim() ? '请输入教务系统密码。' : ''
   const legalError = submitted && !acceptedLegal ? '请先阅读并同意协议。' : ''
+  const showLoginNotes = !error
   const oauthProviderMap = useMemo(
     () => new Map(oauthProviders.map((provider) => [provider.provider, provider])),
     [oauthProviders],
@@ -1042,6 +1064,11 @@ function LoginPage({ onLogin }) {
     return () => {
       cancelled = true
     }
+  }, [])
+
+  useEffect(() => {
+    const callbackError = oauthCallbackErrorFromUrl()
+    if (callbackError) setError(callbackError)
   }, [])
 
   if (legalDocumentKey) {
@@ -1216,9 +1243,9 @@ function LoginPage({ onLogin }) {
               )
             })}
           </div>
-          <p className="oauth-login-note">访客模式可使用公共问答、知识库、联网搜索和校园生活建议，不包含成绩、课表、选课等个人教务工具。</p>
+          {showLoginNotes && <p className="oauth-login-note">访客模式可用公共问答、联网搜索和校园生活建议，不含个人教务工具。</p>}
         </form>
-        <p className="login-footer">教务密码仅用于即时认证；访客登录只保存第三方昵称、头像和不可逆平台标识哈希。</p>
+        {showLoginNotes && <p className="login-footer">教务密码仅用于即时认证；访客登录仅保存昵称、头像和不可逆平台标识。</p>}
       </div>
     </div>
   )

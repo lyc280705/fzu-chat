@@ -174,6 +174,21 @@ class VisitorOAuthTests(unittest.TestCase):
         self.assertEqual(payload["auth_provider"], "microsoft")
         self.assertTrue(payload["user_id"].startswith("visitor_microsoft_"))
 
+    def test_oauth_denied_callback_redirects_to_login_error(self):
+        callback = self.client.get(
+            "/api/auth/callback/microsoft-entra-id"
+            "?error=access_denied"
+            "&error_description=The%20user%20has%20denied%20access%20to%20the%20scope%20requested%20by%20the%20client%20application.",
+            follow_redirects=False,
+        )
+
+        self.assertEqual(callback.status_code, 302)
+        parsed = urlparse(callback.headers["location"])
+        query = parse_qs(parsed.query)
+        self.assertEqual(parsed.path, "/")
+        self.assertEqual(query["oauth_error"], ["cancelled"])
+        self.assertEqual(query["oauth_provider"], ["Microsoft"])
+
     def test_apple_form_post_callback_creates_visitor_session(self):
         id_token = _unsigned_jwt({"sub": "apple-subject-1", "email": "apple@example.com"})
         env = {

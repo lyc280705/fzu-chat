@@ -15,7 +15,7 @@ from threading import Event
 from threading import Lock
 from threading import Thread
 from typing import Any, AsyncIterator, Dict, Iterable, List, Literal
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 from uuid import uuid4
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
@@ -392,7 +392,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="FZU Chat API",
-    version="7.10.0",
+    version="7.11.0",
     lifespan=lifespan,
     docs_url="/docs" if PUBLIC_DOCS else None,
     redoc_url="/redoc" if PUBLIC_DOCS else None,
@@ -1617,25 +1617,36 @@ def oauth_start(provider: OAuthProviderName, request: Request, accepted_legal: b
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+def _oauth_callback_error_redirect(provider: OAuthProviderName, reason: str) -> RedirectResponse:
+    query = urlencode(
+        {
+            "oauth_error": reason,
+            "oauth_provider": provider_display_name(provider),
+        }
+    )
+    return RedirectResponse(f"/?{query}", status_code=302)
+
+
 def _finish_oauth_callback(provider: OAuthProviderName, request: Request, payload: Dict[str, Any]) -> RedirectResponse:
     error = str(payload.get("error") or "").strip()
-    error_description = str(payload.get("error_description") or "").strip()
     code = str(payload.get("code") or "").strip()
     state = str(payload.get("state") or "").strip()
     if error:
         logger.warning("OAuth callback rejected by %s: %s", provider, error)
-        raise HTTPException(status_code=400, detail=error_description or "第三方登录已取消或失败。")
+        return _oauth_callback_error_redirect(provider, "cancelled")
     try:
         state_payload = consume_oauth_state(state, provider)
         config = get_provider_config(provider, str(state_payload.get("redirect_uri") or ""))
         profile = fetch_visitor_profile(config, code, payload)
     except OAuthConfigError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        logger.warning("OAuth callback config failed for %s: %s", provider, exc)
+        return _oauth_callback_error_redirect(provider, "unavailable")
     except OAuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        logger.warning("OAuth callback failed for %s: %s", provider, exc)
+        return _oauth_callback_error_redirect(provider, "failed")
     except requests.RequestException as exc:
         logger.warning("OAuth provider request failed for %s: %s", provider, type(exc).__name__)
-        raise HTTPException(status_code=503, detail=f"{provider_display_name(provider)}登录服务暂不可用，请稍后再试。") from exc
+        return _oauth_callback_error_redirect(provider, "unavailable")
 
     existing_token = request.cookies.get(AUTH_COOKIE_NAME)
     if existing_token:

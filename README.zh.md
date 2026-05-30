@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-当前已标记版本：[v7.10](CHANGELOG.md)
+当前已标记版本：[v7.11](CHANGELOG.md)
 
 版本记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -117,7 +117,7 @@ docker compose up -d --build
 # 3. 访问 http://localhost:80
 ```
 
-生产环境可使用 `docker-compose.prod.yml` 启动内部 Redis。设置 URL-safe 的 `REDIS_PASSWORD`，例如 `openssl rand -hex 32`，再执行 `FZU_CHAT_VERSION=v7.10 ./scripts/deploy-ghcr.sh`；如果 GHCR 镜像拉取失败，脚本会回退到本地生产镜像构建。
+生产环境可使用 `docker-compose.prod.yml` 启动内部 Redis。设置 URL-safe 的 `REDIS_PASSWORD`，例如 `openssl rand -hex 32`，再执行 `FZU_CHAT_VERSION=v7.11 ./scripts/deploy-ghcr.sh`；如果 GHCR 镜像拉取失败，脚本会回退到本地生产镜像构建。
 
 常用生产环境变量：
 
