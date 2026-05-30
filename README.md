@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v7.13](CHANGELOG.md)
+Current tagged release: [v7.14](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -117,7 +117,7 @@ docker compose up -d --build
 # 3. Visit http://localhost:80
 ```
 
-Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, then run `FZU_CHAT_VERSION=v7.13 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build.
+Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, then run `FZU_CHAT_VERSION=v7.14 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build.
 
 Useful production environment variables:
 

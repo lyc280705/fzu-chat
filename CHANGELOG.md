@@ -3,6 +3,50 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.14] - 2026-05-30
+
+FZU-Chat v7.14 fixes the desktop Safari login-page proportions after the mobile redesign by making the desktop card more compact and less dependent on narrow height breakpoints.
+
+### Highlights
+
+- Desktop Safari balance. The default desktop login card is slightly wider and uses tighter brand, field, and button spacing so it no longer feels like an over-tall narrow mobile card in Safari.
+- More robust height handling. Long visitor/security helper text is hidden on ordinary desktop and laptop heights, avoiding page-zoom or browser-toolbar differences that previously let the tall explanatory variant appear in Safari.
+- Mobile layout preserved. The v7.13 full-height phone layout remains intact, keeping the 375px by 667px login and visitor buttons visible on the first screen.
+
+### Validation
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.14 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.14 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
+## 福大灵犀 v7.14
+
+福大灵犀 v7.14 修复手机端重做后桌面 Safari 登录页比例再次失衡的问题，让桌面卡片更紧凑，并减少对单一高度断点的依赖。
+
+### 版本亮点
+
+- 桌面 Safari 比例修复。默认桌面登录卡片略微加宽，并收紧品牌区、输入框和按钮间距，不再像一张过高过窄的移动端卡片。
+- 更稳的高度处理。普通桌面和笔记本高度下隐藏较长的访客/安全说明，避免 Safari 工具栏或页面缩放差异让高说明版重新出现。
+- 保留手机端体验。v7.13 的整屏手机登录页保持不变，375px × 667px 下仍能首屏看到登录按钮和访客登录入口。
+
+### 验证
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.14 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.14 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
 ## [v7.13] - 2026-05-30
 
 FZU-Chat v7.13 redesigns the mobile login page so phone-sized screens can complete student or visitor login without cramped desktop-card proportions.
