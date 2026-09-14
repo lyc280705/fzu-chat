@@ -20,7 +20,7 @@ class ChatStoreRuntimeContextTests(unittest.TestCase):
         conversation = {
             "id": "conversation-1",
             "title": "新对话",
-            "model": "glm-5.1",
+            "model": "glm-5.3",
             "thread_id": "thread-1",
             "created_at": "2026-05-18T00:00:00+00:00",
             "updated_at": "2026-05-18T00:00:00+00:00",
@@ -56,7 +56,7 @@ class ChatStoreRuntimeContextTests(unittest.TestCase):
                 {
                     "id": conversation_id,
                     "title": f"对话{index}",
-                    "model": "glm-5.1",
+                    "model": "glm-5.3",
                     "thread_id": f"thread-{index}",
                     "created_at": timestamp,
                     "updated_at": timestamp,

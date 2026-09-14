@@ -45,7 +45,7 @@ class ToolHistoryContextTests(unittest.TestCase):
                     ],
                 },
             ],
-            "glm-5.1",
+            "glm-5.3",
         )
 
         self.assertIsInstance(history[0], HumanMessage)
@@ -81,7 +81,7 @@ class ToolHistoryContextTests(unittest.TestCase):
                     ],
                 }
             ],
-            "glm-5.1",
+            "glm-5.3",
         )
 
         self.assertEqual(len(history), 2)
@@ -110,7 +110,7 @@ class ToolHistoryContextTests(unittest.TestCase):
                     ],
                 }
             ],
-            "glm-5.1",
+            "glm-5.3",
         )
 
         self.assertEqual(history[0].tool_calls[0]["args"], {"query": "今日课表"})

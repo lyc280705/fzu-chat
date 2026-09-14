@@ -3,6 +3,52 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.15] - 2026-09-14
+
+FZU-Chat v7.15 refreshes the selectable chat-model lineup to the latest Huawei Cloud MaaS model IDs requested for the next rollout, while keeping the existing qwen3-30b-a3b title-summary route unchanged.
+
+### Highlights
+
+- Latest chat-model routing. The default GLM route now points to `glm-5.3`, the Kimi option to `kimi-k3`, and the DeepSeek option to `deepseek-v4.1-flash`.
+- Stable title generation. Conversation titles continue to use `qwen3-30b-a3b` with request-layer thinking disabled, preserving the current title behavior and latency profile.
+- Frontend and API consistency. The login/chat UI default model, backend model options, tests, and README model descriptions now all reference the v7.15 model lineup.
+- Permission boundary documented. These model IDs are intentionally the latest target routes; Huawei Cloud MaaS access must be enabled for the account before production calls succeed.
+
+### Validation
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.15 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.15 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
+## 福大灵犀 v7.15
+
+福大灵犀 v7.15 将用户可选聊天模型更新到下一轮上线需要的华为云 MaaS 最新模型 ID，同时保持原有 `qwen3-30b-a3b` 标题总结链路不变。
+
+### 版本亮点
+
+- 最新聊天模型路由。默认 GLM 路由更新为 `glm-5.3`，Kimi 选项更新为 `kimi-k3`，DeepSeek 选项更新为 `deepseek-v4.1-flash`。
+- 标题生成保持稳定。对话标题继续使用 `qwen3-30b-a3b`，并在请求层关闭思考，保留当前标题效果和延迟表现。
+- 前后端一致。聊天 UI 默认模型、后端模型选项、测试样例和 README 模型说明均已同步到 v7.15 模型列表。
+- 权限边界明确。这些模型 ID 是按最新目标路由直接切换；生产调用前需要在华为云 MaaS 账号侧开通对应模型权限。
+
+### 验证
+
+- `conda run -n langchain python -m pytest tests`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.15 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.15 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
 ## [v7.14] - 2026-05-30
 
 FZU-Chat v7.14 fixes the desktop Safari login-page proportions after the mobile redesign by making the desktop card more compact and less dependent on narrow height breakpoints.

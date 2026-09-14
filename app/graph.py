@@ -65,14 +65,14 @@ HUAWEICLOUD_OPENAI_BASE_URL = os.getenv(
     "HUAWEICLOUD_OPENAI_BASE_URL",
     "https://api.modelarts-maas.com/openai/v1",
 )
-DEFAULT_CHAT_MODEL = "glm-5.1"
-KIMI_CHAT_MODEL = "kimi-k2.6"
-DEEPSEEK_V4_PRO_CHAT_MODEL = "deepseek-v4-pro"
+DEFAULT_CHAT_MODEL = "glm-5.3"
+KIMI_CHAT_MODEL = "kimi-k3"
+DEEPSEEK_CHAT_MODEL = "deepseek-v4.1-flash"
 TITLE_SUMMARY_MODEL = "qwen3-30b-a3b"
 CHAT_MODEL_OPTIONS = {
-    DEFAULT_CHAT_MODEL: "GLM-5.1",
-    KIMI_CHAT_MODEL: "Kimi K2.6",
-    DEEPSEEK_V4_PRO_CHAT_MODEL: "DeepSeek V4 Pro"
+    DEFAULT_CHAT_MODEL: "GLM-5.3",
+    KIMI_CHAT_MODEL: "Kimi K3",
+    DEEPSEEK_CHAT_MODEL: "DeepSeek V4.1 Flash",
 }
 SEARCH_RESULT_TOOL_NAMES = {"retrieve", "bocha_websearch_tool"}
 SEARCH_RESULT_CITATION_RE = re.compile(r"^\[(\d+)\]$")

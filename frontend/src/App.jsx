@@ -2462,7 +2462,7 @@ function App() {
   const [activeId, setActiveId] = useState(null)
   const [msgStore, setMsgStore] = useState({})
   const [input, setInput] = useState('')
-  const [selModel, setSelModel] = useState('glm-5.1')
+  const [selModel, setSelModel] = useState('glm-5.3')
   const [thinkingEnabled, setThinkingEnabled] = useState(() => {
     if (typeof window === 'undefined') return true
     const stored = window.localStorage.getItem(THINKING_STORAGE_KEY)
