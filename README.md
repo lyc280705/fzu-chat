@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v7.15](CHANGELOG.md)
+Current tagged release: [v7.16](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -28,7 +28,7 @@ FZU-Chat provides a ChatGPT-style conversation experience for Fuzhou University 
 - **Accessible interaction polish**: Keyboard-friendly focus rings, skip link, screen-reader status updates, dialog focus handling, and live chat-log announcements
 - **Low-intrusion campus intelligence**: After login or educational reconnect, the backend refreshes cached course, exam, selection, and grade-summary snapshots; each new conversation freezes one compact runtime context so the model can decide whether a gentle end-of-answer reminder is useful without changing old messages
 - **Rich tool cards**: Visual display of tool calls with structured data tables for grades and courses
-- **Multi-model support**: Huawei Cloud MaaS GLM-5.3, Kimi K3, and DeepSeek V4.1 Flash selection, with qwen3-30b-a3b for title summarization
+- **Multi-model support**: Huawei Cloud MaaS GLM-5.3, Kimi K2.6, and DeepSeek V4.1 Flash selection, with qwen3-30b-a3b for title summarization
 - **FZU-aware personalized memory**: Confirmed long-term preferences for names, answer style, course-selection habits, academic-query presentation, campus-life needs, and dining/campus preferences, while volatile educational facts remain live tool queries
 - **Knowledge + web search**: FAISS retrieval plus Bocha web search fallback
 - **Launch-ready single-node hardening**: Strict SPA fallback, scanner-path 404s, Redis-backed sessions/rate limits, readiness and Prometheus-style metrics
@@ -66,7 +66,7 @@ fzu-chat/
 
 ## Required API Keys
 
-- `HUAWEICLOUD_MAAS_API_KEY` – Huawei Cloud MaaS OpenAI-compatible API for GLM-5.3, Kimi K3, DeepSeek V4.1 Flash, and qwen3-30b-a3b title summarization
+- `HUAWEICLOUD_MAAS_API_KEY` – Huawei Cloud MaaS OpenAI-compatible API for GLM-5.3, Kimi K2.6, DeepSeek V4.1 Flash, and qwen3-30b-a3b title summarization
 - `DASHSCOPE_API_KEY` – Alibaba Cloud DashScope embeddings for the local knowledge base
 - `BOCHA_API_KEY` – Bocha web search
 - `LANGSMITH_API_KEY` – LangSmith tracing
@@ -117,7 +117,7 @@ docker compose up -d --build
 # 3. Visit http://localhost:80
 ```
 
-Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, then run `FZU_CHAT_VERSION=v7.15 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build.
+Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, then run `FZU_CHAT_VERSION=v7.16 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build.
 
 Useful production environment variables:
 

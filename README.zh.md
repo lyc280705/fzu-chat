@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-当前已标记版本：[v7.15](CHANGELOG.md)
+当前已标记版本：[v7.16](CHANGELOG.md)
 
 版本记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -28,7 +28,7 @@
 - **无障碍交互优化**：补充键盘焦点、跳过链接、屏幕阅读器状态、弹窗焦点管理和聊天日志播报
 - **低侵入校园智能提醒**：登录/教务重连后后台刷新课表、考试、选课和成绩摘要快照；每个新对话只固化一次紧凑运行时上下文，让模型在回答末尾自然判断是否提醒，同时避免旧消息反复变化
 - **丰富的工具卡片**：可视化工具调用过程，结构化展示成绩表格和课表
-- **多模型支持**：华为云 MaaS 的 GLM-5.3、Kimi K3、DeepSeek V4.1 Flash 可选，标题总结内部使用 qwen3-30b-a3b
+- **多模型支持**：华为云 MaaS 的 GLM-5.3、Kimi K2.6、DeepSeek V4.1 Flash 可选，标题总结内部使用 qwen3-30b-a3b
 - **福大场景个性化记忆**：在用户确认后保存称呼、回答风格、选课习惯、教务查询展示、校园生活、餐饮与校区等长期偏好；成绩、绩点、课表、考场等易变教务事实仍通过工具实时查询
 - **知识库 + 网络搜索**：FAISS 本地检索 + 博查网络搜索兜底
 - **单机上线加固**：严格 SPA fallback、扫描路径 404、Redis 会话/限流/生成槽位、ready 检查和 Prometheus 风格指标
@@ -66,7 +66,7 @@ fzu-chat/
 
 ## 必需的 API 密钥
 
-- `HUAWEICLOUD_MAAS_API_KEY` – 华为云 MaaS OpenAI 兼容接口，用于 GLM-5.3、Kimi K3、DeepSeek V4.1 Flash 与 qwen3-30b-a3b 标题总结
+- `HUAWEICLOUD_MAAS_API_KEY` – 华为云 MaaS OpenAI 兼容接口，用于 GLM-5.3、Kimi K2.6、DeepSeek V4.1 Flash 与 qwen3-30b-a3b 标题总结
 - `DASHSCOPE_API_KEY` – 阿里云 DashScope 向量化，用于本地知识库 embedding
 - `BOCHA_API_KEY` – 博查网络搜索
 - `LANGSMITH_API_KEY` – LangSmith 追踪
@@ -117,7 +117,7 @@ docker compose up -d --build
 # 3. 访问 http://localhost:80
 ```
 
-生产环境可使用 `docker-compose.prod.yml` 启动内部 Redis。设置 URL-safe 的 `REDIS_PASSWORD`，例如 `openssl rand -hex 32`，再执行 `FZU_CHAT_VERSION=v7.15 ./scripts/deploy-ghcr.sh`；如果 GHCR 镜像拉取失败，脚本会回退到本地生产镜像构建。
+生产环境可使用 `docker-compose.prod.yml` 启动内部 Redis。设置 URL-safe 的 `REDIS_PASSWORD`，例如 `openssl rand -hex 32`，再执行 `FZU_CHAT_VERSION=v7.16 ./scripts/deploy-ghcr.sh`；如果 GHCR 镜像拉取失败，脚本会回退到本地生产镜像构建。
 
 常用生产环境变量：
 

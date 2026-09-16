@@ -3,6 +3,50 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.16] - 2026-09-16
+
+FZU-Chat v7.16 fixes the Kimi chat route after confirming that `kimi-k3` is not exposed by the current Huawei Cloud MaaS OpenAI-compatible API.
+
+### Highlights
+
+- Usable Kimi route. The Kimi option now points back to `kimi-k2.6`, which was verified with the current MaaS key; `kimi-k3` returns `404 Invalid model`.
+- Model list consistency. Backend labels, README model descriptions, package version, and API version now all reflect the corrected v7.16 lineup.
+- Other routes unchanged. GLM remains `glm-5.3`, DeepSeek remains `deepseek-v4.1-flash`, and title summarization remains `qwen3-30b-a3b`.
+
+### Validation
+
+- MaaS smoke test: `kimi-k3` returned `404 Invalid model`; `kimi-k2.6` completed successfully.
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.16 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.16 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
+## 福大灵犀 v7.16
+
+福大灵犀 v7.16 修复 Kimi 聊天路由：已确认当前华为云 MaaS OpenAI 兼容接口没有暴露 `kimi-k3`。
+
+### 版本亮点
+
+- Kimi 切回可用路由。Kimi 选项回退到当前 MaaS Key 实测可调用的 `kimi-k2.6`；`kimi-k3` 返回 `404 Invalid model`。
+- 模型列表保持一致。后端模型标签、README 模型说明、前端包版本和 API 版本均同步到 v7.16 修正后的模型列表。
+- 其他路由不变。GLM 仍为 `glm-5.3`，DeepSeek 仍为 `deepseek-v4.1-flash`，标题总结仍为 `qwen3-30b-a3b`。
+
+### 验证
+
+- MaaS 探活：`kimi-k3` 返回 `404 Invalid model`；`kimi-k2.6` 调用成功。
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.16 docker compose -f docker-compose.yml config`
+- `REDIS_PASSWORD=test-redis-password FZU_CHAT_VERSION=v7.16 docker compose -f docker-compose.prod.yml config`
+- `git diff --check`
+
+---
+
 ## [v7.15] - 2026-09-14
 
 FZU-Chat v7.15 refreshes the selectable chat-model lineup to the latest Huawei Cloud MaaS model IDs requested for the next rollout, while keeping the existing qwen3-30b-a3b title-summary route unchanged.
