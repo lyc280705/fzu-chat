@@ -43,6 +43,7 @@ export function ChatComposer({
   const reasoningIndex = Math.max(0, reasoningOptions.findIndex((option) => option.value === reasoningValue))
   const reasoningOption = reasoningOptions[reasoningIndex]
   const modelLabel = models.find((model) => model.id === selectedModel)?.label || selectedModel
+  const selectedModelIndex = Math.max(0, models.findIndex((model) => model.id === selectedModel))
   const visiblePanel = !isStreaming && panelOpen ? panelView : null
 
   useEffect(() => {
@@ -132,9 +133,10 @@ export function ChatComposer({
           value={input}
           onChange={(event) => onChange(event.target.value)}
           maxLength={maxLength + 1}
-          placeholder={editingMessage ? '修改这条问题，发送后会覆盖之后的所有内容' : '输入问题，按 Enter 发送，Shift+Enter 换行'}
+          placeholder={editingMessage ? '修改这条问题，发送后会覆盖之后的所有内容' : '问问灵犀，或分享你的想法…'}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return
               event.preventDefault()
               onSubmit(event)
             }
@@ -172,6 +174,7 @@ export function ChatComposer({
                 style={{ '--model-panel-height': `${40 * models.length}px` }}>
                 <div className="composer-settings-pane composer-settings-pane--model" aria-hidden={panelView !== 'model'} inert={panelView !== 'model'}>
                   <div className="composer-model-options">
+                  <div className="composer-model-selection" aria-hidden="true" style={{ transform: `translate3d(0, ${selectedModelIndex * 40}px, 0)` }} />
                   {models.map((model) => (
                     <button
                       type="button"
@@ -190,7 +193,7 @@ export function ChatComposer({
                   </div>
                 </div>
                 <div className="composer-settings-pane composer-settings-pane--reasoning" aria-hidden={panelView !== 'reasoning'} inert={panelView !== 'reasoning'}>
-                  <ReasoningSlider key={`${selectedModel}-${Boolean(visiblePanel)}`} options={reasoningOptions} value={reasoningValue} modelLabel={modelLabel}
+                  <ReasoningSlider options={reasoningOptions} value={reasoningValue} modelLabel={modelLabel} active={visiblePanel === 'reasoning'}
                     onChange={onReasoningChange} onChooseModel={() => setOpenPanel('model')} descriptionId={`${panelId}-description`} />
                 </div>
               </div>
@@ -208,6 +211,7 @@ export function ChatComposer({
           </button>
         </div>
       </form>
+      <p className="composer-footnote">灵犀也可能出错，重要信息请核实。<span>Enter 发送 · Shift + Enter 换行</span></p>
     </footer>
   )
 }

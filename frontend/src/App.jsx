@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Bike,
+  ArrowRight,
+  ArrowLeft,
   Check,
   ChevronDown,
   ChevronUp,
@@ -9,7 +11,8 @@ import {
   Eye,
   EyeOff,
   Footprints,
-  LogOut,
+  GraduationCap,
+  LockKeyhole,
   MapPin,
   Menu,
   MessageSquarePlus,
@@ -28,17 +31,20 @@ import {
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ChatComposer } from './components/ChatComposer.jsx'
+import { AccountMenu } from './components/AccountMenu.jsx'
 import { EmptyChatState } from './components/EmptyChatState.jsx'
 import { ConfirmDialog, IconButton } from './components/ui.jsx'
 import { useAutoResizeTextarea } from './hooks/useAutoResizeTextarea.js'
 import { useEscapeKey } from './hooks/useEscapeKey.js'
 import './App.css'
+import './auth-navigation.css'
+import './chat-surface.css'
+import './settings-surface.css'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 
-const EMPTY_MSG = '你好呀！我是福大灵犀，你可以向我提问关于福州大学的任何问题，也可以查询你的成绩和课表哦～'
 const AUTO_SCROLL_THRESHOLD = 80
 const THINKING_INDICATOR_DELAY = 1000
 const REASONING_STORAGE_KEY = 'fzu_reasoning_effort_by_model'
@@ -1019,7 +1025,7 @@ function OAuthProviderLogo({ provider, label }) {
 
 function LegalDocumentSections({ document }) {
   return (
-    <article className="privacy-card">
+    <article className="privacy-card legal-document">
       <span className="privacy-eyebrow">{document.label}</span>
       <h3>{document.title}</h3>
       <p>{document.intro}</p>
@@ -1042,15 +1048,19 @@ function LegalDocumentSections({ document }) {
   )
 }
 
-function LegalDocumentPage({ documentKey, onBack }) {
+function LegalDocumentPage({ documentKey, onBack, onSelect }) {
   const document = LEGAL_DOCUMENTS[documentKey] ?? LEGAL_DOCUMENTS.privacy
 
   return (
     <div className="login-page login-page--legal">
       <div className="legal-page">
         <div className="legal-page__toolbar">
-          <button type="button" className="secondary-btn legal-page__back" onClick={onBack}>返回登录</button>
+          <button type="button" className="secondary-btn legal-page__back" onClick={onBack}><ArrowLeft size={16} aria-hidden="true" />返回登录</button>
+          <span className="legal-page__brand"><img src="/assets/FZU.png" alt="" />福大灵犀</span>
         </div>
+        <nav className="legal-document-switch" aria-label="服务条款">
+          {Object.values(LEGAL_DOCUMENTS).map(item => <button type="button" key={item.key} aria-current={document.key === item.key ? 'page' : undefined} onClick={() => onSelect(item.key)}>{item.label}</button>)}
+        </nav>
         <LegalDocumentSections document={document} />
       </div>
     </div>
@@ -1060,7 +1070,7 @@ function LegalDocumentPage({ documentKey, onBack }) {
 function LoginPage({ onLogin }) {
   const [studentId, setStudentId] = useState('')
   const [password, setPassword] = useState('')
-  const [studentType, setStudentType] = useState('undergraduate')
+  const studentType = 'undergraduate'
   const [acceptedLegal, setAcceptedLegal] = useState(false)
   const [legalDocumentKey, setLegalDocumentKey] = useState(null)
   const [passwordVisible, setPasswordVisible] = useState(false)
@@ -1076,7 +1086,7 @@ function LoginPage({ onLogin }) {
   const studentIdError = submitted && !studentId.trim() ? '请输入学号。' : ''
   const passwordError = submitted && !password.trim() ? '请输入教务系统密码。' : ''
   const legalError = submitted && !acceptedLegal ? '请先阅读并同意协议。' : ''
-  const showLoginNotes = !error
+  const availableOauthProviders = oauthProviders.filter((provider) => provider.configured !== false)
   const oauthProviderMap = useMemo(
     () => new Map(oauthProviders.map((provider) => [provider.provider, provider])),
     [oauthProviders],
@@ -1116,7 +1126,7 @@ function LoginPage({ onLogin }) {
   }, [])
 
   if (legalDocumentKey) {
-    return <LegalDocumentPage documentKey={legalDocumentKey} onBack={() => setLegalDocumentKey(null)} />
+    return <LegalDocumentPage documentKey={legalDocumentKey} onBack={() => setLegalDocumentKey(null)} onSelect={setLegalDocumentKey} />
   }
 
   const handleSubmit = async (e) => {
@@ -1175,19 +1185,37 @@ function LoginPage({ onLogin }) {
   }
 
   return (
-    <div className="login-page">
+    <main className="login-page login-page--auth">
+      <div className="auth-layout">
+        <section className="auth-intro" aria-labelledby="auth-heading">
+          <div className="auth-wordmark">
+            {logoFailed ? (
+              <span className="auth-logo-fallback" aria-hidden="true">灵</span>
+            ) : (
+              <img src="/assets/FZU.png" alt="" onError={() => setLogoFailed(true)} />
+            )}
+            <span>福大灵犀</span>
+          </div>
+          <div className="auth-intro-copy">
+            <span className="auth-eyebrow">你的校园 AI 助手</span>
+            <h1 id="auth-heading">校园里的大小事，<br />聊一聊就有方向。</h1>
+            <p>从一门课的安排，到一个新想法。<br />灵犀陪你探索校园，也陪你找到答案。</p>
+            <ul className="auth-features">
+              <li><BookOpen size={20} aria-hidden="true" /><div><strong>校园知识，随时问</strong><span>学校资讯与知识检索，让答案更有依据</span></div></li>
+              <li><GraduationCap size={20} aria-hidden="true" /><div><strong>教务信息，轻松查</strong><span>连接本科教务，查询课表、成绩与考试</span></div></li>
+              <li><MapPin size={20} aria-hidden="true" /><div><strong>校园生活，一起发现</strong><span>食堂、自习与出行，找到适合你的建议</span></div></li>
+            </ul>
+          </div>
+          <p className="auth-independent-note">为校园生活而做 · 独立开发，非学校官方服务</p>
+        </section>
       <div className="login-card">
         <div className="login-brand">
-          {logoFailed ? (
-            <div className="login-logo login-logo--fallback" aria-hidden="true">F</div>
-          ) : (
-            <img src="/assets/FZU.png" alt="福州大学" className="login-logo" onError={() => setLogoFailed(true)} />
-          )}
-          <h1>福大灵犀</h1>
-          <p>福州大学智能问答助手</p>
+          <h2>欢迎来到灵犀</h2>
+          <p>登录，开启你的校园对话。</p>
         </div>
         <form className="login-form" onSubmit={handleSubmit}>
           {error && <div className="login-error" role="alert">{error}</div>}
+          <div className="auth-method-label"><GraduationCap size={16} aria-hidden="true" /><span>本科生教务登录</span></div>
           <label className={studentIdError ? 'field field--error' : 'field'}>
             <span>学号</span>
             <input
@@ -1207,7 +1235,7 @@ function LoginPage({ onLogin }) {
             {studentIdError && <span id="login-student-id-error" className="field-error">{studentIdError}</span>}
           </label>
           <label className={passwordError ? 'field field--error' : 'field'}>
-            <span>密码</span>
+            <span>教务密码</span>
             <div className="password-field">
               <input
                 ref={passwordRef}
@@ -1232,42 +1260,37 @@ function LoginPage({ onLogin }) {
             </div>
             {passwordError && <span id="login-password-error" className="field-error">{passwordError}</span>}
           </label>
-          <label>
-            <span>学生类型</span>
-            <select value={studentType} onChange={(e) => setStudentType(e.target.value)}>
-              <option value="undergraduate">本科生</option>
-              <option value="graduate" disabled>研究生（暂未开放）</option>
-            </select>
-            <span className="field-hint">研究生登录入口暂未开放，当前仅支持本科教务认证。</span>
-          </label>
-
           <div className={legalError ? 'login-consent login-consent--error' : 'login-consent'}>
             <input
               id="login-legal-consent"
               className="login-consent__input"
               type="checkbox"
               checked={acceptedLegal}
+              aria-invalid={Boolean(legalError)}
+              aria-describedby={legalError ? 'login-legal-error' : undefined}
               onChange={(event) => {
                 setAcceptedLegal(event.target.checked)
                 if (event.target.checked) setError('')
               }}
             />
-            <label htmlFor="login-legal-consent" className="login-consent__prefix">我已阅读并同意</label>
-            <button type="button" className="login-link-btn" onClick={() => setLegalDocumentKey('terms')}>《用户协议》</button>
-            <span className="login-consent__sep">和</span>
-            <button type="button" className="login-link-btn" onClick={() => setLegalDocumentKey('privacy')}>《隐私政策》</button>
+            <span className="login-consent__text">
+              <label htmlFor="login-legal-consent" className="login-consent__prefix">我已阅读并同意</label>
+              <button type="button" className="login-link-btn" onClick={() => setLegalDocumentKey('terms')}>用户协议</button>
+              <span className="login-consent__sep">与</span>
+              <button type="button" className="login-link-btn" onClick={() => setLegalDocumentKey('privacy')}>隐私政策</button>
+            </span>
           </div>
-          {legalError && <span className="field-error field-error--standalone">{legalError}</span>}
+          {legalError && <span id="login-legal-error" className="field-error field-error--standalone">{legalError}</span>}
 
           <button type="submit" className="login-btn" disabled={loading || Boolean(oauthLoadingProvider)}>
-            {loading ? '登录中…' : '登 录'}
+            {loading ? <><span className="send-spinner" aria-hidden="true" />正在登录…</> : <>登录并开始对话<ArrowRight size={17} aria-hidden="true" /></>}
           </button>
 
-          {oauthProviders.length > 0 && (
+          {availableOauthProviders.length > 0 && (
             <>
-              <div className="login-divider"><span>或访客登录</span></div>
+              <div className="login-divider"><span>也可以通过以下方式登录</span></div>
               <div className="oauth-login-grid" aria-label="访客登录方式">
-                {oauthProviders.map((providerStatus) => {
+                {availableOauthProviders.map((providerStatus) => {
                   const providerKey = providerStatus.provider
                   const fallback = DEFAULT_OAUTH_PROVIDER_MAP.get(providerKey)
                   const label = providerStatus.label || fallback?.label || providerKey
@@ -1284,18 +1307,19 @@ function LoginPage({ onLogin }) {
                       <span className="oauth-login-mark" aria-hidden="true">
                         <OAuthProviderLogo provider={providerKey} label={label} />
                       </span>
-                      <span>{isLoading ? '跳转中…' : configured ? `${label}登录` : `${label}未配置`}</span>
+                      <span>{isLoading ? '跳转中…' : label}</span>
                     </button>
                   )
                 })}
               </div>
-              {showLoginNotes && <p className="oauth-login-note">访客模式可用公共问答、联网搜索和校园生活建议，不含个人教务工具。</p>}
+              <p className="oauth-login-note">第三方账号可使用公共问答与校园建议，<br />个人教务查询需使用本科生账号登录。</p>
             </>
           )}
         </form>
-        {showLoginNotes && <p className="login-footer">教务密码仅用于即时认证；访客登录仅保存昵称、头像和不可逆平台标识。</p>}
+        <p className="login-footer"><LockKeyhole size={13} aria-hidden="true" />教务密码仅用于当次认证，不会保存</p>
       </div>
-    </div>
+      </div>
+    </main>
   )
 }
 
@@ -2385,6 +2409,8 @@ function PrivacyPolicyView({
   onTravelModeChange,
   error,
 }) {
+  const [activeSection, setActiveSection] = useState('data')
+  const sections = [{ key: 'data', label: '数据与偏好' }, { key: 'privacy', label: '隐私政策' }, { key: 'terms', label: '用户协议' }]
   const stats = [
     { label: '历史对话', value: summary?.conversation_count ?? 0, hint: '包含侧栏中的全部已保存会话' },
     { label: '消息总数', value: summary?.message_count ?? 0, hint: '包括你的提问与助手回复' },
@@ -2398,17 +2424,30 @@ function PrivacyPolicyView({
 
         <div className="privacy-hero privacy-card">
           <div className="privacy-hero__copy">
-            <span className="privacy-eyebrow">隐私、协议与数据</span>
-            <h3>查看使用规则，并管理你已保存的数据</h3>
-            <p>这里集中展示隐私政策、用户协议、当前账号数据统计，以及数据清理和账号删除入口。</p>
+            <span className="privacy-eyebrow"><ShieldCheck size={15} aria-hidden="true" />账号与隐私</span>
+            <h3>你的数据，由你掌握</h3>
+            <p>查看已保存的内容，调整使用偏好，了解我们如何保护你的信息。</p>
           </div>
-          <div className="privacy-card__actions">
+          {activeSection === 'data' && <div className="privacy-card__actions">
             <button type="button" className="secondary-btn" onClick={onReload} disabled={loading || clearing}>
               <RefreshCw size={16} aria-hidden="true" /> {loading ? '刷新中…' : '刷新统计'}
             </button>
-          </div>
+          </div>}
         </div>
-
+        <div className="privacy-tabs" role="tablist" aria-label="隐私与数据分类" onKeyDown={event => {
+          const current = sections.findIndex(item => item.key === activeSection)
+          const next = event.key === 'ArrowRight' ? (current + 1) % sections.length
+            : event.key === 'ArrowLeft' ? (current + sections.length - 1) % sections.length
+              : event.key === 'Home' ? 0 : event.key === 'End' ? sections.length - 1 : null
+          if (next === null) return
+          event.preventDefault()
+          setActiveSection(sections[next].key)
+          event.currentTarget.querySelectorAll('[role="tab"]')[next]?.focus()
+        }}>
+          {sections.map(item => <button key={item.key} id={`privacy-tab-${item.key}`} type="button" role="tab" aria-selected={activeSection === item.key} aria-controls={`privacy-panel-${item.key}`} tabIndex={activeSection === item.key ? 0 : -1} onClick={() => setActiveSection(item.key)}>{item.label}</button>)}
+        </div>
+        <div className="privacy-tab-content" role="tabpanel" id={`privacy-panel-${activeSection}`} aria-labelledby={`privacy-tab-${activeSection}`} tabIndex={0}>
+        {activeSection === 'data' ? <>
         <div className="privacy-stats">
           {stats.map((item) => (
             <article key={item.label} className="privacy-stat privacy-card">
@@ -2422,7 +2461,8 @@ function PrivacyPolicyView({
         <div className="privacy-card privacy-card--location">
           <div>
             <h3>定位与智能提醒</h3>
-            <p>开启后，灵犀会在登录后后台刷新临时浏览器定位，并在发送消息时只复用 10 分钟内缓存，用来判断是否适合在回复末尾轻声提醒附近食堂或自习地点，避免发送时等待定位或短时间反复触发授权。手机访问需要 HTTPS 域名才会弹出定位授权；经纬度不写入会话、长期记忆或服务端日志。</p>
+            <p>根据你的位置，提供附近的食堂、自习地点和出行建议。需要你的主动授权，也可以随时关闭。</p>
+            <details className="privacy-location-details"><summary>了解定位信息的使用方式</summary><p>定位仅临时用于校园推荐，10 分钟后需要刷新。经纬度不会写入会话或长期记忆。关闭后不再获取位置；你也可以在浏览器设置中撤销授权。</p></details>
             <div className="privacy-location-status">
               <span>应用开关：{locationEnabled ? '已开启' : '未开启'}</span>
               <span>浏览器权限：{locationPermissionLabel(locationPermission)}</span>
@@ -2430,7 +2470,7 @@ function PrivacyPolicyView({
             {locationMessage && <div className="privacy-location-message">{locationMessage}</div>}
             <div className="travel-mode-panel">
               <div className="travel-mode-panel__copy">
-                <span className="travel-mode-panel__title">高德路线偏好</span>
+                <span className="travel-mode-panel__title">出行方式</span>
                 <span className="travel-mode-panel__hint">食堂和自习推荐会按此偏好计算路线</span>
               </div>
               <div className="travel-mode-switch" role="radiogroup" aria-label="高德路线出行偏好">
@@ -2490,7 +2530,7 @@ function PrivacyPolicyView({
             <section className="privacy-danger-row privacy-danger-row--account">
               <div>
                 <h3>删除账号及全部信息</h3>
-                <p>永久删除该账号在福大灵犀中的全部数据，撤销所有设备上的登录会话，并清除当前浏览器偏好后退出登录。此操作不会删除你的 GitHub 或 Microsoft 账号。</p>
+                <p>永久删除该账号在福大灵犀中的全部数据，撤销所有设备上的登录会话，并清除当前浏览器偏好后退出登录。此操作不会删除你的第三方账号。</p>
               </div>
               <div className="privacy-card__actions">
                 <button type="button" className="danger-btn danger-btn--critical" onClick={onDeleteAccount} disabled={accountDeleteDisabled}>
@@ -2501,7 +2541,8 @@ function PrivacyPolicyView({
           </div>
         </div>
 
-        {Object.values(LEGAL_DOCUMENTS).map((document) => <LegalDocumentSections key={document.key} document={document} />)}
+        </> : <LegalDocumentSections document={LEGAL_DOCUMENTS[activeSection]} />}
+        </div>
       </div>
     </section>
   )
@@ -2567,7 +2608,7 @@ function App() {
   const [locationPermissionMessage, setLocationPermissionMessage] = useState('')
   const [screenReaderStatus, setScreenReaderStatus] = useState('')
   const [showScrollBottom, setShowScrollBottom] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1'
@@ -2641,12 +2682,17 @@ function App() {
   const syncAutoScrollState = useCallback(() => {
     const list = msgListRef.current
     if (!list) return true
+    if (!activeMsgs.length) {
+      shouldAutoScrollRef.current = true
+      setShowScrollBottom(false)
+      return true
+    }
     const distanceToBottom = list.scrollHeight - list.scrollTop - list.clientHeight
     const shouldAutoScroll = distanceToBottom <= AUTO_SCROLL_THRESHOLD
     shouldAutoScrollRef.current = shouldAutoScroll
     setShowScrollBottom(!shouldAutoScroll)
     return shouldAutoScroll
-  }, [])
+  }, [activeMsgs.length])
 
   const scrollMessagesToBottom = useCallback(() => {
     const list = msgListRef.current
@@ -2817,6 +2863,12 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (!activeMsgs.length) {
+      if (msgListRef.current) msgListRef.current.scrollTop = 0
+      shouldAutoScrollRef.current = true
+      setShowScrollBottom(false)
+      return
+    }
     if (!shouldAutoScrollRef.current) return
     scrollMessagesToBottom()
   }, [activeMsgs, scrollMessagesToBottom])
@@ -3060,7 +3112,7 @@ function App() {
     return c
   }, [activeConv, activeId, conversations, msgStore, selModel])
 
-  const handleNew = useCallback(async () => { setError(''); try { await createConv() } catch (e) { setError(e.message) } }, [createConv])
+  const handleNew = useCallback(async () => { setError(''); try { await createConv(); setSidebarOpen(false) } catch (e) { setError(e.message) } }, [createConv])
 
   const refreshLocationPermission = useCallback(async () => {
     const state = await queryGeolocationPermission()
@@ -3715,7 +3767,7 @@ function App() {
       </div>
       <IconButton
         className="sidebar-toggle"
-        label="打开侧栏"
+        label={sidebarOpen ? '关闭侧栏' : '打开侧栏'}
         onClick={() => setSidebarOpen((v) => !v)}
         aria-controls="app-sidebar"
         aria-expanded={sidebarOpen}
@@ -3726,6 +3778,7 @@ function App() {
 
       <aside id="app-sidebar" className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''} ${sidebarCollapsed ? 'sidebar--collapsed' : ''}`} aria-label="应用侧栏">
         <div className="sidebar-top">
+          <div className="sidebar-brand-row">
           <div className="brand-card">
             <img src="/assets/FZU.png" alt="福州大学" className="brand-logo" />
             <div>
@@ -3733,60 +3786,38 @@ function App() {
               <p className="brand-sub">{isVisitorUser ? '公共问答 · 访客模式' : '智能问答 · 教务查询'}</p>
             </div>
           </div>
-
-          <div className="user-card">
-            <div className={userAvatarUrl ? 'user-avatar user-avatar--image' : 'user-avatar'}>
-              {userAvatarUrl ? <img src={userAvatarUrl} alt="" referrerPolicy="no-referrer" /> : (user.display_name?.charAt(0) || 'U')}
-            </div>
-            <div className="user-info">
-              <strong>{user.display_name}</strong>
-              <span>{userModeText}</span>
-            </div>
-            <IconButton className="logout-btn" label="退出登录" onClick={handleLogout}>
-              <LogOut size={17} aria-hidden="true" />
+            <IconButton className="sidebar-collapse-btn" label="收起侧栏" onClick={toggleDesktopSidebar} aria-controls="app-sidebar" aria-expanded={!sidebarCollapsed}>
+              <PanelLeftClose size={18} aria-hidden="true" />
+            </IconButton>
+            <IconButton className="sidebar-close-btn" label="关闭侧栏" onClick={() => setSidebarOpen(false)}>
+              <X size={19} aria-hidden="true" />
             </IconButton>
           </div>
-
-          {needsEduRelogin ? (
-            <EduReloginPanel
-              message={eduError}
-              studentId={user.user_id}
-              onSubmit={handleEduRelogin}
-            />
-          ) : eduError ? <div className="edu-warn">{eduError}</div> : null}
-
           <button className="new-chat-btn" onClick={handleNew} type="button">
             <MessageSquarePlus size={18} aria-hidden="true" /> 新建对话
           </button>
-
-          <button
-            className={`sidebar-link-btn ${isPrivacyView ? 'sidebar-link-btn--active' : ''}`}
-            onClick={handleOpenPrivacyView}
-            type="button"
-          >
-            <ShieldCheck size={16} aria-hidden="true" /> 隐私与数据
-          </button>
-        </div>
-
-        <div className="sidebar-convos">
-          <div className="section-title">对话历史</div>
           <label className="convo-search" htmlFor="conversation-search">
-            <Search size={15} aria-hidden="true" />
+            <Search size={17} aria-hidden="true" />
+            <span className="sr-only">搜索对话</span>
             <input
               id="conversation-search"
               type="search"
               value={conversationQuery}
               onChange={(event) => setConversationQuery(event.target.value)}
-              placeholder="搜索标题或内容"
+              placeholder="搜索对话"
             />
           </label>
+        </div>
+
+        <nav className="sidebar-convos" aria-label="对话历史">
+          <div className="section-title">{conversationQuery.trim() ? '搜索结果' : '最近对话'}</div>
           <div className="convo-list">
             {conversations.length === 0
-              ? <div className="empty-hint">暂无历史对话</div>
+              ? <div className="empty-hint"><MessageSquarePlus size={22} aria-hidden="true" /><strong>从一个问题开始</strong><span>你的对话会保存在这里</span></div>
               : filteredConversations.length === 0
-                ? <div className="empty-hint">没有匹配的对话</div>
+                ? <div className="empty-hint"><Search size={22} aria-hidden="true" /><strong>没有找到相关对话</strong><span>试试其他标题或关键词</span></div>
                 : filteredConversations.map((c) => (
-                <div key={c.id} className={`convo-item ${c.id === activeId ? 'convo-item--active' : ''}`}>
+                <div key={c.id} className={`convo-item ${c.id === activeId && !isPrivacyView ? 'convo-item--active' : ''}`}>
                   {renamingId === c.id ? (
                     <form
                       className="convo-rename"
@@ -3811,12 +3842,11 @@ function App() {
                     </form>
                   ) : (
                     <>
-                      <button type="button" className="convo-select" onClick={() => { setViewMode('chat'); setActiveId(c.id); setSidebarOpen(false) }}>
+                      <button type="button" className="convo-select" title={c.title} aria-current={c.id === activeId && !isPrivacyView ? 'page' : undefined} onClick={() => { setViewMode('chat'); setActiveId(c.id); setSidebarOpen(false) }}>
                         <div className="convo-item-body">
                           <strong className={`convo-title ${pendingTitles[c.id] ? 'convo-title--pending' : ''}`.trim()} aria-label={pendingTitles[c.id] ? '正在生成标题' : c.title}>
                             {pendingTitles[c.id] ? <PendingTitle compact /> : c.title}
                           </strong>
-                          <span>{c.preview || '等待第一条消息…'}</span>
                         </div>
                       </button>
                       <div className="convo-actions">
@@ -3844,27 +3874,37 @@ function App() {
               </button>
             )}
           </div>
+        </nav>
+        <div className="sidebar-footer">
+          {needsEduRelogin ? (
+            <details className="sidebar-reconnect">
+              <summary><GraduationCap size={16} aria-hidden="true" /><span>教务连接已过期</span><ChevronDown size={14} aria-hidden="true" /></summary>
+              <EduReloginPanel message={eduError} studentId={user.user_id} onSubmit={handleEduRelogin} />
+            </details>
+          ) : eduError ? <div className="edu-warn">{eduError}</div> : null}
+          <AccountMenu user={user} avatarUrl={userAvatarUrl} modeText={userModeText} privacyActive={isPrivacyView} onPrivacy={handleOpenPrivacyView} onLogout={handleLogout} />
         </div>
       </aside>
 
-      <main id="main-content" className="chat-area" aria-labelledby="chat-heading" tabIndex={-1}>
+      <main id="main-content" className={`chat-area ${!isPrivacyView && activeMsgs.length === 0 ? 'chat-area--welcome' : ''}`} aria-labelledby="chat-heading" tabIndex={-1}>
         <header className="chat-header">
           <div className="chat-header-left">
-            <IconButton
+            {sidebarCollapsed && <IconButton
               className="sidebar-desktop-toggle"
               onClick={toggleDesktopSidebar}
               label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
               aria-expanded={!sidebarCollapsed}
             >
               {sidebarCollapsed ? <PanelLeftOpen size={20} aria-hidden="true" /> : <PanelLeftClose size={20} aria-hidden="true" />}
-            </IconButton>
+            </IconButton>}
             <div className="chat-header-copy">
               <h2 id="chat-heading" className={`chat-header-title ${!isPrivacyView && activeConv && pendingTitles[activeConv.id] ? 'chat-header-title--pending' : ''}`.trim()} aria-label={isPrivacyView ? '隐私与数据' : (activeConv && pendingTitles[activeConv.id] ? '正在生成标题' : (activeConv?.title ?? '新的对话'))}>
                 {isPrivacyView ? '隐私与数据' : (activeConv && pendingTitles[activeConv.id] ? <PendingTitle /> : (activeConv?.title ?? '新的对话'))}
               </h2>
-              <p>{isPrivacyView ? '查看隐私政策、协议、数据统计和账号删除入口' : (isVisitorUser ? '福州大学知识库 · 联网搜索 · 访客模式' : '福州大学知识库 · 联网搜索 · 教务系统')}</p>
+              {isPrivacyView && <p>管理你的账号、个人信息与使用偏好</p>}
             </div>
           </div>
+          {!isPrivacyView && <span className="chat-header-mode">{isVisitorUser ? '访客模式' : '校园助手'}</span>}
         </header>
 
         {isPrivacyView ? (
@@ -3906,7 +3946,6 @@ function App() {
         >
           {activeMsgs.length === 0 ? (
             <EmptyChatState
-              message={EMPTY_MSG}
               onPrompt={applyQuickPrompt}
             />
           ) : (

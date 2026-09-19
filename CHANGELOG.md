@@ -3,6 +3,34 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.18] - 2026-09-19
+
+FZU-Chat v7.18 unifies the login, conversation, account, and legal-document interfaces.
+
+### Highlights
+
+- A consistent dark palette with soft mint accents across the login page, sidebar, chat, settings, menus, and confirmation dialogs.
+- The welcome page preserves its original copy and all eight quick prompts, presented as lightweight pills. Its composer stays in the same bottom position when entering a conversation.
+- Privacy and data controls now live in the account menu, with separate tabs for preferences, privacy policy, and user agreement. The entire account row opens the menu without a trailing ellipsis.
+- Reasoning controls track pointer movement continuously and settle onto model-supported levels with a damped spring; keyboard controls and reduced-motion preferences remain supported.
+- Responsive layouts, keyboard-accessible settings tabs, dialog focus containment, and Chinese input-method handling improve everyday use.
+
+### Validation
+
+- Frontend ESLint and production build.
+- Local browser checks of login validation, account menus, legal documents, dialogs, model switching, continuous slider dragging, keyboard operation, and reduced motion.
+- Responsive checks at 320, 390, 881, 1280, and 1440 pixels, including a stable composer position and retention of the original welcome copy.
+
+## 福大灵犀 v7.18
+
+- 登录、侧栏、聊天、账号设置、隐私政策和用户协议统一为深灰与浅薄荷绿风格。
+- 欢迎页保留原文案与全部 8 个快捷问题，使用轻量胶囊布局；进入聊天时输入框保持底部位置。
+- 隐私与数据收纳至账号菜单，分为数据与偏好、隐私政策、用户协议三个页签；点击整块账号信息打开菜单，去掉末尾三个点。
+- 推理滑块连续跟手、松手回弹至模型支持的档位，保留键盘操作与减少动态效果支持。
+- 优化手机布局、页签键盘导航、弹窗焦点管理与中文输入法发送行为。
+
+---
+
 ## [v7.17] - 2026-09-19
 
 FZU-Chat v7.17 refreshes the privacy policy and user agreement and adds a complete, user-initiated account deletion flow.

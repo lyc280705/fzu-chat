@@ -38,13 +38,15 @@ export function ConfirmDialog({
 
   useEffect(() => {
     if (!open) return
+    const previousFocus = document.activeElement
     dialogRef.current?.focus()
+    return () => { if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true }) }
   }, [open])
 
   if (!open) return null
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}>
+    <div className="modal-backdrop" role="presentation" onMouseDown={() => { if (!busy) onCancel?.() }}>
       <div
         ref={dialogRef}
         className="confirm-dialog"
@@ -54,7 +56,21 @@ export function ConfirmDialog({
         aria-describedby="confirm-dialog-description"
         tabIndex={-1}
         onKeyDown={(event) => {
-          if (event.key === 'Escape' && !busy) onCancel?.()
+          if (event.key === 'Escape') {
+            event.stopPropagation()
+            if (!busy) onCancel?.()
+          }
+          if (event.key === 'Tab') {
+            const buttons = [...event.currentTarget.querySelectorAll('button:not(:disabled), [href], input:not(:disabled), [tabindex="0"]')]
+            const first = buttons[0]
+            const last = buttons.at(-1)
+            if (!first) { event.preventDefault(); return }
+            if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) {
+              event.preventDefault(); last.focus()
+            } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialogRef.current)) {
+              event.preventDefault(); first.focus()
+            }
+          }
         }}
         onMouseDown={(event) => event.stopPropagation()}
       >
