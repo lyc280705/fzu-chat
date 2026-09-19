@@ -34,7 +34,6 @@ import { ChatComposer } from './components/ChatComposer.jsx'
 import { AccountMenu } from './components/AccountMenu.jsx'
 import { EmptyChatState } from './components/EmptyChatState.jsx'
 import { ConfirmDialog, IconButton } from './components/ui.jsx'
-import { useAutoResizeTextarea } from './hooks/useAutoResizeTextarea.js'
 import { useEscapeKey } from './hooks/useEscapeKey.js'
 import './App.css'
 import './auth-navigation.css'
@@ -2673,7 +2672,6 @@ function App() {
     setReasoningByModel((current) => ({ ...current, [selModel]: value }))
   }, [selModel])
 
-  useAutoResizeTextarea(composerRef, input)
   useEscapeKey(sidebarOpen, () => setSidebarOpen(false))
   useEscapeKey(Boolean(deleteTarget) && !renamePending, () => setDeleteTarget(null))
   useEscapeKey(resetDialogOpen && !userDataClearing, () => setResetDialogOpen(false))
@@ -4047,6 +4045,9 @@ function App() {
                           <>
                             <IconButton
                               label={m.feedback === 'up' ? '取消赞同反馈' : '这条回复有帮助'}
+                              title="点赞"
+                              aria-pressed={m.feedback === 'up'}
+                              aria-busy={fbPending.includes(m.id)}
                               disabled={fbPending.includes(m.id)}
                               className={m.feedback === 'up' ? 'fb-btn fb-btn--on' : 'fb-btn'}
                               onClick={() => void handleFeedback(m.id, 'up')}
@@ -4055,6 +4056,9 @@ function App() {
                             </IconButton>
                             <IconButton
                               label={m.feedback === 'down' ? '取消负面反馈' : '这条回复需要改进'}
+                              title="点踩"
+                              aria-pressed={m.feedback === 'down'}
+                              aria-busy={fbPending.includes(m.id)}
                               disabled={fbPending.includes(m.id)}
                               className={m.feedback === 'down' ? 'fb-btn fb-btn--on fb-btn--down-on' : 'fb-btn'}
                               onClick={() => void handleFeedback(m.id, 'down')}

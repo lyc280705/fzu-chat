@@ -3,6 +3,17 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.20] - 2026-09-19
+
+- Increase chat text size and tighten tool-card spacing while preserving card width.
+- Keep the composer compact until text wraps; restore its initial height when cleared.
+- Center the scroll-to-bottom arrow and stabilize feedback styling during saves, with red selected downvotes.
+- 聊天文字适当放大，工具卡片保持原宽度并收紧留白。
+- 输入框默认紧凑，内容增多时自动增高，清空后恢复。
+- 修复回到底部箭头偏移与反馈按钮闪烁，点踩选中显示红色。
+
+---
+
 ## [v7.19] - 2026-09-19
 
 FZU-Chat v7.19 refines login proportions across desktop and mobile.

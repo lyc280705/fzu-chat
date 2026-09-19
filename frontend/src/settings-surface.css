@@ -109,16 +109,28 @@
 .confirm-dialog__actions > button { min-height: 40px; }
 .err-banner, .edu-warn { border: 1px solid #d8808020; border-radius: 11px; background: #a74f4f0d; font-size: 12px; line-height: 1.75; }
 .edu-warn { border-color: #c6a57525; background: #c6a5750b; color: #d5bd91; }
-.chat-area .tool-card { padding: 14px 16px; border-radius: 13px; background: #1c2733; border-color: var(--ui-border); }
-.chat-area .tool-card-title { font-weight: 500; color: #adcabd; }
+.chat-area .tool-card { padding: 9px 12px; max-width: 100%; border-radius: 11px; background: #1c2733; border-color: var(--ui-border); }
+.chat-area .tool-card-header { gap: 10px; }
+.chat-area .tool-card-body { margin-top: 8px; }
+.chat-area .tool-card-summary { padding: 2px 7px; font-size: 12px; font-weight: 500; }
+.chat-area .tool-card-title { overflow-wrap: anywhere; font-weight: 500; color: #adcabd; }
 .chat-area .tool-card--error { border-color: #f18b8b30; }
 .chat-area .tool-card--error .tool-card-title { color: #e9a6a6; }
 .chat-area .tool-card--stopped .tool-card-title { color: #ddc197; }
-.chat-area .tool-card-toggle { border-radius: 7px; color: #91a3b6; }
+.chat-area .tool-card-toggle { min-height: 28px; padding: 4px 7px; flex-shrink: 0; border-radius: 7px; color: #91a3b6; }
+.chat-area .tool-sections { gap: 8px; margin-top: 8px; }
+.chat-area .tool-citation-item { padding: 9px 11px; border-radius: 9px; }
+.chat-area .tool-card-body > .campus-recommendation-card { padding: 0; gap: 10px; border: 0; background: transparent; }
+.chat-area .campus-recommendation-list { gap: 8px; }
+.chat-area .campus-recommendation-item { padding: 8px 10px; gap: 8px; }
+.chat-area .campus-recommendation-card p { font-size: 14px; }
 .chat-area .data-table-wrap { border-radius: 10px; }
 .chat-area .data-table th { background: #ffffff05; color: #aebdce; }
 .chat-area .data-table td { color: #c6d1dd; }
 .chat-area .data-table th, .chat-area .data-table td { border-color: #ffffff0c; }
+@media (min-width: 769px) {
+  .chat-area .data-table td { white-space: nowrap; }
+}
 .loading-screen { background: #151c26; color: #99a7b7; font-size: 13px; }
 .loading-spinner, .send-spinner { border-top-color: #a2c3b3; }
 @keyframes dialog-enter { from { opacity: 0; transform: translateY(6px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } }

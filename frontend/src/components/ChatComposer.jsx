@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, Check, ChevronDown, Pencil, RotateCcw, Square, X } from 'lucide-react'
 import { ReasoningSlider } from './ReasoningSlider'
+import { useAutoResizeTextarea } from '../hooks/useAutoResizeTextarea.js'
 
 export function ChatComposer({
   composerRef,
@@ -30,6 +31,7 @@ export function ChatComposer({
   showScrollBottom,
   statusText,
 }) {
+  useAutoResizeTextarea(composerRef, input)
   const [panelView, setPanelView] = useState('reasoning')
   const [panelOpen, setPanelOpen] = useState(false)
   const setOpenPanel = (view) => {
@@ -90,8 +92,8 @@ export function ChatComposer({
   return (
     <footer className="composer-area">
       {showScrollBottom && (
-        <button type="button" className="scroll-bottom-btn" onClick={onScrollBottom}>
-          <ArrowDown size={16} aria-hidden="true" /> 回到底部
+        <button type="button" className="scroll-bottom-btn" onClick={onScrollBottom} aria-label="回到底部" title="回到底部">
+          <ArrowDown size={16} aria-hidden="true" />
         </button>
       )}
 
@@ -130,6 +132,7 @@ export function ChatComposer({
       <form className="composer" onSubmit={onSubmit}>
         <textarea
           ref={composerRef}
+          rows={1}
           value={input}
           onChange={(event) => onChange(event.target.value)}
           maxLength={maxLength + 1}
