@@ -1230,7 +1230,7 @@ function LoginPage({ onLogin }) {
               autoComplete="username"
               aria-invalid={Boolean(studentIdError)}
               aria-describedby={studentIdError ? 'login-student-id-error' : undefined}
-              autoFocus
+              autoFocus={typeof window !== 'undefined' && window.matchMedia('(min-width: 769px) and (pointer: fine)').matches}
             />
             {studentIdError && <span id="login-student-id-error" className="field-error">{studentIdError}</span>}
           </label>

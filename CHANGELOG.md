@@ -3,6 +3,24 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.19] - 2026-09-19
+
+FZU-Chat v7.19 refines login proportions across desktop and mobile.
+
+- Balance the desktop brand, introduction, and login card with more consistent spacing and logo sizing.
+- Keep a consistent single-column card on mobile, with larger touch targets and natural scrolling on smaller screens.
+- Avoid automatically focusing the login input on mobile and preserve all existing login methods and copy.
+- Validated with frontend ESLint, a production build, and local responsive checks before release.
+
+## 福大灵犀 v7.19
+
+- 协调桌面端品牌、介绍与登录卡片的比例，调整 Logo 大小及留白。
+- 手机端统一使用单栏登录卡片，增大输入框与按钮，小屏可自然滚动。
+- 手机端不再自动聚焦输入框，保留原有登录方式与文案。
+- 发布前已通过前端 ESLint、生产构建及本地响应式检查。
+
+---
+
 ## [v7.18] - 2026-09-19
 
 FZU-Chat v7.18 unifies the login, conversation, account, and legal-document interfaces.
