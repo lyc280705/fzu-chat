@@ -71,8 +71,34 @@ DEEPSEEK_CHAT_MODEL = "deepseek-v4.1-flash"
 TITLE_SUMMARY_MODEL = "qwen3-30b-a3b"
 CHAT_MODEL_OPTIONS = {
     DEFAULT_CHAT_MODEL: "GLM-5.3",
-    KIMI_CHAT_MODEL: "Kimi K2.6",
     DEEPSEEK_CHAT_MODEL: "DeepSeek V4.1 Flash",
+    KIMI_CHAT_MODEL: "Kimi K2.6",
+}
+MODEL_REASONING_CONTROLS: Dict[str, Dict[str, Any]] = {
+    DEFAULT_CHAT_MODEL: {
+        "default": "max",
+        "options": (
+            {"value": "low", "label": "低", "description": "响应更快，适合简单问答"},
+            {"value": "high", "label": "高", "description": "增强推理，兼顾速度与质量"},
+            {"value": "max", "label": "最大", "description": "深度推理，适合复杂任务"},
+        ),
+    },
+    KIMI_CHAT_MODEL: {
+        "default": "enabled",
+        "options": (
+            {"value": "disabled", "label": "快速", "description": "关闭深度思考，直接回答"},
+            {"value": "enabled", "label": "思考", "description": "开启深度思考后回答"},
+        ),
+    },
+    DEEPSEEK_CHAT_MODEL: {
+        "default": "high",
+        "options": (
+            {"value": "disabled", "label": "无推理", "description": "关闭思考，直接回答"},
+            {"value": "low", "label": "低", "description": "轻量推理，响应更快"},
+            {"value": "high", "label": "高", "description": "默认推理强度"},
+            {"value": "max", "label": "最大", "description": "更深入地处理复杂任务"},
+        ),
+    },
 }
 SEARCH_RESULT_TOOL_NAMES = {"retrieve", "bocha_websearch_tool"}
 SEARCH_RESULT_CITATION_RE = re.compile(r"^\[(\d+)\]$")
@@ -721,14 +747,33 @@ def is_qwen_model(model_name: str) -> bool:
     return model_name.lower().startswith("qwen")
 
 
-def build_thinking_config(thinking_enabled: bool | None, model_name: str | None = None) -> Dict[str, Any]:
-    if thinking_enabled is None:
+def normalize_model_reasoning_effort(model_name: str, reasoning_effort: Any) -> str | None:
+    control = MODEL_REASONING_CONTROLS.get(model_name)
+    if not control:
+        return None
+    options = control.get("options") or ()
+    allowed = {str(option.get("value")) for option in options if option.get("value")}
+    if isinstance(reasoning_effort, str) and reasoning_effort in allowed:
+        return reasoning_effort
+    default = str(control.get("default") or "")
+    return default if default in allowed else next(iter(allowed), None)
+
+
+def build_reasoning_config(reasoning_effort: Any, model_name: str) -> Dict[str, Any]:
+    normalized_effort = normalize_model_reasoning_effort(model_name, reasoning_effort)
+    if normalized_effort is None:
         return {}
-    thinking_type = "enabled" if thinking_enabled else "disabled"
-    config: Dict[str, Any] = {"thinking": {"type": thinking_type}}
-    if model_name and is_qwen_model(model_name):
-        config["chat_template_kwargs"] = {"enable_thinking": thinking_enabled}
-    return config
+    if model_name == KIMI_CHAT_MODEL:
+        return {"thinking": {"type": normalized_effort}}
+    if model_name == DEEPSEEK_CHAT_MODEL:
+        # Huawei MaaS V4.1 uses template kwargs, unlike its older V4 endpoint.
+        if normalized_effort == "disabled":
+            return {"chat_template_kwargs": {"thinking": False}}
+        return {"chat_template_kwargs": {"thinking": True, "reasoning_effort": normalized_effort}}
+    return {
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": normalized_effort,
+    }
 
 
 def build_chat_llm(
@@ -736,8 +781,7 @@ def build_chat_llm(
     *,
     temperature: float,
     streaming: bool,
-    stop: List[str] | None = None,
-    thinking_enabled: bool | None = None,
+    reasoning_effort: str | None = None,
     thinking_type: str | None = None,
     max_tokens: int | None = None,
 ) -> ChatOpenAI:
@@ -751,12 +795,15 @@ def build_chat_llm(
         "timeout": MODEL_REQUEST_TIMEOUT_SECONDS,
         "max_retries": MODEL_MAX_RETRIES,
     }
-    if stop:
-        init_kwargs["stop_sequences"] = stop
+    if normalized_model == DEEPSEEK_CHAT_MODEL and HUAWEICLOUD_OPENAI_BASE_URL.rstrip("/").endswith("/openai/v1"):
+        # Huawei's legacy compatibility route ignores V4.1's thinking=False.
+        # V2 accepts OpenAI chat completions and applies chat_template_kwargs.
+        init_kwargs["base_url"] = HUAWEICLOUD_OPENAI_BASE_URL.rstrip("/").removesuffix("/openai/v1") + "/v2"
+        init_kwargs.pop("temperature", None)  # V4.1 does not support temperature.
     if max_tokens is not None:
         init_kwargs["max_tokens"] = max_tokens
 
-    extra_body = build_thinking_config(thinking_enabled, normalized_model)
+    extra_body = build_reasoning_config(reasoning_effort, normalized_model)
     if thinking_type:
         extra_body["thinking"] = {"type": thinking_type}
         if is_qwen_model(normalized_model):
@@ -926,15 +973,12 @@ def _build_query_or_respond(edu_tools, user_memory_tools, campus_recommendation_
         config = config or {}
         configurable = config.get("configurable", {})
         model_name = configurable.get("model", DEFAULT_CHAT_MODEL)
-        thinking_enabled = configurable.get("thinking_enabled")
-        if not isinstance(thinking_enabled, bool):
-            thinking_enabled = None
+        reasoning_effort = configurable.get("reasoning_effort")
         llm = build_chat_llm(
             model_name,
             temperature=0.4,
             streaming=True,
-            stop=["请用以下风格与用户交流"],
-            thinking_enabled=thinking_enabled,
+            reasoning_effort=reasoning_effort,
         )
         all_tools = [retrieve, bocha_websearch_tool] + edu_tools + user_memory_tools + campus_recommendation_tools
         llm_with_tools = llm.bind_tools(all_tools)

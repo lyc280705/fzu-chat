@@ -52,9 +52,11 @@ from .graph import (
     CHAT_MODEL_OPTIONS,
     DEFAULT_CHAT_MODEL,
     KIMI_CHAT_MODEL,
+    MODEL_REASONING_CONTROLS,
     build_graph,
     build_runtime_system_context,
     build_transient_location_system_context,
+    normalize_model_reasoning_effort,
     reset_search_citation_counter,
     summary_chain,
     warm_teaching_week_cache_async,
@@ -527,7 +529,7 @@ class MessageContext(BaseModel):
 class MessageCreateRequest(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
     model: str | None = None
-    thinking_enabled: bool | None = None
+    reasoning_effort: str | None = Field(default=None, max_length=16)
     rerun_message_id: str | None = Field(default=None, max_length=80)
     context: MessageContext | None = None
 
@@ -1878,8 +1880,18 @@ def auth_me(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @app.get("/api/models")
-def list_models() -> List[Dict[str, str]]:
-    return [{"id": mid, "label": lbl} for mid, lbl in MODEL_OPTIONS.items()]
+def list_models() -> List[Dict[str, Any]]:
+    return [
+        {
+            "id": model_id,
+            "label": label,
+            "reasoning": {
+                "default": MODEL_REASONING_CONTROLS[model_id]["default"],
+                "options": [dict(option) for option in MODEL_REASONING_CONTROLS[model_id]["options"]],
+            },
+        }
+        for model_id, label in MODEL_OPTIONS.items()
+    ]
 
 
 @app.get("/api/user-data", response_model=UserDataSummary)
@@ -2279,7 +2291,7 @@ async def create_message(
         "configurable": {
             "model": sel,
             "thread_id": conv["thread_id"],
-            "thinking_enabled": req.thinking_enabled,
+            "reasoning_effort": normalize_model_reasoning_effort(sel, req.reasoning_effort),
         }
     }
     stream_slot = acquire_pair_slot(

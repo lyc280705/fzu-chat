@@ -41,7 +41,7 @@ import './App.css'
 const EMPTY_MSG = '你好呀！我是福大灵犀，你可以向我提问关于福州大学的任何问题，也可以查询你的成绩和课表哦～'
 const AUTO_SCROLL_THRESHOLD = 80
 const THINKING_INDICATOR_DELAY = 1000
-const THINKING_STORAGE_KEY = 'fzu_thinking_enabled'
+const REASONING_STORAGE_KEY = 'fzu_reasoning_effort_by_model'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'fzu_sidebar_collapsed'
 const LOCATION_RECOMMENDATION_STORAGE_KEY = 'fzu_location_recommendations_enabled'
 const LOCATION_TRAVEL_MODE_STORAGE_KEY = 'fzu_location_travel_mode'
@@ -2382,9 +2382,9 @@ function PrivacyPolicyView({
             </div>
             {locationMessage && <div className="privacy-location-message">{locationMessage}</div>}
             <div className="travel-mode-panel">
-              <div className="thinking-panel__copy">
-                <span className="thinking-panel__title">高德路线偏好</span>
-                <span className="thinking-panel__hint">食堂和自习推荐会按此偏好计算路线</span>
+              <div className="travel-mode-panel__copy">
+                <span className="travel-mode-panel__title">高德路线偏好</span>
+                <span className="travel-mode-panel__hint">食堂和自习推荐会按此偏好计算路线</span>
               </div>
               <div className="travel-mode-switch" role="radiogroup" aria-label="高德路线出行偏好">
                 <button
@@ -2463,10 +2463,14 @@ function App() {
   const [msgStore, setMsgStore] = useState({})
   const [input, setInput] = useState('')
   const [selModel, setSelModel] = useState('glm-5.3')
-  const [thinkingEnabled, setThinkingEnabled] = useState(() => {
-    if (typeof window === 'undefined') return true
-    const stored = window.localStorage.getItem(THINKING_STORAGE_KEY)
-    return stored === null ? true : stored === '1'
+  const [reasoningByModel, setReasoningByModel] = useState(() => {
+    if (typeof window === 'undefined') return {}
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(REASONING_STORAGE_KEY) || '{}')
+      return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {}
+    } catch {
+      return {}
+    }
   })
   const [streamingConversations, setStreamingConversations] = useState({})
   const [stopPendingConversations, setStopPendingConversations] = useState({})
@@ -2519,6 +2523,21 @@ function App() {
     () => (activeId ? (msgStore[activeId]?.model ?? activeConv?.model ?? '') : ''),
     [activeConv, activeId, msgStore],
   )
+  const selectedModelConfig = useMemo(
+    () => models.find((model) => model.id === selModel) ?? null,
+    [models, selModel],
+  )
+  const reasoningOptions = useMemo(
+    () => (Array.isArray(selectedModelConfig?.reasoning?.options) ? selectedModelConfig.reasoning.options : []),
+    [selectedModelConfig],
+  )
+  const reasoningValue = useMemo(() => {
+    const stored = reasoningByModel[selModel]
+    if (reasoningOptions.some((option) => option.value === stored)) return stored
+    const modelDefault = selectedModelConfig?.reasoning?.default
+    if (reasoningOptions.some((option) => option.value === modelDefault)) return modelDefault
+    return reasoningOptions[0]?.value || ''
+  }, [reasoningByModel, reasoningOptions, selModel, selectedModelConfig])
   const filteredConversations = useMemo(() => {
     const query = conversationQuery.trim().toLowerCase()
     if (!query) return conversations
@@ -2541,6 +2560,11 @@ function App() {
   const inputLength = input.length
   const inputNearLimit = inputLength >= MESSAGE_MAX_LENGTH * 0.9
   const composerStatusText = ''
+
+  const handleReasoningChange = useCallback((value) => {
+    if (!value) return
+    setReasoningByModel((current) => ({ ...current, [selModel]: value }))
+  }, [selModel])
 
   useAutoResizeTextarea(composerRef, input)
   useEscapeKey(sidebarOpen, () => setSidebarOpen(false))
@@ -2679,8 +2703,9 @@ function App() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    window.localStorage.setItem(THINKING_STORAGE_KEY, thinkingEnabled ? '1' : '0')
-  }, [thinkingEnabled])
+    window.localStorage.setItem(REASONING_STORAGE_KEY, JSON.stringify(reasoningByModel))
+    window.localStorage.removeItem('fzu_thinking_enabled')
+  }, [reasoningByModel])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -3118,7 +3143,7 @@ function App() {
       setFbPending([])
       setInput('')
       setEditingMessage(null)
-      setThinkingEnabled(true)
+      setReasoningByModel({})
       setSidebarCollapsed(false)
       setLocationRecommendationEnabled(false)
       setCampusTravelMode('walking')
@@ -3430,7 +3455,7 @@ function App() {
       const requestBody = {
         content: prompt,
         model: selModel,
-        thinking_enabled: thinkingEnabled,
+        ...(reasoningValue ? { reasoning_effort: reasoningValue } : {}),
         ...(isRerun ? { rerun_message_id: rerunMessageId } : {}),
         ...(transientContext ? { context: transientContext } : {}),
       }
@@ -3470,7 +3495,7 @@ function App() {
         // Ignore auth refresh failures after sending; a later retry will resync the state.
       }
     }
-  }, [activeId, activeConv, msgStore, selModel, thinkingEnabled, buildTransientMessageContext, clearConversationStreamState, clearDraftThinkingTimer, createConv, readSSE, refreshAuthState, replaceDraft, setConversationStopPending, setConversationStreaming, streamingConversations, updateDraft, updateSummary])
+  }, [activeId, activeConv, msgStore, selModel, reasoningValue, buildTransientMessageContext, clearConversationStreamState, clearDraftThinkingTimer, createConv, readSSE, refreshAuthState, replaceDraft, setConversationStopPending, setConversationStreaming, streamingConversations, updateDraft, updateSummary])
 
   const handleSubmit = useCallback((event) => {
     event.preventDefault()
@@ -3626,31 +3651,6 @@ function App() {
           </button>
         </div>
 
-        <div className="sidebar-model">
-          <label htmlFor="model-sel">模型</label>
-          <select id="model-sel" value={selModel} onChange={(e) => setSelModel(e.target.value)}>
-            {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-          </select>
-          <div className="thinking-panel">
-            <div className="thinking-panel__copy">
-              <span className="thinking-panel__title">思考模式</span>
-              <span className="thinking-panel__hint">{thinkingEnabled ? '更深入，但响应会更慢' : '直接回复，速度更快'} · 影响下一条消息</span>
-            </div>
-            <button
-              type="button"
-              className={`thinking-toggle ${thinkingEnabled ? 'thinking-toggle--on' : ''}`}
-              role="switch"
-              aria-checked={thinkingEnabled}
-              aria-label={thinkingEnabled ? '关闭思考模式' : '开启思考模式'}
-              onClick={() => setThinkingEnabled((value) => !value)}
-            >
-              <span className="thinking-toggle__track">
-                <span className="thinking-toggle__thumb" />
-              </span>
-            </button>
-          </div>
-        </div>
-
         <div className="sidebar-convos">
           <div className="section-title">对话历史</div>
           <label className="convo-search" htmlFor="conversation-search">
@@ -3748,14 +3748,6 @@ function App() {
               <p>{isPrivacyView ? '查看隐私政策、数据统计和一键清空入口' : (isVisitorUser ? '福州大学知识库 · 联网搜索 · 访客模式' : '福州大学知识库 · 联网搜索 · 教务系统')}</p>
             </div>
           </div>
-          {!isPrivacyView && (
-            <div className="chat-header-badges">
-              <div className="chat-header-badge">{models.find((m) => m.id === selModel)?.label ?? selModel}</div>
-              <div className={`chat-header-badge chat-header-badge--thinking ${thinkingEnabled ? 'chat-header-badge--thinking-on' : ''}`}>
-                {thinkingEnabled ? '思考开启' : '思考关闭'}
-              </div>
-            </div>
-          )}
         </header>
 
         {isPrivacyView ? (
@@ -3933,16 +3925,22 @@ function App() {
           isStopPending={isActiveConversationStopPending}
           isStreaming={isActiveConversationStreaming}
           maxLength={MESSAGE_MAX_LENGTH}
+          models={models}
           onChange={(value) => {
             setInput(value)
             if (failedPrompt) setFailedPrompt(null)
           }}
           onCancelEdit={cancelEditMessage}
+          onModelChange={setSelModel}
+          onReasoningChange={handleReasoningChange}
           onRestoreFailedPrompt={restoreFailedPrompt}
           onRetryFailedPrompt={retryFailedPrompt}
           onScrollBottom={scrollMessagesToBottom}
           onStop={() => { void handleStop() }}
           onSubmit={handleSubmit}
+          reasoningOptions={reasoningOptions}
+          reasoningValue={reasoningValue}
+          selectedModel={selModel}
           showScrollBottom={showScrollBottom}
           statusText={composerStatusText}
         />
