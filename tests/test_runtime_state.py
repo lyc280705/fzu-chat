@@ -3,7 +3,13 @@ from __future__ import annotations
 import unittest
 from uuid import uuid4
 
-from app.runtime_state import acquire_dedupe_lock, acquire_pair_slot, fixed_window_rate_limit, release_slot
+from app.runtime_state import (
+    acquire_dedupe_lock,
+    acquire_pair_slot,
+    fixed_window_rate_limit,
+    purge_user_runtime_state,
+    release_slot,
+)
 
 
 class RuntimeStateTests(unittest.TestCase):
@@ -36,6 +42,30 @@ class RuntimeStateTests(unittest.TestCase):
 
         self.assertTrue(acquire_dedupe_lock(name, 60))
         self.assertFalse(acquire_dedupe_lock(name, 60))
+
+    def test_purge_user_runtime_state_resets_user_scoped_state(self):
+        user_id = f"runtime-{uuid4()}"
+        rate_key = f"chat:127.0.0.1:{user_id}"
+        lock_name = f"signal-refresh:{user_id}"
+        first_slot = acquire_pair_slot("chat-stream", "chat-stream:global", 100, f"chat-stream:user:{user_id}", 1)
+        self.addCleanup(release_slot, first_slot)
+
+        self.assertTrue(fixed_window_rate_limit(rate_key, 1, 60))
+        self.assertFalse(fixed_window_rate_limit(rate_key, 1, 60))
+        self.assertTrue(acquire_dedupe_lock(lock_name, 60))
+        self.assertFalse(acquire_dedupe_lock(lock_name, 60))
+        self.assertIsNotNone(first_slot)
+
+        purged = purge_user_runtime_state(user_id)
+
+        self.assertGreaterEqual(purged, 3)
+        self.assertTrue(fixed_window_rate_limit(rate_key, 1, 60))
+        self.assertTrue(acquire_dedupe_lock(lock_name, 60))
+        second_slot = acquire_pair_slot("chat-stream", "chat-stream:global", 100, f"chat-stream:user:{user_id}", 1)
+        try:
+            self.assertIsNotNone(second_slot)
+        finally:
+            release_slot(second_slot)
 
 
 if __name__ == "__main__":

@@ -12,12 +12,13 @@ import hashlib
 import json
 import logging
 import secrets
+import shutil
 import time
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Optional
 
-from .runtime_state import redis_delete, redis_get_json, redis_set_json
+from .runtime_state import get_redis_client, redis_delete, redis_get_json, redis_set_json
 from .security_utils import ensure_private_dir
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,61 @@ def invalidate_session(token: str) -> None:
     redis_delete(_session_key(token))
     with _lock:
         _sessions.pop(token, None)
+
+
+def invalidate_user_sessions(user_id: str) -> int:
+    """Invalidate every active session associated with a user."""
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        return 0
+
+    deleted_tokens: set[str] = set()
+    client = get_redis_client()
+    if client is not None:
+        try:
+            redis_keys: list[str] = []
+            for raw_key in client.scan_iter(match="session:*", count=100):
+                key = raw_key.decode("utf-8", errors="replace") if isinstance(raw_key, bytes) else str(raw_key)
+                raw_session = client.get(key)
+                if not raw_session:
+                    continue
+                try:
+                    session = json.loads(raw_session)
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if isinstance(session, dict) and session.get("user_id") == normalized_user_id:
+                    redis_keys.append(key)
+                    deleted_tokens.add(key.split(":", 1)[1])
+            if redis_keys:
+                client.delete(*redis_keys)
+        except Exception as exc:
+            logger.warning("Redis user-session purge failed: %s", type(exc).__name__)
+
+    with _lock:
+        memory_tokens = [
+            token for token, session in _sessions.items()
+            if session.get("user_id") == normalized_user_id
+        ]
+        for token in memory_tokens:
+            _sessions.pop(token, None)
+            deleted_tokens.add(token)
+
+    return len(deleted_tokens)
+
+
+def delete_user_storage(user_id: str) -> bool:
+    """Delete the legacy per-user storage directory, if it exists."""
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        return False
+    path = USERS_DIR / _safe_user_dir_name(normalized_user_id)
+    if not path.exists() and not path.is_symlink():
+        return False
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    else:
+        shutil.rmtree(path)
+    return True
 
 
 def update_session(token: str, updates: Dict[str, Any]) -> None:

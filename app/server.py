@@ -30,8 +30,10 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from .auth import (
     SESSION_TTL,
     create_session,
+    delete_user_storage,
     get_session,
     invalidate_session,
+    invalidate_user_sessions,
     update_session,
 )
 from .campus_recommendations import (
@@ -81,6 +83,7 @@ from .runtime_state import (
     acquire_slot,
     fixed_window_rate_limit,
     increment_counter,
+    purge_user_runtime_state,
     record_http_request,
     redis_health,
     release_slot,
@@ -164,6 +167,8 @@ pending_title_updates: Dict[tuple[str, str], asyncio.Task[None]] = {}
 pending_title_updates_lock = Lock()
 conversation_event_subscribers: Dict[str, List[asyncio.Queue[Dict[str, Any]]]] = {}
 conversation_event_subscribers_lock = Lock()
+signal_refresh_threads: Dict[str, set[Thread]] = {}
+signal_refresh_threads_lock = Lock()
 SCAN_PATH_EXACT = {
     "/.env",
     "/env",
@@ -394,7 +399,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="FZU Chat API",
-    version="7.16.0",
+    version="7.17.0",
     lifespan=lifespan,
     docs_url="/docs" if PUBLIC_DOCS else None,
     redoc_url="/redoc" if PUBLIC_DOCS else None,
@@ -607,6 +612,14 @@ class UserDataSummary(BaseModel):
 class UserDataResetResponse(BaseModel):
     ok: bool = True
     cleared: UserDataSummary
+
+
+class AccountDeleteResponse(BaseModel):
+    ok: bool = True
+    deleted_at: str
+    cleared: UserDataSummary
+    revoked_session_count: int
+    removed_user_storage: bool
 
 
 # ---------------------------------------------------------------------------
@@ -1268,6 +1281,44 @@ def clear_active_stream_stop(user_id: str, conversation_id: str, stop_event: Eve
             active_stream_stops.pop(stream_key, None)
 
 
+async def stop_user_runtime_activity(user_id: str) -> None:
+    """Stop in-flight generation and title work before deleting a user's data."""
+    with active_stream_stops_lock:
+        stop_events = [
+            stop_event
+            for (stream_user_id, _), stop_event in active_stream_stops.items()
+            if stream_user_id == user_id
+        ]
+    for stop_event in stop_events:
+        stop_event.set()
+
+    with pending_title_updates_lock:
+        tasks = [
+            task
+            for (task_user_id, _), task in pending_title_updates.items()
+            if task_user_id == user_id
+        ]
+        pending_title_updates_keys = [
+            key for key in pending_title_updates
+            if key[0] == user_id
+        ]
+        for key in pending_title_updates_keys:
+            pending_title_updates.pop(key, None)
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    with conversation_event_subscribers_lock:
+        conversation_event_subscribers.pop(user_id, None)
+
+    with signal_refresh_threads_lock:
+        refresh_threads = list(signal_refresh_threads.get(user_id, set()))
+    for thread in refresh_threads:
+        await asyncio.to_thread(thread.join)
+
+
 def register_conversation_event_subscriber(user_id: str) -> asyncio.Queue[Dict[str, Any]]:
     queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue(maxsize=8)
     with conversation_event_subscribers_lock:
@@ -1503,9 +1554,21 @@ def schedule_signal_snapshot_refresh(user_id: str, edu_ctx: Dict[str, Any] | Non
         return
 
     def runner() -> None:
-        refresh_signal_snapshots(user_id, edu_ctx)
+        try:
+            refresh_signal_snapshots(user_id, edu_ctx)
+        finally:
+            with signal_refresh_threads_lock:
+                user_threads = signal_refresh_threads.get(user_id)
+                if user_threads is None:
+                    return
+                user_threads.discard(thread)
+                if not user_threads:
+                    signal_refresh_threads.pop(user_id, None)
 
-    Thread(target=runner, name=f"campus-signal-refresh-{mask_user_id(user_id)}", daemon=True).start()
+    thread = Thread(target=runner, name=f"campus-signal-refresh-{mask_user_id(user_id)}", daemon=True)
+    with signal_refresh_threads_lock:
+        signal_refresh_threads.setdefault(user_id, set()).add(thread)
+    thread.start()
 
 
 def clear_edu_session(token: str, status_message: str = "") -> None:
@@ -1916,6 +1979,36 @@ def reset_user_data(user: AuthUser = Depends(require_auth)):
             **cleared_dynamic_context,
         },
     }
+
+
+@app.delete("/api/account", response_model=AccountDeleteResponse)
+async def delete_account(
+    request: Request,
+    user: AuthUser = Depends(require_auth),
+) -> JSONResponse:
+    """Delete all service-side user data, revoke every session, and sign out."""
+    revoked_session_count = invalidate_user_sessions(user.user_id)
+    await stop_user_runtime_activity(user.user_id)
+    cleared_conversations = chat_store.delete_all_conversations(user.user_id)
+    cleared_memories = user_memory_store.purge_all_memories(user.user_id)
+    purge_dynamic_context_user_data(user.user_id)
+    removed_user_storage = delete_user_storage(user.user_id)
+    purge_user_runtime_state(user.user_id)
+
+    response = JSONResponse(
+        {
+            "ok": True,
+            "deleted_at": now_iso(),
+            "cleared": {
+                **cleared_conversations,
+                "memory_count": cleared_memories,
+            },
+            "revoked_session_count": revoked_session_count,
+            "removed_user_storage": removed_user_storage,
+        }
+    )
+    _clear_auth_cookie(response, request)
+    return response
 
 
 # ---------------------------------------------------------------------------

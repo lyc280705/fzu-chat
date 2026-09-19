@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-当前已标记版本：[v7.16](CHANGELOG.md)
+当前已标记版本：[v7.17](CHANGELOG.md)
 
 版本记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -23,6 +23,7 @@
 - **第三方访客模式**：微信、QQ、Microsoft、Apple 和 GitHub 授权后可创建访客会话，仅开放公共问答、知识库、联网搜索和校园生活建议，不绑定成绩、课表、选课等个人教务工具
 - **教务系统工具**：查询成绩、课表、考试成绩、学生信息（基于 [west2-online/jwch](https://github.com/west2-online/jwch) 对接教务系统）
 - **教务会话安全清理**：登录时仅在服务端暂存教务系统会话 Cookie，不保存教务密码；退出登录会同时清除站点登录态和暂存的教务会话 Cookie
+- **专业隐私与账号管理**：提供带版本信息的隐私政策与用户协议、账号数据统计、已保存数据清空，以及删除全部站内数据、撤销所有会话、清除本机偏好并退出登录的不可逆账号删除流程
 - **ChatGPT 风格界面**：现代暗色主题，侧边栏历史记录、快捷操作、流式回复
 - **消息修改与重新生成**：纯图标操作支持复制回复、重新生成助手回答、修改已发送问题并重建后续回复分支
 - **无障碍交互优化**：补充键盘焦点、跳过链接、屏幕阅读器状态、弹窗焦点管理和聊天日志播报
@@ -117,7 +118,7 @@ docker compose up -d --build
 # 3. 访问 http://localhost:80
 ```
 
-生产环境可使用 `docker-compose.prod.yml` 启动内部 Redis。设置 URL-safe 的 `REDIS_PASSWORD`，例如 `openssl rand -hex 32`，再执行 `FZU_CHAT_VERSION=v7.16 ./scripts/deploy-ghcr.sh`；如果 GHCR 镜像拉取失败，脚本会回退到本地生产镜像构建。
+生产环境可使用 `docker-compose.prod.yml` 启动内部 Redis。设置 URL-safe 的 `REDIS_PASSWORD`，例如 `openssl rand -hex 32`，再执行 `FZU_CHAT_VERSION=v7.17 ./scripts/deploy-ghcr.sh`；如果 GHCR 镜像拉取失败，脚本会回退到本地生产镜像构建。
 
 常用生产环境变量：
 
@@ -138,6 +139,9 @@ docker compose up -d --build
 - `GET|POST /api/auth/oauth/{provider}/callback` – 第三方授权回调，创建不含教务工具的访客会话；Apple `form_post` 使用 POST
 - `POST /api/auth/logout` – 退出登录，同时清除站点登录态和服务端暂存的教务会话 Cookie
 - `GET /api/auth/me` – 当前用户信息
+- `GET /api/user-data` – 查询当前账号的对话、消息和已确认长期记忆数量
+- `DELETE /api/user-data` – 清空已保存的站内数据，但保留账号登录状态
+- `DELETE /api/account` – 不可逆删除账号站内数据、撤销全部会话并退出登录
 
 ### 聊天
 - `GET /api/models` – 可用模型列表

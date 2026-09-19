@@ -3,6 +3,48 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.17] - 2026-09-19
+
+FZU-Chat v7.17 refreshes the privacy policy and user agreement and adds a complete, user-initiated account deletion flow.
+
+### Highlights
+
+- Professional legal copy. The in-product privacy policy and user agreement now describe service scope, data categories, third-party processing, retention, user rights, AI limitations, and dispute handling in clearer versioned sections.
+- Complete account deletion. An authenticated user can permanently remove conversations, feedback, confirmed memories, dynamic campus context, legacy account files, and user-scoped runtime state.
+- Session and device cleanup. Account deletion revokes every active site session for the identity, clears the authentication cookie, removes local application preferences, and returns the browser to the login page.
+- Safer UX and regression coverage. A dedicated high-risk confirmation dialog separates account deletion from the existing saved-data reset, with backend tests for session isolation, storage removal, runtime cleanup, and endpoint behavior.
+
+### Validation
+
+- `conda run -n langchain python -m pytest tests/test_auth_sessions.py tests/test_runtime_state.py -q`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `git diff --check`
+
+---
+
+## 福大灵犀 v7.17
+
+福大灵犀 v7.17 更新隐私政策与用户协议，并新增由用户主动发起的完整账号删除流程。
+
+### 版本亮点
+
+- 更专业的法律文本。产品内隐私政策和用户协议以带版本号的章节说明服务范围、数据类型、第三方处理、保存期限、用户权利、人工智能限制和争议处理。
+- 完整账号删除。登录用户可永久删除会话、反馈、已确认记忆、动态校园上下文、历史账号目录和用户级运行状态。
+- 会话与设备清理。删除账号会撤销该身份的全部站内登录会话、清除认证 Cookie 与本机应用偏好，并返回登录页。
+- 更安全的交互与回归测试。独立的高风险确认框将“删除账号”与原有“清空数据”明确区分，并增加会话隔离、账号目录、运行状态和接口行为测试。
+
+### 验证
+
+- `conda run -n langchain python -m pytest tests/test_auth_sessions.py tests/test_runtime_state.py -q`
+- `conda run -n langchain python -m compileall app`
+- `npm --prefix frontend run lint -- --max-warnings=0`
+- `npm --prefix frontend run build`
+- `git diff --check`
+
+---
+
 ## [v7.16] - 2026-09-16
 
 FZU-Chat v7.16 fixes the Kimi chat route after confirming that `kimi-k3` is not exposed by the current Huawei Cloud MaaS OpenAI-compatible API.

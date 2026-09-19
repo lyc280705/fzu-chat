@@ -45,6 +45,13 @@ const REASONING_STORAGE_KEY = 'fzu_reasoning_effort_by_model'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'fzu_sidebar_collapsed'
 const LOCATION_RECOMMENDATION_STORAGE_KEY = 'fzu_location_recommendations_enabled'
 const LOCATION_TRAVEL_MODE_STORAGE_KEY = 'fzu_location_travel_mode'
+const LOCAL_PREFERENCE_STORAGE_KEYS = [
+  REASONING_STORAGE_KEY,
+  SIDEBAR_COLLAPSED_STORAGE_KEY,
+  LOCATION_RECOMMENDATION_STORAGE_KEY,
+  LOCATION_TRAVEL_MODE_STORAGE_KEY,
+  'fzu_thinking_enabled',
+]
 const MESSAGE_MAX_LENGTH = 4000
 const LOCATION_CONTEXT_CACHE_MS = 10 * 60 * 1000
 const LOCATION_CONTEXT_RETRY_COOLDOWN_MS = 10 * 60 * 1000
@@ -154,63 +161,67 @@ const FALLBACK_HEX = Array.from({ length: 256 }, (_, index) => index.toString(16
 
 const PRIVACY_POLICY_SECTIONS = [
   {
-    title: '一、适用范围',
+    title: '一、适用范围与服务说明',
     items: [
-      '本隐私政策适用于你在使用“福大灵犀”过程中产生的个人信息和相关使用数据处理活动。',
-      '本软件的主要功能包括校内知识问答、联网辅助检索、教务系统查询、会话历史保存和个性化长期记忆。',
-      '如某项能力处于未开放、灰度测试或临时维护状态，系统会以界面提示或功能限制方式向你说明。',
+      '本政策适用于你访问、登录和使用“福大灵犀”时发生的个人信息处理活动，包括校内知识问答、联网检索、教务查询、会话历史、个性化记忆和校园位置提醒。',
+      '福大灵犀是面向学习与校园生活场景的独立软件服务，并非福州大学官方系统。涉及成绩、课表、通知和校务事项时，请以学校官方渠道为准。',
+      '服务维护者按照合法、正当、必要和诚信原则处理个人信息，并尽力将处理范围限制在实现具体功能所必需的程度。',
     ],
   },
   {
-    title: '二、我们处理的数据类型',
+    title: '二、我们处理的信息',
     items: [
-      '账号与认证信息：登录时提交的学号、学生类型，以及为保持登录状态而生成的安全 Cookie。',
-      '访客登录信息：通过微信、QQ、Microsoft、Apple 或 GitHub 授权返回的昵称、头像和不可逆哈希后的平台用户标识；系统不保存第三方 access token。',
-      '教务认证信息：你主动输入的教务密码仅用于即时认证与会话续连，前端不会长期保存该密码。',
-      '业务内容数据：包括你的提问内容、助手回复、工具调用结果、消息反馈和会话标题。',
-      '个性化记忆数据：仅在你明确确认后，系统才会保存长期偏好、常用称呼、输出风格等可复用信息。',
-      '本地设备设置：思考模式开关、侧栏折叠状态等界面偏好会保存在当前浏览器本地。',
+      '账号与认证信息：学生登录所需的学号、学生类型和登录会话；第三方登录返回的昵称、头像及经哈希处理的平台用户标识。系统不保存第三方 access token。',
+      '教务认证信息：你主动提交的教务密码仅用于当次认证，不写入对话、长期记忆或浏览器长期存储；为维持教务连接，服务端可能在当前登录会话中暂存教务 Cookie。',
+      '服务内容数据：你的提问、助手回复、会话标题、工具调用结果、消息反馈、所选模型及推理设置，以及你明确确认保存的长期偏好和记忆。',
+      '位置与校园上下文：只有在你主动开启定位提醒并授权浏览器定位后，系统才处理用于附近地点推荐的坐标与路线偏好；坐标不写入会话和长期记忆。',
+      '设备与安全信息：当前浏览器保存的界面偏好，以及保障接口安全与稳定所需的最少量请求、限流和短期运行状态。',
     ],
   },
   {
-    title: '三、数据处理目的',
+    title: '三、处理目的与使用方式',
     items: [
-      '用于完成身份识别、教务系统访问控制和持续登录状态维护。',
-      '用于生成问答结果、执行课表成绩等教务查询、展示历史记录并维持会话上下文连续性。',
-      '用于在你授权或确认的范围内提供个性化回答能力，例如称呼偏好、长期习惯和输出风格偏好。',
-      '用于定位系统异常、改善模型效果、控制接口滥用与保障服务稳定运行。',
+      '用于完成身份验证、维持登录状态、执行你发起的查询并向你展示连续的会话历史。',
+      '用于生成回答、调用你选择使用的教务、联网检索或校园推荐功能，并在你确认后提供个性化服务。',
+      '用于预防滥用、限制异常请求、排查故障和维护服务安全；不会将你的个人信息出售给第三方。',
     ],
   },
   {
-    title: '四、敏感信息与最小化原则',
+    title: '四、第三方服务与信息提供',
     items: [
-      '系统不会将你的教务密码自动写入长期记忆，也不会将密码明文展示在前端页面。',
-      '系统默认不建议保存证件号码、手机号、邮箱地址、银行卡号、精确住址等高敏感信息。',
-      '如你主动在对话中输入敏感信息，应自行评估风险；除完成当前请求所必需外，系统不会主动扩大使用范围。',
+      '为完成你请求的功能，必要的提问、上下文或查询条件可能被发送给已接入的模型服务、联网检索服务、地图服务或福州大学教务接口。具体接收方取决于你实际使用的功能。',
+      '第三方登录由相应身份提供方处理。删除福大灵犀账号不会同步删除 GitHub、Microsoft 等第三方账号，也不会自动撤销你在第三方平台授予的授权；你可在对应平台的账号设置中另行撤销。',
+      '除取得你的授权、履行法定义务、响应有权机关依法提出的要求，或为保护用户与服务安全所必需外，我们不会向无关第三方提供你的个人信息。',
     ],
   },
   {
-    title: '五、存储、保留与删除',
+    title: '五、保存期限与安全措施',
     items: [
-      '已保存的会话历史、消息反馈和长期记忆会存储在与你当前账号关联的服务端数据文件中。',
-      '你可以在侧栏逐条删除历史对话，也可以在“隐私与数据”页面一键清空全部已保存的对话和长期记忆。',
-      '一键清空同时会将本地界面偏好恢复默认；删除操作完成后，相关数据通常无法恢复。',
+      '会话历史、消息反馈和长期记忆通常保存至你主动删除数据或账号；登录会话、限流状态、位置缓存等临时信息会在实现其目的所需的较短期限内失效或更新。',
+      '浏览器界面偏好保存在当前设备；服务端数据通过账号隔离、访问鉴权、受限文件权限和安全 Cookie 等措施降低未授权访问风险。',
+      '互联网服务无法保证绝对安全。请避免在对话中提交身份证件、银行卡、精确住址等与当前请求无关的敏感信息，并妥善保管登录凭证。',
     ],
   },
   {
-    title: '六、共享、披露与安全措施',
+    title: '六、你的权利与账号删除',
     items: [
-      '为完成模型推理、联网搜索或教务查询，系统可能将必要的请求内容发送至对应的模型服务、检索服务或教务接口。',
-      '系统采取基于会话隔离、受限存储文件权限和登录鉴权的方式减少未授权访问风险。',
-      '除法律法规要求、主管机关依法要求或为保障系统安全运行所必要外，我们不会无故向无关第三方披露你的数据。',
+      '你可以查看账号数据统计、逐条删除会话、管理长期记忆、关闭定位提醒，或清空当前账号已保存的数据。',
+      '你可以在本页面选择“删除账号及全部信息”。确认后，系统将删除该账号的会话、消息反馈、长期记忆、动态校园上下文和账号专属文件，撤销该账号在本服务中的全部登录会话，清除当前浏览器中的本服务偏好并退出登录。',
+      '删除不可撤销；之后再次使用同一身份登录将创建一个空白的本地服务账号。依法必须保留的信息、安全审计记录或尚未轮换的备份副本，可能在法定或必要期限内受限保存，并在期限届满后删除或匿名化。',
     ],
   },
   {
-    title: '七、你的权利',
+    title: '七、未成年人保护',
     items: [
-      '你有权查看本隐私政策、了解系统处理的数据范围，并自主决定是否继续使用本软件。',
-      '你有权删除单条历史对话、拒绝记忆建议、取消反馈，以及在数据管理页面执行一键清空。',
-      '如你不再同意本隐私政策，可以停止使用本软件，并在退出前删除已保存的数据。',
+      '未满十八周岁的用户应在监护人指导下阅读本政策并使用服务，不应提交与学习或校园服务无关的敏感个人信息。',
+      '如监护人认为相关未成年人信息处理不当，可通过项目公开联系渠道请求核实和处理。',
+    ],
+  },
+  {
+    title: '八、政策更新与联系我们',
+    items: [
+      '我们可能因功能、第三方依赖或法律要求变化而更新本政策。发生对你权利有重大影响的变更时，将通过登录页或产品内提示重新展示。',
+      '如需行使查阅、更正、删除、撤回同意等权利，或对本政策有疑问，可通过项目仓库公开渠道或服务管理员联系我们。我们将在核实身份后于合理期限内处理。',
     ],
   },
 ]
@@ -221,7 +232,7 @@ const USER_AGREEMENT_SECTIONS = [
     items: [
       '本用户协议适用于你对“福大灵犀”全部功能的访问、登录和使用行为。',
       '当你勾选同意并完成登录，即视为你已经阅读、理解并接受本协议及相关隐私政策。',
-      '如你不同意本协议任何内容，请不要登录或继续使用本软件。',
+      '福大灵犀是独立的软件服务，并非福州大学官方系统；如你不同意本协议或隐私政策，请停止登录或使用。',
     ],
   },
   {
@@ -234,15 +245,23 @@ const USER_AGREEMENT_SECTIONS = [
     ],
   },
   {
-    title: '三、账号与认证义务',
+    title: '三、账号、授权与安全',
     items: [
       '你应确保所提交的身份信息真实、合法，并仅使用你本人有权使用的账号进行登录与查询。',
       '你应妥善保管教务账号及相关凭证，不得借用、出租、转让、出售或冒用他人身份使用本软件。',
-      '因你自身保管不善、误操作或主动泄露账号信息造成的风险和损失，应由你自行承担。',
+      '使用第三方登录时，你同时受对应身份提供方的条款约束。发现账号被冒用或会话异常时，应及时退出、删除账号或联系服务管理员。',
     ],
   },
   {
-    title: '四、合理使用规则',
+    title: '四、用户内容与授权',
+    items: [
+      '你保留对依法享有权利的输入内容的权利，并应确保其来源合法且不侵犯他人权益。',
+      '为提供、维护和改进你请求的功能，你授予本服务在必要范围内处理、传输、存储和展示相关内容的非独占许可；该许可随相应内容删除而终止，但法律另有规定的除外。',
+      '请勿提交无权处理的个人信息、商业秘密、受保密义务约束的信息或其他违法内容。',
+    ],
+  },
+  {
+    title: '五、合理使用规则',
     items: [
       '你不得利用本软件从事违法违规、破坏系统稳定、批量爬取、越权访问、攻击接口或其他滥用行为。',
       '你不得借助模型输出、工具调用或系统缺陷获取、推断或传播其他用户的数据、凭证或隐私信息。',
@@ -250,15 +269,23 @@ const USER_AGREEMENT_SECTIONS = [
     ],
   },
   {
-    title: '五、结果说明与责任边界',
+    title: '六、人工智能结果与第三方服务',
     items: [
       '本软件输出内容基于模型生成、知识库检索、联网搜索和教务系统返回结果综合生成，仅供辅助参考。',
       '成绩、课表、通知、校历等内容仍应以学校官方系统、公示信息和主管部门说明为准。',
-      '因模型误差、数据延迟、接口异常、网络故障、上游服务中断或学校系统维护导致的不准确、不完整或暂时不可用，不构成平台违约。',
+      '你应在作出重要决定前独立核验输出。第三方服务可能因网络、配额、维护或其自身规则而不可用，本服务将在合理范围内提供提示和恢复措施。',
     ],
   },
   {
-    title: '六、服务变更、中断与终止',
+    title: '七、隐私、数据管理与账号删除',
+    items: [
+      '个人信息处理适用《福大灵犀隐私政策》。你可以管理或清空已保存数据，也可以删除账号及全部信息。',
+      '账号删除后，本服务会撤销该账号的全部站内登录会话并退出登录；该操作不等同于删除第三方身份提供方账号或撤销第三方平台授权。',
+      '删除账号不可撤销。再次使用同一身份登录时，系统将按新的空白本地服务账号处理。',
+    ],
+  },
+  {
+    title: '八、服务变更、中断与终止',
     items: [
       '基于安全、维护、合规或技术升级需要，平台可以对功能范围、接口依赖、访问频率和服务形态进行调整。',
       '如发现异常登录、可疑请求、超出合理范围的频繁访问或其他安全风险，平台可暂停或终止相应服务。',
@@ -266,11 +293,25 @@ const USER_AGREEMENT_SECTIONS = [
     ],
   },
   {
-    title: '七、协议更新',
+    title: '九、责任限制',
+    items: [
+      '在法律允许范围内，本服务按现有技术和运行条件提供，不对模型输出的绝对准确、完整、持续可用或适合特定目的作超出法律规定的保证。',
+      '对于因不可抗力、第三方服务故障、学校系统维护或用户违规操作造成的损失，各方按照法律规定和各自过错承担责任；本条不排除依法不得限制或免除的责任。',
+    ],
+  },
+  {
+    title: '十、适用法律与争议处理',
+    items: [
+      '本协议的订立、履行和解释适用中华人民共和国法律。',
+      '发生争议时，建议先通过项目公开联系渠道与服务管理员协商；协商不成的，可依法向有管辖权的机构寻求解决。',
+    ],
+  },
+  {
+    title: '十一、协议更新',
     items: [
       '本协议内容可能根据功能变化、合规要求或服务调整进行更新。',
       '更新后的协议将通过登录页或系统内页面向你展示；如更新内容对权利义务有实质影响，平台可要求你重新确认。',
-      '你在协议更新后继续登录或使用本软件的，视为你接受更新后的协议内容。',
+      '如你不同意更新后的内容，可以停止使用并删除账号；需要重新同意时，系统将以明确操作取得确认。',
     ],
   },
 ]
@@ -281,7 +322,8 @@ const LEGAL_DOCUMENTS = {
     label: '隐私政策',
     title: '福大灵犀隐私政策',
     intro: '本政策用于说明本软件在账号登录、教务查询、问答会话、个性化记忆和本地设置等场景下的数据处理方式，以及你可行使的管理与删除权利。',
-    effectiveDate: '2026-04-24',
+    version: '2.0',
+    effectiveDate: '2026-09-19',
     audience: '适用于所有访问、登录或使用本软件的用户',
     sections: PRIVACY_POLICY_SECTIONS,
   },
@@ -290,7 +332,8 @@ const LEGAL_DOCUMENTS = {
     label: '用户协议',
     title: '福大灵犀用户协议',
     intro: '本协议用于说明你在登录和使用本软件时应遵守的规则，以及平台服务范围、责任边界和协议更新机制。',
-    effectiveDate: '2026-04-24',
+    version: '2.0',
+    effectiveDate: '2026-09-19',
     audience: '适用于所有登录并使用本软件功能的用户',
     sections: USER_AGREEMENT_SECTIONS,
   },
@@ -981,6 +1024,7 @@ function LegalDocumentSections({ document }) {
       <h3>{document.title}</h3>
       <p>{document.intro}</p>
       <div className="privacy-doc-meta">
+        <span>版本：{document.version}</span>
         <span>生效日期：{document.effectiveDate}</span>
         <span>适用对象：{document.audience}</span>
       </div>
@@ -2324,7 +2368,9 @@ function PrivacyPolicyView({
   summary,
   loading,
   clearing,
+  accountDeleting,
   resetDisabled,
+  accountDeleteDisabled,
   locationEnabled,
   locationPermission,
   locationBusy,
@@ -2332,6 +2378,7 @@ function PrivacyPolicyView({
   travelMode,
   onReload,
   onReset,
+  onDeleteAccount,
   onEnableLocation,
   onDisableLocation,
   onRefreshLocationPermission,
@@ -2353,7 +2400,7 @@ function PrivacyPolicyView({
           <div className="privacy-hero__copy">
             <span className="privacy-eyebrow">隐私、协议与数据</span>
             <h3>查看使用规则，并管理你已保存的数据</h3>
-            <p>这里集中展示隐私政策、用户协议、当前账号数据统计，以及一键清空入口。</p>
+            <p>这里集中展示隐私政策、用户协议、当前账号数据统计，以及数据清理和账号删除入口。</p>
           </div>
           <div className="privacy-card__actions">
             <button type="button" className="secondary-btn" onClick={onReload} disabled={loading || clearing}>
@@ -2427,14 +2474,30 @@ function PrivacyPolicyView({
         </div>
 
         <div className="privacy-card privacy-card--danger">
-          <div>
-            <h3>数据管理</h3>
-            <p>一键清空会删除服务器上已保存的会话历史、消息反馈、长期记忆，并把当前浏览器里的界面设置恢复为默认值。此操作不可撤销。</p>
-          </div>
-          <div className="privacy-card__actions">
-            <button type="button" className="danger-btn" onClick={onReset} disabled={resetDisabled}>
-              {clearing ? '清空中…' : '一键清空已保存数据'}
-            </button>
+          <div className="privacy-danger-stack">
+            <section className="privacy-danger-row">
+              <div>
+                <h3>清空已保存数据</h3>
+                <p>删除服务器上的会话历史、消息反馈、长期记忆和动态校园上下文，并将当前浏览器界面设置恢复默认。账号和登录状态会保留。</p>
+              </div>
+              <div className="privacy-card__actions">
+                <button type="button" className="danger-btn" onClick={onReset} disabled={resetDisabled}>
+                  {clearing ? '清空中…' : '清空已保存数据'}
+                </button>
+              </div>
+            </section>
+            <div className="privacy-danger-divider" />
+            <section className="privacy-danger-row privacy-danger-row--account">
+              <div>
+                <h3>删除账号及全部信息</h3>
+                <p>永久删除该账号在福大灵犀中的全部数据，撤销所有设备上的登录会话，并清除当前浏览器偏好后退出登录。此操作不会删除你的 GitHub 或 Microsoft 账号。</p>
+              </div>
+              <div className="privacy-card__actions">
+                <button type="button" className="danger-btn danger-btn--critical" onClick={onDeleteAccount} disabled={accountDeleteDisabled}>
+                  <Trash2 size={16} aria-hidden="true" /> {accountDeleting ? '删除中…' : '删除账号及全部信息'}
+                </button>
+              </div>
+            </section>
           </div>
         </div>
 
@@ -2486,6 +2549,8 @@ function App() {
   const [renamePending, setRenamePending] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [resetDialogOpen, setResetDialogOpen] = useState(false)
+  const [accountDeleteDialogOpen, setAccountDeleteDialogOpen] = useState(false)
+  const [accountDeleting, setAccountDeleting] = useState(false)
   const [copiedMessageId, setCopiedMessageId] = useState(null)
   const [failedPrompt, setFailedPrompt] = useState(null)
   const [editingMessage, setEditingMessage] = useState(null)
@@ -2516,6 +2581,7 @@ function App() {
   const recentLocationRef = useRef(null)
   const lastLocationFailureAtRef = useRef(0)
   const backgroundLocationRefreshRef = useRef(null)
+  const suppressPreferencePersistenceRef = useRef(false)
 
   const activeConv = useMemo(() => conversations.find((c) => c.id === activeId) ?? null, [activeId, conversations])
   const activeMsgs = useMemo(() => normMsgs(msgStore[activeId]?.messages ?? []), [activeId, msgStore])
@@ -2570,6 +2636,7 @@ function App() {
   useEscapeKey(sidebarOpen, () => setSidebarOpen(false))
   useEscapeKey(Boolean(deleteTarget) && !renamePending, () => setDeleteTarget(null))
   useEscapeKey(resetDialogOpen && !userDataClearing, () => setResetDialogOpen(false))
+  useEscapeKey(accountDeleteDialogOpen && !accountDeleting, () => setAccountDeleteDialogOpen(false))
 
   const syncAutoScrollState = useCallback(() => {
     const list = msgListRef.current
@@ -2667,11 +2734,28 @@ function App() {
     setRenamePending(false)
     setDeleteTarget(null)
     setResetDialogOpen(false)
+    setAccountDeleteDialogOpen(false)
+    setAccountDeleting(false)
     setCopiedMessageId(null)
     setFailedPrompt(null)
     setEditingMessage(null)
     setScreenReaderStatus('')
     setShowScrollBottom(false)
+  }, [])
+
+  const clearLocalAccountPreferences = useCallback(() => {
+    suppressPreferencePersistenceRef.current = true
+    if (typeof window !== 'undefined') {
+      for (const key of LOCAL_PREFERENCE_STORAGE_KEYS) {
+        window.localStorage.removeItem(key)
+      }
+    }
+    setReasoningByModel({})
+    setSidebarCollapsed(false)
+    setLocationRecommendationEnabled(false)
+    setCampusTravelMode('walking')
+    recentLocationRef.current = null
+    lastLocationFailureAtRef.current = 0
   }, [])
 
   const refreshAuthState = useCallback(async () => {
@@ -2685,6 +2769,7 @@ function App() {
     }
 
     const nextUser = await response.json()
+    suppressPreferencePersistenceRef.current = false
     setUser(nextUser)
     setEduError(nextUser.edu_error || '')
     return nextUser
@@ -2698,22 +2783,26 @@ function App() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return
+    if (suppressPreferencePersistenceRef.current) return
     window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? '1' : '0')
   }, [sidebarCollapsed])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
+    if (suppressPreferencePersistenceRef.current) return
     window.localStorage.setItem(REASONING_STORAGE_KEY, JSON.stringify(reasoningByModel))
     window.localStorage.removeItem('fzu_thinking_enabled')
   }, [reasoningByModel])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
+    if (suppressPreferencePersistenceRef.current) return
     window.localStorage.setItem(LOCATION_RECOMMENDATION_STORAGE_KEY, locationRecommendationEnabled ? '1' : '0')
   }, [locationRecommendationEnabled])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
+    if (suppressPreferencePersistenceRef.current) return
     window.localStorage.setItem(LOCATION_TRAVEL_MODE_STORAGE_KEY, campusTravelMode === 'bicycling' ? 'bicycling' : 'walking')
   }, [campusTravelMode])
 
@@ -2896,6 +2985,7 @@ function App() {
 
   // --- Handlers ---
   const handleLogin = useCallback((u, eduErr) => {
+    suppressPreferencePersistenceRef.current = false
     setUser(u)
     setEduError(eduErr)
     setError('')
@@ -3156,6 +3246,33 @@ function App() {
       setUserDataClearing(false)
     }
   }, [hasStreamingConversation, resetAuthState, userDataClearing])
+
+  const handleDeleteAccount = useCallback(async () => {
+    if (accountDeleting) return
+    if (hasStreamingConversation) {
+      setError('请先等待当前回复结束，再删除账号。')
+      return
+    }
+
+    setError('')
+    setAccountDeleting(true)
+    try {
+      const response = await api('/api/account', { method: 'DELETE' })
+      const payload = await response.json().catch(() => ({}))
+      if (response.status === 401) {
+        resetAuthState()
+        return
+      }
+      if (!response.ok) throw new Error(payload.detail || '删除账号失败，请稍后重试。')
+
+      clearLocalAccountPreferences()
+      resetAuthState()
+    } catch (err) {
+      setError(err.message || '删除账号失败，请稍后重试。')
+    } finally {
+      setAccountDeleting(false)
+    }
+  }, [accountDeleting, clearLocalAccountPreferences, hasStreamingConversation, resetAuthState])
 
   const handleCopyMessage = useCallback(async (message) => {
     const text = messageTextContent(message)
@@ -3745,7 +3862,7 @@ function App() {
               <h2 id="chat-heading" className={`chat-header-title ${!isPrivacyView && activeConv && pendingTitles[activeConv.id] ? 'chat-header-title--pending' : ''}`.trim()} aria-label={isPrivacyView ? '隐私与数据' : (activeConv && pendingTitles[activeConv.id] ? '正在生成标题' : (activeConv?.title ?? '新的对话'))}>
                 {isPrivacyView ? '隐私与数据' : (activeConv && pendingTitles[activeConv.id] ? <PendingTitle /> : (activeConv?.title ?? '新的对话'))}
               </h2>
-              <p>{isPrivacyView ? '查看隐私政策、数据统计和一键清空入口' : (isVisitorUser ? '福州大学知识库 · 联网搜索 · 访客模式' : '福州大学知识库 · 联网搜索 · 教务系统')}</p>
+              <p>{isPrivacyView ? '查看隐私政策、协议、数据统计和账号删除入口' : (isVisitorUser ? '福州大学知识库 · 联网搜索 · 访客模式' : '福州大学知识库 · 联网搜索 · 教务系统')}</p>
             </div>
           </div>
         </header>
@@ -3755,7 +3872,9 @@ function App() {
             summary={userDataSummary}
             loading={userDataLoading}
             clearing={userDataClearing}
-            resetDisabled={userDataLoading || userDataClearing || hasStreamingConversation}
+            accountDeleting={accountDeleting}
+            resetDisabled={userDataLoading || userDataClearing || accountDeleting || hasStreamingConversation}
+            accountDeleteDisabled={userDataLoading || userDataClearing || accountDeleting || hasStreamingConversation}
             locationEnabled={locationRecommendationEnabled}
             locationPermission={locationPermission}
             locationBusy={locationPermissionBusy}
@@ -3763,6 +3882,7 @@ function App() {
             travelMode={campusTravelMode}
             onReload={() => void loadUserDataSummary()}
             onReset={() => setResetDialogOpen(true)}
+            onDeleteAccount={() => setAccountDeleteDialogOpen(true)}
             onEnableLocation={() => void enableLocationRecommendations()}
             onDisableLocation={disableLocationRecommendations}
             onRefreshLocationPermission={() => void refreshLocationPermission()}
@@ -3975,6 +4095,26 @@ function App() {
           if (!userDataClearing) setResetDialogOpen(false)
         }}
         onConfirm={() => void handleResetUserData()}
+      />
+      <ConfirmDialog
+        open={accountDeleteDialogOpen}
+        title="删除账号及全部信息？"
+        description="这会永久删除该账号在福大灵犀中的全部数据，撤销所有设备上的登录会话，并立即退出登录。此操作不可撤销。"
+        confirmText="删除账号并退出"
+        danger
+        busy={accountDeleting}
+        details={(
+          <div className="reset-summary">
+            <span>历史对话：{userDataSummary?.conversation_count ?? 0}</span>
+            <span>消息总数：{userDataSummary?.message_count ?? 0}</span>
+            <span>长期记忆：{userDataSummary?.memory_count ?? 0}</span>
+            <span>全部站内登录会话将失效</span>
+          </div>
+        )}
+        onCancel={() => {
+          if (!accountDeleting) setAccountDeleteDialogOpen(false)
+        }}
+        onConfirm={() => void handleDeleteAccount()}
       />
     </div>
   )

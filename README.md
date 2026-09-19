@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v7.16](CHANGELOG.md)
+Current tagged release: [v7.17](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -23,6 +23,7 @@ FZU-Chat provides a ChatGPT-style conversation experience for Fuzhou University 
 - **Third-party guest mode**: WeChat, QQ, Microsoft, Apple, and GitHub OAuth can create visitor sessions with public Q&A, knowledge retrieval, web search, and campus-life recommendations, without binding personal grade, schedule, selection, or academic-affairs tools
 - **Educational system tools**: Query grades, courses, exam scores, and student info via the FZU academic affairs system (based on [west2-online/jwch](https://github.com/west2-online/jwch))
 - **Educational session cleanup**: The app only keeps educational-system session cookies on the server side and never stores the raw password; logging out clears both the site login state and the cached educational-session cookies
+- **Professional privacy controls**: Versioned privacy terms, account data statistics, saved-data reset, and irreversible account deletion that removes service data, revokes every active session, clears local preferences, and signs out
 - **ChatGPT-style interface**: Modern dark UI with sidebar history, quick actions, and streaming replies
 - **Message editing and regeneration**: Icon-only actions for copying replies, regenerating an assistant answer, or editing a sent user message and rebuilding the following response branch
 - **Accessible interaction polish**: Keyboard-friendly focus rings, skip link, screen-reader status updates, dialog focus handling, and live chat-log announcements
@@ -117,7 +118,7 @@ docker compose up -d --build
 # 3. Visit http://localhost:80
 ```
 
-Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, then run `FZU_CHAT_VERSION=v7.16 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build.
+Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, then run `FZU_CHAT_VERSION=v7.17 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build.
 
 Useful production environment variables:
 
@@ -138,6 +139,9 @@ Useful production environment variables:
 - `GET|POST /api/auth/oauth/{provider}/callback` – OAuth callback that creates a visitor session without educational tools; POST is used for Apple `form_post`
 - `POST /api/auth/logout` – Logout and clear both the site login state and the server-side educational-session cookies
 - `GET /api/auth/me` – Current user info
+- `GET /api/user-data` – Current account conversation, message, and confirmed-memory counts
+- `DELETE /api/user-data` – Clear saved service data while keeping the account signed in
+- `DELETE /api/account` – Irreversibly delete service-side account data, revoke all sessions, and sign out
 
 ### Chat
 - `GET /api/models` – Available chat models

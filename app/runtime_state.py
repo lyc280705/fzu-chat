@@ -129,6 +129,61 @@ def redis_delete(key: str) -> bool:
         return False
 
 
+def _runtime_key_belongs_to_user(key: str, user_id: str) -> bool:
+    if key.startswith("rate:"):
+        return key.endswith(f":{user_id}")
+    return key in {
+        f"lock:signal-refresh:{user_id}",
+        f"signal-refresh:{user_id}",
+        f"slot:chat-stream:user:{user_id}",
+    }
+
+
+def purge_user_runtime_state(user_id: str) -> int:
+    """Remove short-lived rate-limit, lock, and stream-slot state for a user."""
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        return 0
+
+    deleted_keys: set[str] = set()
+    client = get_redis_client()
+    if client is not None:
+        try:
+            matching_keys: list[str] = []
+            for pattern in ("rate:*", "lock:*", "slot:*"):
+                for raw_key in client.scan_iter(match=pattern, count=100):
+                    key = raw_key.decode("utf-8", errors="replace") if isinstance(raw_key, bytes) else str(raw_key)
+                    if _runtime_key_belongs_to_user(key, normalized_user_id):
+                        matching_keys.append(key)
+            if matching_keys:
+                client.delete(*matching_keys)
+                deleted_keys.update(matching_keys)
+        except Exception as exc:
+            increment_counter("fzu_chat_redis_errors_total")
+            logger.warning("Redis user runtime purge failed: %s", type(exc).__name__)
+
+    with _memory_rate_lock:
+        stale_rate_keys = [
+            key for key in _memory_rate_buckets
+            if key.endswith(f":{normalized_user_id}")
+        ]
+        for key in stale_rate_keys:
+            _memory_rate_buckets.pop(key, None)
+            deleted_keys.add(f"rate:{key}")
+
+    with _memory_state_lock:
+        for state in (_memory_locks, _memory_slots):
+            stale_keys = [
+                key for key in state
+                if _runtime_key_belongs_to_user(key, normalized_user_id)
+            ]
+            for key in stale_keys:
+                state.pop(key, None)
+                deleted_keys.add(key)
+
+    return len(deleted_keys)
+
+
 def fixed_window_rate_limit(key: str, limit: int, window_seconds: int) -> bool:
     client = get_redis_client()
     redis_key = f"rate:{key}"
