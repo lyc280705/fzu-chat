@@ -4,6 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import ipaddress
+import hmac
 import json
 import logging
 import os
@@ -67,7 +68,9 @@ from .graph import (
 )
 from .jwch_client import JwchClient, JwchLoginError, JwchSessionError
 from .memory_store import user_memory_store
+from .oauth_logging import install_oauth_log_filter
 from .oauth import (
+    OAUTH_STATE_TTL_SECONDS,
     OAuthConfigError,
     OAuthError,
     build_authorization_url,
@@ -93,6 +96,8 @@ from .runtime_state import (
     set_gauge,
 )
 from .security_utils import env_flag, mask_user_id
+
+install_oauth_log_filter()
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
@@ -493,7 +498,9 @@ class EduReloginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=100)
 
 
-OAuthProviderName = Literal["wechat", "qq", "microsoft", "apple", "github"]
+OAuthProviderName = Literal["wechat", "qq", "alipay", "microsoft", "apple", "github"]
+ALIPAY_STATE_COOKIE = "fzu_alipay_oauth_state"
+ALIPAY_COOKIE_PATH = "/api/auth/oauth/alipay"
 
 OAUTH_CALLBACK_PROVIDER_ALIASES: Dict[str, OAuthProviderName] = {
     "wechat": "wechat",
@@ -511,6 +518,7 @@ class OAuthProviderStatus(BaseModel):
     provider: OAuthProviderName
     label: str
     configured: bool
+    enabled: bool = True
 
 
 class ConversationCreateRequest(BaseModel):
@@ -1711,8 +1719,15 @@ def oauth_start(provider: OAuthProviderName, request: Request, accepted_legal: b
     redirect_uri = f"{_oauth_redirect_base(request)}/{provider}/callback"
     try:
         config = get_provider_config(provider, redirect_uri)
-        state = create_oauth_state(provider, redirect_uri)
-        return RedirectResponse(build_authorization_url(config, state), status_code=302)
+        if provider == "alipay" and not config.enabled:
+            raise OAuthConfigError("支付宝登录待审核上线。")
+        state = create_oauth_state(provider, config.redirect_uri)
+        response = RedirectResponse(build_authorization_url(config, state), status_code=302)
+        response.headers["Cache-Control"] = "no-store"
+        if provider == "alipay":
+            response.set_cookie(ALIPAY_STATE_COOKIE, state, max_age=OAUTH_STATE_TTL_SECONDS,
+                                httponly=True, secure=_use_secure_cookie(request), samesite="lax", path=ALIPAY_COOKIE_PATH)
+        return response
     except OAuthConfigError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -1728,14 +1743,33 @@ def _oauth_callback_error_redirect(provider: OAuthProviderName, reason: str) -> 
 
 
 def _finish_oauth_callback(provider: OAuthProviderName, request: Request, payload: Dict[str, Any]) -> RedirectResponse:
+    if provider == "alipay":
+        state = str(payload.get("state") or "")
+        cookie = request.cookies.get(ALIPAY_STATE_COOKIE, "")
+        if not state or not cookie or not hmac.compare_digest(state.encode(), cookie.encode()):
+            response = _oauth_callback_error_redirect(provider, "failed")
+        else:
+            response = _complete_oauth_callback(provider, request, payload)
+        response.delete_cookie(ALIPAY_STATE_COOKIE, path=ALIPAY_COOKIE_PATH,
+                               httponly=True, secure=_use_secure_cookie(request), samesite="lax")
+    else:
+        response = _complete_oauth_callback(provider, request, payload)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+def _complete_oauth_callback(provider: OAuthProviderName, request: Request, payload: Dict[str, Any]) -> RedirectResponse:
     error = str(payload.get("error") or "").strip()
-    code = str(payload.get("code") or "").strip()
+    code = str(payload.get("auth_code" if provider == "alipay" else "code") or "").strip()
     state = str(payload.get("state") or "").strip()
-    if error:
+    if error and provider != "alipay":
         logger.warning("OAuth callback rejected by %s: %s", provider, error)
         return _oauth_callback_error_redirect(provider, "cancelled")
     try:
         state_payload = consume_oauth_state(state, provider)
+        if error:
+            return _oauth_callback_error_redirect(provider, "cancelled")
         config = get_provider_config(provider, str(state_payload.get("redirect_uri") or ""))
         profile = fetch_visitor_profile(config, code, payload)
     except OAuthConfigError as exc:
@@ -1804,6 +1838,8 @@ def oauth_callback(
     error: str | None = None,
     error_description: str | None = None,
 ):
+    if provider == "alipay":
+        return _finish_oauth_callback(provider, request, dict(request.query_params))
     return _finish_oauth_callback(provider, request, _oauth_callback_payload(code, state, error, error_description))
 
 

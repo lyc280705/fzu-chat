@@ -3,6 +3,17 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.23] - 2026-09-20
+
+- Add optional Alipay visitor login, RSA2 signing and strict verification of the original response JSON, with OpenID support and minimal retained profile data.
+- Bind Alipay OAuth state to the initiating browser, consume state atomically, and redact OAuth query strings from access logs.
+- Mount signing keys outside the image through an optional Compose override. Keep the Alipay entry marked pending until the application is approved.
+- 接入支付宝访客登录；应用私钥只读挂载，校验支付宝签名及用户标识，不保存访问令牌，不申请支付、手机号或实名权限。
+- 增加浏览器绑定、一次性授权状态和授权日志脱敏；保留 Microsoft、GitHub 和教务登录。
+- 统一支付宝登录入口样式，应用审核通过前显示“待上线”，不误导用户发起不可用授权。
+
+---
+
 ## [v7.22] - 2026-09-20
 
 - Update vulnerable frontend build dependencies to patched versions, including Vite 7.3.6, esbuild 0.28.2, PostCSS 8.5.28, js-yaml 4.3.2, and their affected transitive dependencies.

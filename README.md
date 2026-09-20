@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v7.22](CHANGELOG.md)
+Current tagged release: [v7.23](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -20,7 +20,7 @@ FZU-Chat provides a ChatGPT-style conversation experience for Fuzhou University 
 ## Features
 
 - **Student authentication**: Per-student login with conversation isolation
-- **Third-party guest mode**: WeChat, QQ, Microsoft, Apple, and GitHub OAuth can create visitor sessions with public Q&A, knowledge retrieval, web search, and campus-life recommendations, without binding personal grade, schedule, selection, or academic-affairs tools
+- **Third-party guest mode**: WeChat, QQ, Alipay, Microsoft, Apple, and GitHub OAuth can create visitor sessions with public Q&A, knowledge retrieval, web search, and campus-life recommendations, without binding personal grade, schedule, selection, or academic-affairs tools
 - **Educational system tools**: Query grades, courses, exam scores, and student info via the FZU academic affairs system (based on [west2-online/jwch](https://github.com/west2-online/jwch))
 - **Educational session cleanup**: The app only keeps educational-system session cookies on the server side and never stores the raw password; logging out clears both the site login state and the cached educational-session cookies
 - **Professional privacy controls**: Versioned privacy terms, account data statistics, saved-data reset, and irreversible account deletion that removes service data, revokes every active session, clears local preferences, and signs out
@@ -118,7 +118,7 @@ docker compose up -d --build
 # 3. Visit http://localhost:80
 ```
 
-Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, provision the session encryption key below, then run `FZU_CHAT_VERSION=v7.22 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build.
+Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, provision the session encryption key below, then run `FZU_CHAT_VERSION=v7.23 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build. Hosts using additional Compose files (resource limits or Alipay secrets) must include **all** override files in their deployment commands rather than using this single-file helper.
 
 Frontend builds use `npm ci` to install the committed lockfile and run `npm run audit:security` before producing the Docker image. Known npm advisories at low severity or above block the build; resolve them by updating compatible dependencies rather than disabling the check. This check covers npm dependencies, not a full Python or operating-system security audit.
 
@@ -147,6 +147,41 @@ Useful production environment variables:
 - `FZU_CHAT_WECHAT_CLIENT_ID` / `FZU_CHAT_WECHAT_CLIENT_SECRET`, `FZU_CHAT_QQ_CLIENT_ID` / `FZU_CHAT_QQ_CLIENT_SECRET`, `FZU_CHAT_MICROSOFT_CLIENT_ID` / `FZU_CHAT_MICROSOFT_CLIENT_SECRET`, `FZU_CHAT_APPLE_CLIENT_ID` / `FZU_CHAT_APPLE_CLIENT_SECRET`, `FZU_CHAT_GITHUB_CLIENT_ID` / `FZU_CHAT_GITHUB_CLIENT_SECRET` – enable the matching visitor login entry; unconfigured providers are shown as unavailable in the login UI
 
 ## API Endpoints
+
+### Alipay login deployment
+
+Alipay is optional and disabled until the application has passed platform review.
+Configure RSA2 (2048-bit or stronger) on a web application with member-information
+authorization, and register `https://mylingxi.cn/api/auth/oauth/alipay/callback`
+using full-address matching. [Official OAuth guide](https://opendocs.alipay.com/open/263/105809)
+and [official Python SDK protocol reference](https://github.com/alipay/alipay-sdk-python-all).
+
+- Keep the PKCS8/PKCS1 PEM **application private key** outside the repository and Docker build context, with owner-only permissions. Upload only its matching public key to Alipay.
+- Download the distinct **Alipay public key** from the platform for response verification (base64 DER or PEM). Do not substitute the application public key.
+- Set `FZU_CHAT_ALIPAY_APP_ID`, `FZU_CHAT_ALIPAY_REDIRECT_URI`, `FZU_CHAT_ALIPAY_PRIVATE_KEY_HOST_FILE`, and `FZU_CHAT_ALIPAY_PUBLIC_KEY_HOST_FILE` in the host `.env` and add `alipay` to `FZU_CHAT_OAUTH_PROVIDERS`.
+- Include `docker-compose.alipay.yml` alongside production/resource-limit Compose files. It mounts both key files as read-only secrets. No new Python dependency is required.
+- Keep `FZU_CHAT_ALIPAY_ENABLED=false` until review is approved. Configured but pending providers render as a disabled “待上线” entry. After approval, set it to `true` and recreate only the app container with all overrides.
+
+```bash
+docker compose -f docker-compose.prod.yml -f docker-compose.2g.override.yml -f docker-compose.alipay.yml pull fzu-chat
+docker compose -f docker-compose.prod.yml -f docker-compose.2g.override.yml -f docker-compose.alipay.yml up -d --no-deps fzu-chat
+```
+
+The callback accepts `auth_code`, checks browser-bound state, atomically consumes it
+in Redis, exchanges the code through a signed RSA2 request, and verifies the exact
+UTF-8 response before trusting identity. New applications use `open_id`; legacy
+`user_id` is supported only when `open_id` is absent. Profile identity must match
+the token response. Only hashed identity, nickname and HTTPS avatar are retained;
+access/refresh tokens, phone numbers and real-name fields are not stored. No payment
+or transfer APIs are implemented.
+
+Uvicorn access logs strip OAuth query parameters. For Nginx, install
+`deploy/nginx-oauth-logging.conf` in its HTTP context and use `access_log
+/var/log/nginx/fzu-chat.access.log fzu_privacy;` in the site's server blocks. This
+retains request paths/status/timing without logging authorization codes, state or
+referrer URLs. Existing historical logs are not altered. Verify `nginx -t` before
+reloading. The Alipay glyph uses Simple Icons (CC0); the Alipay trademark belongs
+to its respective owner.
 
 ### Authentication
 - `POST /api/auth/login` – Login with student ID + password

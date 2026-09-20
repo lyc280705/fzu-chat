@@ -1,0 +1,16 @@
+# Optional: provision both files outside the repository before using this file.
+# Combine with docker-compose.prod.yml and your host's resource-limit override.
+services:
+  fzu-chat:
+    environment:
+      FZU_CHAT_ALIPAY_PRIVATE_KEY_FILE: /run/secrets/alipay_app_private_key
+      FZU_CHAT_ALIPAY_PUBLIC_KEY_FILE: /run/secrets/alipay_public_key
+    secrets:
+      - alipay_app_private_key
+      - alipay_public_key
+
+secrets:
+  alipay_app_private_key:
+    file: ${FZU_CHAT_ALIPAY_PRIVATE_KEY_HOST_FILE:?set the private key file outside the repository}
+  alipay_public_key:
+    file: ${FZU_CHAT_ALIPAY_PUBLIC_KEY_HOST_FILE:?set the Alipay verification public key file}

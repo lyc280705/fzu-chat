@@ -131,6 +131,7 @@ const CAMPUS_RECOMMENDATION_TRAVEL_MODE_LABELS = {
 const OAUTH_PROVIDER_LABELS = {
   wechat: '微信',
   qq: 'QQ',
+  alipay: '支付宝',
   microsoft: 'Microsoft',
   apple: 'Apple',
   github: 'GitHub',
@@ -139,7 +140,7 @@ const OAUTH_PROVIDER_LABELS = {
 const DEFAULT_OAUTH_PROVIDERS = Object.entries(OAUTH_PROVIDER_LABELS).map(([provider, label]) => ({
   provider,
   label,
-  configured: null,
+  configured: provider === 'alipay' ? false : null,
 }))
 const DEFAULT_OAUTH_PROVIDER_MAP = new Map(DEFAULT_OAUTH_PROVIDERS.map((provider) => [provider.provider, provider]))
 
@@ -197,7 +198,7 @@ const PRIVACY_POLICY_SECTIONS = [
     title: '四、第三方服务与信息提供',
     items: [
       '为完成你请求的功能，必要的提问、上下文或查询条件可能被发送给已接入的模型服务、联网检索服务、地图服务或福州大学教务接口。具体接收方取决于你实际使用的功能。',
-      '第三方登录由相应身份提供方处理。删除福大灵犀账号不会同步删除 GitHub、Microsoft 等第三方账号，也不会自动撤销你在第三方平台授予的授权；你可在对应平台的账号设置中另行撤销。',
+      '第三方登录由相应身份提供方处理。支付宝登录仅用于识别账号和展示昵称、头像，不申请支付、转账、手机号或实名信息权限，不保存支付宝访问令牌。删除福大灵犀账号不会删除你的第三方账号，也不会自动撤销第三方授权；你可在对应平台的账号设置中另行撤销。',
       '除取得你的授权、履行法定义务、响应有权机关依法提出的要求，或为保护用户与服务安全所必需外，我们不会向无关第三方提供你的个人信息。',
     ],
   },
@@ -329,8 +330,8 @@ const LEGAL_DOCUMENTS = {
     label: '隐私政策',
     title: '福大灵犀隐私政策',
     intro: '本政策用于说明本软件在账号登录、教务查询、问答会话、个性化记忆和本地设置等场景下的数据处理方式，以及你可行使的管理与删除权利。',
-    version: '2.0',
-    effectiveDate: '2026-09-19',
+    version: '2.1',
+    effectiveDate: '2026-09-20',
     audience: '适用于所有访问、登录或使用本软件的用户',
     sections: PRIVACY_POLICY_SECTIONS,
   },
@@ -977,6 +978,14 @@ const formatDistanceMeters = (value) => {
 }
 
 function OAuthProviderLogo({ provider, label }) {
+  if (provider === 'alipay') {
+    return (
+      <svg className="oauth-login-logo oauth-login-logo--alipay" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        {/* Alipay brand glyph, Simple Icons (CC0). */}
+        <path fill="#1677ff" d="M19.695 15.07c3.426 1.158 4.203 1.22 4.203 1.22V3.846c0-2.124-1.705-3.845-3.81-3.845H3.914C1.808.001.102 1.722.102 3.846v16.31c0 2.123 1.706 3.845 3.813 3.845h16.173c2.105 0 3.81-1.722 3.81-3.845v-.157s-6.19-2.602-9.315-4.119c-2.096 2.602-4.8 4.181-7.607 4.181-4.75 0-6.361-4.19-4.112-6.949.49-.602 1.324-1.175 2.617-1.497 2.025-.502 5.247.313 8.266 1.317a16.796 16.796 0 0 0 1.341-3.302H5.781v-.952h4.799V6.975H4.77v-.953h5.81V3.591s0-.409.411-.409h2.347v2.84h5.744v.951h-5.744v1.704h4.69a19.453 19.453 0 0 1-1.986 5.06c1.424.52 2.702 1.011 3.654 1.333m-13.81-2.032c-.596.06-1.71.325-2.321.869-1.83 1.608-.735 4.55 2.968 4.55 2.151 0 4.301-1.388 5.99-3.61-2.403-1.182-4.438-2.028-6.637-1.809" />
+      </svg>
+    )
+  }
   if (provider === 'microsoft') {
     return (
       <svg className="oauth-login-logo oauth-login-logo--microsoft" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -1110,6 +1119,7 @@ function LoginPage({ onLogin }) {
               provider: providerKey,
               label: provider?.label || fallback?.label || providerKey,
               configured: provider?.configured ?? fallback?.configured ?? null,
+              enabled: provider?.enabled !== false,
             }
           })
           .filter(Boolean)
@@ -1178,6 +1188,10 @@ function LoginPage({ onLogin }) {
     }
     const providerStatus = oauthProviderMap.get(provider)
     const label = providerStatus?.label || OAUTH_PROVIDER_LABELS[provider] || provider
+    if (providerStatus?.enabled === false) {
+      setError(`${label}登录正在等待审核上线，请先使用其他登录方式。`)
+      return
+    }
     if (providerStatus?.configured === false) {
       setError(`${label}访客登录尚未配置，请先使用本科生教务登录。`)
       return
@@ -1298,19 +1312,21 @@ function LoginPage({ onLogin }) {
                   const fallback = DEFAULT_OAUTH_PROVIDER_MAP.get(providerKey)
                   const label = providerStatus.label || fallback?.label || providerKey
                   const configured = providerStatus.configured !== false
+                  const enabled = providerStatus.enabled !== false
                   const isLoading = oauthLoadingProvider === providerKey
                   return (
                     <button
                       key={providerKey}
                       type="button"
                       className={`oauth-login-btn oauth-login-btn--${providerKey}`}
-                      disabled={loading || Boolean(oauthLoadingProvider) || !configured}
+                      disabled={loading || Boolean(oauthLoadingProvider) || !configured || !enabled}
+                      title={!enabled ? `${label}登录待审核上线` : undefined}
                       onClick={() => handleOauthLogin(providerKey)}
                     >
                       <span className="oauth-login-mark" aria-hidden="true">
                         <OAuthProviderLogo provider={providerKey} label={label} />
                       </span>
-                      <span>{isLoading ? '跳转中…' : label}</span>
+                      <span>{isLoading ? '跳转中…' : label}{!enabled && <small className="oauth-login-status">待上线</small>}</span>
                     </button>
                   )
                 })}

@@ -37,10 +37,10 @@ class VisitorOAuthTests(unittest.TestCase):
         providers = response.json()
         self.assertEqual(
             {provider["provider"] for provider in providers},
-            {"wechat", "qq", "microsoft", "apple", "github"},
+            {"wechat", "qq", "alipay", "microsoft", "apple", "github"},
         )
         for provider in providers:
-            self.assertEqual(set(provider.keys()), {"provider", "label", "configured"})
+            self.assertEqual(set(provider.keys()), {"provider", "label", "configured", "enabled"})
 
     def test_provider_status_can_be_limited_for_production(self):
         with patch.dict(os.environ, {"FZU_CHAT_OAUTH_PROVIDERS": "microsoft,apple,github"}, clear=True):

@@ -95,6 +95,8 @@
 .login-page--auth .oauth-login-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .login-page--auth .oauth-login-btn { min-width: 0; min-height: 44px; gap: 9px; padding: 10px; border: 1px solid #ffffff1a; border-radius: 10px; background: transparent; font-size: 13px; font-weight: 500; }
 .login-page--auth .oauth-login-btn:only-child { grid-column: 1 / -1; }
+.login-page--auth .oauth-login-btn:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.login-page--auth .oauth-login-status { margin-left: 6px; font-size: 10px; font-weight: 400; color: #a4aebb; }
 .login-page--auth .oauth-login-btn:hover:not(:disabled) { transform: none; background: #ffffff07; border-color: #ffffff38; }
 .login-page--auth .oauth-login-btn:focus-visible { outline: 2px solid #91b8aa; outline-offset: 3px; }
 .login-page--auth .oauth-login-mark { width: 18px; height: 18px; border-radius: 0; background: none; border: 0; color: #e4e8ee; }

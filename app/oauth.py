@@ -15,11 +15,12 @@ from uuid import uuid4
 
 import requests
 
-from .runtime_state import redis_delete, redis_get_json, redis_set_json
+from . import alipay_oauth
+from .runtime_state import redis_pop_json, redis_set_json
 
 logger = logging.getLogger(__name__)
 
-OAUTH_PROVIDER_KEYS = ("wechat", "qq", "microsoft", "apple", "github")
+OAUTH_PROVIDER_KEYS = ("wechat", "qq", "alipay", "microsoft", "apple", "github")
 OAUTH_STATE_TTL_SECONDS = max(60, int(os.getenv("FZU_CHAT_OAUTH_STATE_TTL_SECONDS", "600")))
 OAUTH_TIMEOUT_SECONDS = float(os.getenv("FZU_CHAT_OAUTH_TIMEOUT_SECONDS", "6"))
 
@@ -34,10 +35,25 @@ class OAuthProviderConfig:
     client_id: str
     client_secret: str
     redirect_uri: str
+    private_key_file: str = ""
+    public_key_file: str = ""
 
     @property
     def configured(self) -> bool:
+        if self.key == "alipay":
+            if not self.client_id or not self.private_key_file or not self.public_key_file:
+                return False
+            try:
+                alipay_oauth.load_keys(self.private_key_file, self.public_key_file)
+                return True
+            except alipay_oauth.AlipayConfigError:
+                return False
         return bool(self.client_id and self.client_secret)
+
+    @property
+    def enabled(self) -> bool:
+        # Keep the configured entry pending until the application is approved.
+        return self.key != "alipay" or os.getenv("FZU_CHAT_ALIPAY_ENABLED", "false").lower() in {"1", "true", "yes"}
 
 
 class OAuthError(RuntimeError):
@@ -52,6 +68,7 @@ def provider_display_name(provider: str) -> str:
     labels = {
         "wechat": "微信",
         "qq": "QQ",
+        "alipay": "支付宝",
         "microsoft": "Microsoft",
         "apple": "Apple",
         "github": "GitHub",
@@ -97,6 +114,14 @@ def visible_provider_keys() -> list[str]:
 
 def get_provider_config(provider: str, default_redirect_uri: str) -> OAuthProviderConfig:
     provider = _normalise_provider(provider)
+    if provider == "alipay":
+        return OAuthProviderConfig(
+            key="alipay", label="支付宝",
+            client_id=_env_first("FZU_CHAT_ALIPAY_APP_ID"), client_secret="",
+            redirect_uri=_env_first("FZU_CHAT_ALIPAY_REDIRECT_URI") or default_redirect_uri,
+            private_key_file=_env_first("FZU_CHAT_ALIPAY_PRIVATE_KEY_FILE"),
+            public_key_file=_env_first("FZU_CHAT_ALIPAY_PUBLIC_KEY_FILE"),
+        )
     if provider == "wechat":
         return OAuthProviderConfig(
             key="wechat",
@@ -145,7 +170,7 @@ def list_provider_status(default_redirect_base: str) -> list[Dict[str, Any]]:
     for key in visible_provider_keys():
         redirect_uri = f"{default_redirect_base.rstrip('/')}/{key}/callback"
         config = get_provider_config(key, redirect_uri)
-        providers.append({"provider": key, "label": config.label, "configured": config.configured})
+        providers.append({"provider": key, "label": config.label, "configured": config.configured, "enabled": config.enabled})
     return providers
 
 
@@ -161,14 +186,12 @@ def create_oauth_state(provider: str, redirect_uri: str) -> str:
 def consume_oauth_state(token: str, expected_provider: str) -> Dict[str, Any]:
     token = (token or "").strip()
     expected_provider = _normalise_provider(expected_provider)
-    if not token:
+    if len(token) != 64 or any(char not in "0123456789abcdef" for char in token):
         raise OAuthError("登录状态已失效，请重新发起登录。")
 
     key = f"oauth_state:{token}"
-    payload = redis_get_json(key)
-    if payload is not None:
-        redis_delete(key)
-    else:
+    payload = redis_pop_json(key)
+    if payload is None:
         now = time()
         with _memory_states_lock:
             expired = [state for state, (expires_at, _) in _memory_states.items() if expires_at <= now]
@@ -186,6 +209,11 @@ def consume_oauth_state(token: str, expected_provider: str) -> Dict[str, Any]:
 def build_authorization_url(config: OAuthProviderConfig, state: str) -> str:
     if not config.configured:
         raise OAuthConfigError(f"{config.label}登录尚未配置。")
+    if not config.enabled:
+        raise OAuthConfigError(f"{config.label}登录待审核上线。")
+    if config.key == "alipay":
+        query = urlencode({"app_id": config.client_id, "scope": "auth_user", "redirect_uri": config.redirect_uri, "state": state})
+        return f"https://openauth.alipay.com/oauth2/publicAppAuthorize.htm?{query}"
     if config.key == "wechat":
         query = urlencode(
             {
@@ -327,6 +355,8 @@ def _safe_profile(provider: str, subject: str, profile: Dict[str, Any]) -> Dict[
         avatar = str(profile.get("picture") or "").strip()
     elif provider == "github":
         avatar = str(profile.get("avatar_url") or "").strip()
+    elif provider == "alipay":
+        avatar = str(profile.get("avatar") or "").strip()
     return {
         "user_id": _visitor_user_id(provider, subject),
         "display_name": nickname[:40] or f"{label}访客",
@@ -376,6 +406,18 @@ def fetch_visitor_profile(
     callback_payload = callback_payload or {}
     if not code:
         raise OAuthError("缺少授权 code，请重新登录。")
+    if config.key == "alipay":
+        if not config.enabled:
+            raise OAuthConfigError("支付宝登录待审核上线。")
+        if callback_payload.get("app_id") and callback_payload["app_id"] != config.client_id:
+            raise OAuthError("支付宝应用标识不一致。")
+        try:
+            identity = alipay_oauth.fetch_identity(config.client_id, code, config.private_key_file, config.public_key_file, OAUTH_TIMEOUT_SECONDS)
+        except alipay_oauth.AlipayConfigError as exc:
+            raise OAuthConfigError(str(exc)) from exc
+        except alipay_oauth.AlipayError as exc:
+            raise OAuthError(str(exc)) from exc
+        return _safe_profile("alipay", identity["subject"], identity)
     if config.key == "wechat":
         token_response = requests.get(
             "https://api.weixin.qq.com/sns/oauth2/access_token",

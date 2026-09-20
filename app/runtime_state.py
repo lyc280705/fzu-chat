@@ -103,6 +103,22 @@ def redis_get_json(key: str) -> Dict[str, Any] | None:
         return None
 
 
+def redis_pop_json(key: str) -> Dict[str, Any] | None:
+    """Atomically consume a single-use value (Redis 6.2+)."""
+    client = get_redis_client()
+    if client is None:
+        return None
+    try:
+        raw = client.getdel(key)
+        data = json.loads(raw) if raw else None
+        return data if isinstance(data, dict) else None
+    except Exception as exc:
+        increment_counter("fzu_chat_redis_errors_total")
+        # OAuth keys contain state tokens. Never include the key in logs.
+        logger.warning("Redis JSON consume failed: %s", type(exc).__name__)
+        return None
+
+
 def redis_set_json(key: str, value: Dict[str, Any], ttl_seconds: int) -> bool:
     client = get_redis_client()
     if client is None:
@@ -112,7 +128,7 @@ def redis_set_json(key: str, value: Dict[str, Any], ttl_seconds: int) -> bool:
         return True
     except Exception as exc:
         increment_counter("fzu_chat_redis_errors_total")
-        logger.warning("Redis JSON set failed for %s: %s", key, type(exc).__name__)
+        logger.warning("Redis JSON set failed for %s: %s", "oauth_state:[redacted]" if key.startswith("oauth_state:") else key, type(exc).__name__)
         return False
 
 
