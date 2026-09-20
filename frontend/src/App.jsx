@@ -1224,7 +1224,7 @@ function LoginPage({ onLogin }) {
   }
 
   if (passkeyOpen) return <main className="alipay-handoff-page"><PasskeyLogin acceptedLegal={acceptedLegal} onBack={() => setPasskeyOpen(false)} /></main>
-  if (alipayFlow) return <main className="alipay-handoff-page"><section className="alipay-handoff alipay-handoff--page"><h1>在支付宝内继续使用</h1><p>授权完成后会直接在支付宝内打开聊天，无需返回 Edge 或其他浏览器。</p><a className="alipay-handoff__primary" href={alipayFlow}>打开支付宝</a><p className="alipay-handoff__hint">原浏览器不会自动登录。你也可以返回选择 Passkey，在当前浏览器直接使用。</p><button type="button" className="alipay-handoff__cancel" onClick={() => setAlipayFlow(null)}>返回其他登录方式</button></section></main>
+  if (alipayFlow) return <main className="alipay-handoff-page"><section className="alipay-handoff alipay-handoff--page"><h1>在支付宝内继续使用</h1><p>授权完成后会直接在支付宝内打开聊天，无需返回浏览器。</p><a className="alipay-handoff__primary" href={alipayFlow}>打开支付宝</a><p className="alipay-handoff__hint">原浏览器不会自动登录。你也可以返回选择其他登录方式，在当前浏览器直接使用。</p><button type="button" className="alipay-handoff__cancel" onClick={() => setAlipayFlow(null)}>返回其他登录方式</button></section></main>
 
   return (
     <main className="login-page login-page--auth">

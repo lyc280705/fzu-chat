@@ -3,6 +3,15 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.29] - 2026-09-20
+
+- Add early, passive Alipay bridge diagnostics with timed observations at 1/3/8/15 seconds, readiness events, sanitized CSP categories and fixed authorization-stage markers. Display a copyable report on failure; no automatic telemetry, storage, credential contents or raw URLs.
+- Preserve the authorization flow and security policy while gathering device evidence. A timeout remains a symptom, not a confirmed platform or CSP diagnosis.
+- 支付宝登录失败时显示临时诊断面板，支持复制或截图；只记录当前页面的接口状态、事件和数字错误码，不采集授权码、Cookie、账号或密钥。
+- 同步此前确认的文案：“无需返回浏览器”“返回选择其他登录方式”。仅做前端构建、静态检查与五项诊断定向检查，不运行完整测试套件；根因仍需手机诊断结果确认。
+
+---
+
 ## [v7.28] - 2026-09-20
 
 - Use Alipay's native H5 authorization sheet at the registered callback page to avoid the web-authorization round trip; keep browser-bound, single-use state and signed provider verification. Show a manual web fallback only on native failure, without automatic redirect loops.

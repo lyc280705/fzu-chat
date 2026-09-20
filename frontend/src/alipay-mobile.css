@@ -25,4 +25,8 @@
 .alipay-handoff__return-link { width: 100%; min-height: 100px; margin-top: 8px; padding: 10px; background: #0e1620; border: 1px solid #ffffff24; border-radius: 10px; color: #d7e9e0; font-size: 12px; overflow-wrap: anywhere; resize: vertical; }
 @keyframes alipay-spin { to { transform: rotate(360deg); } }
 .alipay-handoff p.alipay-handoff__footer { margin-top: 28px; font-size: 12px; color: #96a5b4; }
+.alipay-diagnostics { margin-top: 24px; padding-top: 20px; border-top: 1px solid #ffffff16; min-width: 0; }
+.alipay-diagnostics h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.alipay-diagnostics p { font-size: 12px; }
+.alipay-diagnostics__report { display: block; width: 100%; height: 250px; margin: 12px 0; padding: 12px; box-sizing: border-box; border: 1px solid #ffffff24; border-radius: 10px; background: #0e1620; color: #c5d0db; font: 12px/1.8 ui-monospace, monospace; resize: vertical; overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) { .alipay-handoff * { transition: none !important; animation: none !important; } }
