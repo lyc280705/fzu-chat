@@ -1,0 +1,15 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>支付宝登录 · 福大灵犀</title>
+<style>body{margin:0;background:#0c1119;color:#e4e9ee;font:14px/1.8 system-ui,sans-serif;min-height:100dvh;display:grid;place-items:center}
+main{box-sizing:border-box;width:min(430px,calc(100% - 32px));margin:24px 0;padding:28px;border:1px solid #ffffff16;border-radius:22px;background:#151d27}
+.brand{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:600}.brand img{width:32px;height:32px}h1{font-size:22px;margin:24px 0 10px}p{color:#b7c2ce}
+a{display:block;text-align:center;text-decoration:none;border-radius:10px;margin-top:16px;padding:11px;background:#d7e9e0;color:#193128}.back{background:transparent;color:#aab8c5}small{color:#96a5b4}#entry-error{color:#f2a9a9}[hidden]{display:none!important}</style>
+<script src="/ui/alipay-inapp-web-v1.js" defer></script></head><body><main>
+<div class="brand"><img src="/assets/FZU.png" alt=""><span>福大灵犀</span></div>
+<h1 id="entry-title">正在前往支付宝授权</h1>
+<p>请在支付宝官方页面确认授权。完成后会直接进入聊天，无需返回浏览器。</p>
+<p id="entry-error" role="alert" hidden></p>
+<a id="entry-continue" href="/api/auth/oauth/alipay/start?accepted_legal=true" hidden>继续支付宝授权</a>
+<a class="back" href="/">返回登录页</a>
+<noscript><p>请启用 JavaScript 后重新发起登录。</p></noscript>
+<p><small>仅用于账号登录，不涉及付款。</small></p></main></body></html>

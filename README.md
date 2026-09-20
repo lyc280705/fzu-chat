@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v7.29](CHANGELOG.md)
+Current tagged release: [v7.30](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -187,15 +187,15 @@ to its respective owner.
 #### Mobile browsers outside Alipay
 
 Mobile Safari/Chrome/Edge cannot directly display Alipay's H5 authorization page.
-The current login button opens the registered callback page **inside Alipay**,
-then requests the native `getAuthCode` authorization sheet in that same page.
-This avoids the extra round trip to the web authorization page and back. A
-same-origin JSON exchange validates a separate cookie-bound, single-use state
-before creating the session. Normal OAuth state/cookie checks remain unchanged.
+The current login button opens a small same-origin entry **inside Alipay**,
+then starts Alipay's official web authorization. The entry checks the existing
+legal-consent marker before navigation. The server binds a one-time OAuth state
+to an HttpOnly cookie in that Alipay client and verifies the provider's signed
+response before creating a session. No native JavaScript bridge is required.
 On success the user continues chatting **inside Alipay**. The original Edge/Safari
 tab is not logged in; no browser-return button, polling or clipboard is required.
-If the native API is unavailable or denied, show an explicit web-authorization
-fallback (which may trigger another external-site warning), never an automatic loop.
+Failures return to the regular login page with a normal error message, never a
+debug panel or an automatic retry loop.
 
 An explicit “打开支付宝” link remains if automatic launching is blocked. Users
 who prefer their normal browser can choose Passkey or another supported login.
@@ -203,12 +203,11 @@ Alipay may still display its own external-site warnings; our code cannot suppres
 them. App launch, cookie persistence and authorization must still be accepted on
 real devices, separately from automated signed-callback tests.
 
-Pre-v7.27 cross-browser handoff endpoints remain only for old clients/links. They
-retain their existing state, expiry, owner-cookie AND one-time-receipt checks;
-the new login UI does not prepare or claim those handoffs. Neither the native
-exchange nor normal OAuth puts a site session in a URL. The native API wrapper's
-`scopeNicks` / `authcode` mapping follows Alipay's published `alipayjsapi/3.1.1`
-source; no external script or weaker CSP is needed. Real-device acceptance remains required.
+Experimental native/handoff endpoints, return-browser pages and temporary
+diagnostics have been removed. No session credential is placed in a URL, and the
+strict same-origin script policy is retained. The v7.30 image includes the tested
+server hotfix; retire `docker-compose.hotfix.yml` when upgrading from v7.29, while
+keeping the production, resource-limit and Alipay-secret Compose files.
 
 ### Passkey login
 

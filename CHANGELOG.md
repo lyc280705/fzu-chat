@@ -3,6 +3,15 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.30] - 2026-09-20
+
+- Promote the verified server-only Alipay web-OAuth entry into the release image. Authorization and chat stay in the same Alipay client; preserve consent checks, single-use state, HttpOnly cookie binding and RSA2 response verification.
+- Remove temporary diagnostic assets/panels, native-bridge experiments, cross-browser handoff/return UI and their unused APIs. Keep normal login error messages, strict CSP and the active login regression tests.
+- 保留真机已登录成功的“支付宝内网页授权 → 进入聊天”流程；移除旧测试面板、原生接口等待和返回浏览器中转试验，不再需要服务器临时文件挂载。
+- 登录密钥、账号、聊天数据和 Redis 会话不变；旧热修复文件退出运行配置后归档备份。支付宝自身的外链提示仍由客户端控制。
+
+---
+
 ## [v7.29] - 2026-09-20
 
 - Add early, passive Alipay bridge diagnostics with timed observations at 1/3/8/15 seconds, readiness events, sanitized CSP categories and fixed authorization-stage markers. Display a copyable report on failure; no automatic telemetry, storage, credential contents or raw URLs.

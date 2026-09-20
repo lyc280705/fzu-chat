@@ -34,7 +34,7 @@ import { ChatComposer } from './components/ChatComposer.jsx'
 import { AccountMenu } from './components/AccountMenu.jsx'
 import { EmptyChatState } from './components/EmptyChatState.jsx'
 import { AnimatedCollapse } from './components/AnimatedCollapse.jsx'
-import { alipayInAppUrl, mobileOutsideAlipay, rememberMobileFlow } from './lib/alipayMobile.js'
+import { alipayInAppUrl, mobileOutsideAlipay } from './lib/alipayMobile.js'
 import { PasskeyLogin, PasskeySettings } from './components/PasskeyPanel.jsx'
 import { ConfirmDialog, IconButton } from './components/ui.jsx'
 import { useEscapeKey } from './hooks/useEscapeKey.js'
@@ -1143,7 +1143,6 @@ function LoginPage({ onLogin }) {
   }, [])
 
   useEffect(() => {
-    rememberMobileFlow(null)
     const callbackError = oauthCallbackErrorFromUrl()
     if (callbackError) setError(callbackError)
   }, [])
@@ -1209,7 +1208,7 @@ function LoginPage({ onLogin }) {
     setError('')
     setOauthLoadingProvider(provider)
     if (provider === 'alipay' && mobileOutsideAlipay(navigator.userAgent, navigator.maxTouchPoints)) {
-      // Authorize in Alipay's native sheet without leaving the site again.
+      // Web OAuth and the resulting chat session both stay inside Alipay.
       const launch = alipayInAppUrl(window.location.origin)
       setAlipayFlow(launch)
       setOauthLoadingProvider('')

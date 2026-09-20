@@ -107,6 +107,29 @@ class AlipayOAuthTests(unittest.TestCase):
     def test_legal_consent_required(self):
         self.assertEqual(self.client.get("/api/auth/oauth/alipay/start").status_code, 400)
 
+    def test_entry_uses_in_app_web_oauth_without_debug_panels(self):
+        for query in ("", "?from=container"):
+            response = self.client.get("/api/auth/oauth/alipay/callback" + query)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("alipay-inapp-web-v1.js", response.text)
+            for removed in ("AlipayJSBridge", "diagnostics", "诊断", "/ui/index-"):
+                self.assertNotIn(removed, response.text)
+            policy = response.headers["content-security-policy"]
+            self.assertIn("script-src 'self'", policy)
+            self.assertNotIn("alipayobjects", policy)
+
+    def test_oauth_fields_even_empty_keep_callback_security_checks(self):
+        with patch("app.alipay_oauth.requests.post") as post:
+            for key in ("auth_code", "code", "state", "error", "error_description"):
+                response = self.client.get("/api/auth/oauth/alipay/callback", params={key: ""}, follow_redirects=False)
+                self.assertIn("oauth_error=failed", response.headers["location"])
+                self.assertNotIn("diagnostics", response.text)
+            post.assert_not_called()
+
+    def test_retired_experimental_apis_are_not_exposed(self):
+        routes = {getattr(route, "path", "") for route in app.routes}
+        self.assertFalse(any(path.startswith(("/api/auth/oauth/alipay/native/", "/api/auth/oauth/alipay/mobile/")) for path in routes))
+
     def test_browser_binding_rejects_different_browser(self):
         _, state = self.start()
         with TestClient(app, base_url="https://testserver") as other, patch("app.alipay_oauth.requests.post") as post:

@@ -1,5 +1,5 @@
 .alipay-handoff { padding: 20px; border: 1px solid #ffffff16; border-radius: 16px; background: #151d27; color: #e4e9ee; text-align: left; }
-.alipay-handoff__heading, .alipay-handoff__brand { display: flex; align-items: center; gap: 10px; }
+.alipay-handoff__brand { display: flex; align-items: center; gap: 10px; }
 .alipay-handoff p { font-size: 14px; line-height: 1.8; margin: 12px 0; color: #b7c2ce; }
 .alipay-handoff p.alipay-handoff__hint { font-size: 12px; color: #98a7b5; }
 .alipay-handoff__primary, .alipay-handoff__secondary, .alipay-handoff__cancel { width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 14px; border-radius: 10px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background 150ms ease; }
@@ -13,20 +13,9 @@
 .alipay-handoff__success, .alipay-handoff__footer { display: flex; gap: 6px; align-items: center; }
 .alipay-handoff p.alipay-handoff__success { color: #b6d8c7; }
 .alipay-handoff-page { min-height: 100dvh; display: grid; place-items: center; padding: max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom)); background: radial-gradient(ellipse at top left, #1d2832, #0c1119 70%); }
-.alipay-handoff-owner { width: 100%; max-width: 430px; }
 .alipay-handoff--page { width: 100%; max-width: 430px; padding: 28px; border-radius: 22px; box-shadow: 0 20px 60px #0002; }
 .alipay-handoff__brand { font-weight: 600; font-size: 16px; margin-bottom: 30px; }
 .alipay-handoff__brand img { width: 32px; height: 32px; }
 .alipay-handoff h1 { font-size: 22px; line-height: 1.5; margin: 12px 0; }
-.alipay-handoff__symbol { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: #91b8aa1a; color: #b6d8c7; }
-.alipay-handoff__spinner { animation: alipay-spin 1.1s linear infinite; }
-.alipay-return-actions .alipay-handoff__secondary { margin-top: 10px; }
-.alipay-handoff__link-label { display: block; font-size: 12px; line-height: 1.6; color: #aab8c5; }
-.alipay-handoff__return-link { width: 100%; min-height: 100px; margin-top: 8px; padding: 10px; background: #0e1620; border: 1px solid #ffffff24; border-radius: 10px; color: #d7e9e0; font-size: 12px; overflow-wrap: anywhere; resize: vertical; }
-@keyframes alipay-spin { to { transform: rotate(360deg); } }
 .alipay-handoff p.alipay-handoff__footer { margin-top: 28px; font-size: 12px; color: #96a5b4; }
-.alipay-diagnostics { margin-top: 24px; padding-top: 20px; border-top: 1px solid #ffffff16; min-width: 0; }
-.alipay-diagnostics h2 { margin: 0; font-size: 15px; font-weight: 600; }
-.alipay-diagnostics p { font-size: 12px; }
-.alipay-diagnostics__report { display: block; width: 100%; height: 250px; margin: 12px 0; padding: 12px; box-sizing: border-box; border: 1px solid #ffffff24; border-radius: 10px; background: #0e1620; color: #c5d0db; font: 12px/1.8 ui-monospace, monospace; resize: vertical; overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) { .alipay-handoff * { transition: none !important; animation: none !important; } }

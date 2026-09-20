@@ -174,11 +174,9 @@ def list_provider_status(default_redirect_base: str) -> list[Dict[str, Any]]:
     return providers
 
 
-def create_oauth_state(provider: str, redirect_uri: str, *, bridge_flow: str | None = None) -> str:
+def create_oauth_state(provider: str, redirect_uri: str) -> str:
     token = uuid4().hex + uuid4().hex
     payload = {"provider": _normalise_provider(provider), "redirect_uri": redirect_uri, "created_at": time()}
-    if bridge_flow:
-        payload["bridge_flow"] = bridge_flow
     if not redis_set_json(f"oauth_state:{token}", payload, OAUTH_STATE_TTL_SECONDS):
         with _memory_states_lock:
             _memory_states[token] = (time() + OAUTH_STATE_TTL_SECONDS, payload)

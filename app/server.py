@@ -69,7 +69,6 @@ from .graph import (
 from .jwch_client import JwchClient, JwchLoginError, JwchSessionError
 from .memory_store import user_memory_store
 from .oauth_logging import install_oauth_log_filter
-from . import alipay_mobile
 from . import passkeys
 from .passkey_routes import install_passkey_routes
 from .oauth import (
@@ -410,7 +409,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="FZU Chat API",
-    version="7.29.0",
+    version="7.30.0",
     lifespan=lifespan,
     docs_url="/docs" if PUBLIC_DOCS else None,
     redoc_url="/redoc" if PUBLIC_DOCS else None,
@@ -1706,175 +1705,6 @@ def oauth_providers(request: Request):
     return list_provider_status(_oauth_redirect_base(request))
 
 
-class AlipayMobilePrepare(BaseModel):
-    accepted_legal: bool = False
-    return_browser: str = Field(default="system", pattern=r"^(system|safari|chrome_ios|chrome_android|edge_android)$")
-
-
-class AlipayMobileBegin(BaseModel):
-    ticket: str = Field(pattern=r"^[a-f0-9]{64}$")
-
-
-class AlipayMobileFlow(BaseModel):
-    flow: str = Field(pattern=r"^[a-f0-9]{64}$")
-
-
-class AlipayMobileClaim(AlipayMobileFlow):
-    receipt: str = Field(pattern=r"^[a-f0-9]{64}$")
-
-
-class AlipayNativeComplete(BaseModel):
-    state: str = Field(pattern=r"^[a-f0-9]{64}$")
-    auth_code: str = Field(min_length=1, max_length=2048)
-
-
-ALIPAY_NATIVE_COOKIE = "fzu_alipay_native_state"
-ALIPAY_NATIVE_PATH = "/api/auth/oauth/alipay/native"
-
-
-@app.post(ALIPAY_NATIVE_PATH + "/prepare")
-def alipay_native_prepare(payload: AlipayMobilePrepare, request: Request):
-    _mobile_integrity(request)
-    if not payload.accepted_legal:
-        raise HTTPException(400, "请先阅读并同意用户协议与隐私政策。")
-    config = _mobile_config(request)
-    _enforce_rate_limit(_rate_limit_key("alipay-native", request), LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
-                        LOGIN_RATE_LIMIT_WINDOW_SECONDS, "登录尝试过于频繁，请稍后重试。")
-    state = create_oauth_state("alipay-native", config.redirect_uri)
-    response = JSONResponse({"app_id": config.client_id, "state": state})
-    response.set_cookie(ALIPAY_NATIVE_COOKIE, state, max_age=OAUTH_STATE_TTL_SECONDS,
-                        httponly=True, secure=_use_secure_cookie(request), samesite="strict", path=ALIPAY_NATIVE_PATH)
-    return response
-
-
-@app.post(ALIPAY_NATIVE_PATH + "/complete")
-def alipay_native_complete(payload: AlipayNativeComplete, request: Request):
-    _mobile_integrity(request)
-    config = _mobile_config(request)
-    _enforce_rate_limit(_rate_limit_key("alipay-native-complete", request), LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
-                        LOGIN_RATE_LIMIT_WINDOW_SECONDS, "登录尝试过于频繁，请稍后重试。")
-    cookie = request.cookies.get(ALIPAY_NATIVE_COOKIE, "")
-    if not cookie or not hmac.compare_digest(cookie.encode(), payload.state.encode()):
-        raise HTTPException(403, "本次授权与当前页面不匹配，请重新发起登录。")
-    try:
-        state = consume_oauth_state(payload.state, "alipay-native")
-        if state.get("redirect_uri") != config.redirect_uri:
-            raise OAuthError("授权配置已更新。")
-        profile = fetch_visitor_profile(config, payload.auth_code)
-        response = _visitor_session_response("alipay", request, profile, as_json=True)
-    except (OAuthError, requests.RequestException):
-        response = JSONResponse({"detail": "支付宝授权未完成或已过期，请重新尝试。"}, status_code=400)
-    response.delete_cookie(ALIPAY_NATIVE_COOKIE, path=ALIPAY_NATIVE_PATH, httponly=True,
-                           secure=_use_secure_cookie(request), samesite="strict")
-    return response
-
-
-@app.exception_handler(alipay_mobile.BridgeError)
-async def alipay_mobile_error_handler(request: Request, exc: alipay_mobile.BridgeError):
-    return JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
-
-
-def _mobile_integrity(request: Request) -> None:
-    # Browser POSTs require a same-origin Origin, JSON and a custom header.
-    # No CORS allowlist includes external origins. UA is never an auth factor.
-    if request.headers.get("x-fzu-alipay-mobile") != "1":
-        raise HTTPException(status_code=403, detail="请从本站登录页面继续。")
-    if request.method == "POST" and (not _is_same_origin_url(request.headers.get("origin", ""), request)
-                                     or request.headers.get("content-type", "").split(";")[0] != "application/json"):
-        raise HTTPException(status_code=403, detail="请求来源无效，请从本站页面重试。")
-
-
-def _mobile_config(request: Request):
-    config = get_provider_config("alipay", f"{_oauth_redirect_base(request)}/alipay/callback")
-    if "alipay" not in visible_provider_keys() or not config.enabled or not config.configured:
-        raise HTTPException(status_code=503, detail="支付宝登录暂不可用。")
-    return config
-
-
-def _mobile_snapshot(record):
-    result = {key: record[key] for key in ("flow", "status", "expires_at")}
-    if record["status"] in {"waiting", "authorizing"}:
-        if record.get("direct_state"):
-            config = get_provider_config("alipay", record["redirect_uri"])
-            landing = build_authorization_url(config, record["direct_state"])
-        else:
-            # Let already-issued v7.25 tasks finish within their five-minute TTL.
-            callback = urlparse(record["redirect_uri"])
-            landing = f"{callback.scheme}://{callback.netloc}/?alipay_mobile=authorize#ticket={record['ticket']}"
-        result["launch_url"] = "alipays://platformapi/startapp?" + urlencode({"appId": "20000067", "url": landing})
-    return result
-
-
-@app.post("/api/auth/oauth/alipay/mobile/prepare")
-def alipay_mobile_prepare(payload: AlipayMobilePrepare, request: Request):
-    _mobile_integrity(request)
-    if not payload.accepted_legal:
-        raise HTTPException(status_code=400, detail="请先阅读并同意用户协议与隐私政策。")
-    config = _mobile_config(request)
-    _enforce_rate_limit(_rate_limit_key("alipay-mobile", request), LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
-                        LOGIN_RATE_LIMIT_WINDOW_SECONDS, "登录尝试过于频繁，请稍后重试。")
-    old_owner = request.cookies.get(alipay_mobile.OWNER_COOKIE, "")
-    if old_owner:
-        try:
-            alipay_mobile.cancel(old_owner, alipay_mobile.digest(old_owner))
-        except alipay_mobile.BridgeError as exc:
-            if exc.status_code not in {403, 410}:
-                raise
-    owner, record = alipay_mobile.prepare(config.redirect_uri, payload.return_browser, direct=True)
-    response = JSONResponse(_mobile_snapshot(record))
-    response.set_cookie(alipay_mobile.OWNER_COOKIE, owner, max_age=alipay_mobile.TTL, httponly=True,
-                        secure=_use_secure_cookie(request), samesite="strict", path=alipay_mobile.COOKIE_PATH)
-    return response
-
-
-@app.post("/api/auth/oauth/alipay/mobile/begin")
-def alipay_mobile_begin(payload: AlipayMobileBegin, request: Request):
-    _mobile_integrity(request)
-    config = _mobile_config(request)
-    _enforce_rate_limit("alipay-mobile-begin:" + alipay_mobile.digest(payload.ticket), 5, alipay_mobile.TTL,
-                        "授权尝试过于频繁，请返回原浏览器重新发起。")
-    record = alipay_mobile.check_launch(payload.ticket)
-    if record["redirect_uri"] != config.redirect_uri:
-        raise alipay_mobile.BridgeError()
-    state = create_oauth_state("alipay", config.redirect_uri, bridge_flow=record["flow"])
-    url = build_authorization_url(config, state)
-    alipay_mobile.authorize(record["flow"], state)
-    response = JSONResponse({"authorization_url": url})
-    response.set_cookie(ALIPAY_STATE_COOKIE, state, max_age=alipay_mobile.TTL, httponly=True,
-                        secure=_use_secure_cookie(request), samesite="lax", path=ALIPAY_COOKIE_PATH)
-    return response
-
-
-@app.get("/api/auth/oauth/alipay/mobile/status")
-def alipay_mobile_status(request: Request, flow: str):
-    _mobile_integrity(request)
-    return _mobile_snapshot(alipay_mobile.status(request.cookies.get(alipay_mobile.OWNER_COOKIE, ""), flow))
-
-
-def _clear_mobile_cookie(response, request):
-    response.delete_cookie(alipay_mobile.OWNER_COOKIE, httponly=True, secure=_use_secure_cookie(request),
-                           samesite="strict", path=alipay_mobile.COOKIE_PATH)
-
-
-@app.post("/api/auth/oauth/alipay/mobile/claim")
-def alipay_mobile_claim(payload: AlipayMobileClaim, request: Request):
-    _mobile_integrity(request)
-    _mobile_config(request)
-    profile = alipay_mobile.claim(request.cookies.get(alipay_mobile.OWNER_COOKIE, ""), payload.flow, payload.receipt)
-    response = _visitor_session_response("alipay", request, profile, as_json=True)
-    _clear_mobile_cookie(response, request)
-    return response
-
-
-@app.post("/api/auth/oauth/alipay/mobile/cancel")
-def alipay_mobile_cancel(payload: AlipayMobileFlow, request: Request):
-    _mobile_integrity(request)
-    alipay_mobile.cancel(request.cookies.get(alipay_mobile.OWNER_COOKIE, ""), payload.flow)
-    response = JSONResponse({"ok": True})
-    _clear_mobile_cookie(response, request)
-    return response
-
-
 @app.get("/api/auth/oauth/{provider}/start")
 def oauth_start(provider: OAuthProviderName, request: Request, accepted_legal: bool = False):
     if provider not in visible_provider_keys():
@@ -1922,11 +1752,7 @@ def _finish_oauth_callback(provider: OAuthProviderName, request: Request, payloa
     if provider == "alipay":
         state = str(payload.get("state") or "")
         cookie = request.cookies.get(ALIPAY_STATE_COOKIE, "")
-        if state.startswith(alipay_mobile.DIRECT_STATE_PREFIX):
-            # This namespace cannot overlap normal 64-hex OAuth states. It is
-            # verified/consumed from the encrypted handoff store, never by UA.
-            response = _complete_oauth_callback(provider, request, payload, mobile_direct=True)
-        elif not state or not cookie or not hmac.compare_digest(state.encode(), cookie.encode()):
+        if not state or not cookie or not hmac.compare_digest(state.encode(), cookie.encode()):
             response = _oauth_callback_error_redirect(provider, "failed")
         else:
             response = _complete_oauth_callback(provider, request, payload)
@@ -1939,27 +1765,19 @@ def _finish_oauth_callback(provider: OAuthProviderName, request: Request, payloa
     return response
 
 
-def _complete_oauth_callback(provider: OAuthProviderName, request: Request, payload: Dict[str, Any], *, mobile_direct=False) -> RedirectResponse:
+def _complete_oauth_callback(provider: OAuthProviderName, request: Request, payload: Dict[str, Any]) -> RedirectResponse:
     error = str(payload.get("error") or "").strip()
     code = str(payload.get("auth_code" if provider == "alipay" else "code") or "").strip()
     state = str(payload.get("state") or "").strip()
-    state_payload = {}
 
     def failed(reason):
-        if state_payload.get("bridge_flow"):
-            try:
-                alipay_mobile.finish(state_payload["bridge_flow"], state, error=reason)
-            except alipay_mobile.BridgeError:
-                pass  # Cancelled/expired tasks must never be resurrected.
-        if mobile_direct or state_payload.get("bridge_flow"):
-            return RedirectResponse(f"/?alipay_mobile=result&status={reason}", status_code=302)
         return _oauth_callback_error_redirect(provider, reason)
+
     if error and provider != "alipay":
         logger.warning("OAuth callback rejected by %s: %s", provider, error)
         return _oauth_callback_error_redirect(provider, "cancelled")
     try:
-        state_payload = (alipay_mobile.consume_direct_state(state) if mobile_direct
-                         else consume_oauth_state(state, provider))
+        state_payload = consume_oauth_state(state, provider)
         if error:
             return failed("cancelled")
         config = get_provider_config(provider, str(state_payload.get("redirect_uri") or ""))
@@ -1967,8 +1785,6 @@ def _complete_oauth_callback(provider: OAuthProviderName, request: Request, payl
     except OAuthConfigError as exc:
         logger.warning("OAuth callback config failed for %s: %s", provider, exc)
         return failed("unavailable")
-    except alipay_mobile.BridgeError:
-        return failed("failed")
     except OAuthError as exc:
         logger.warning("OAuth callback failed for %s: %s", provider, exc)
         return failed("failed")
@@ -1976,14 +1792,6 @@ def _complete_oauth_callback(provider: OAuthProviderName, request: Request, payl
         logger.warning("OAuth provider request failed for %s: %s", provider, type(exc).__name__)
         return failed("unavailable")
 
-    if state_payload.get("bridge_flow"):
-        try:
-            completion = alipay_mobile.finish(state_payload["bridge_flow"], state, profile=profile)
-        except alipay_mobile.BridgeError:
-            return failed("failed")
-        # The receipt never appears in polling responses, query strings or logs.
-        # A forwarded launch link alone cannot log its owner into the victim's account.
-        return RedirectResponse("/?alipay_mobile=complete#" + urlencode(completion), status_code=302)
     return _visitor_session_response(provider, request, profile)
 
 
@@ -2035,6 +1843,14 @@ def _resolve_oauth_callback_provider(provider_alias: str) -> OAuthProviderName:
     return provider
 
 
+def _alipay_inapp_web_entry() -> FileResponse:
+    # Preserve the successful in-Alipay web OAuth flow; no native bridge required.
+    return FileResponse(
+        PROJECT_ROOT / "app" / "templates" / "alipay-inapp.html",
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
+
+
 @app.get("/api/auth/oauth/{provider}/callback")
 def oauth_callback(
     provider: OAuthProviderName,
@@ -2045,11 +1861,11 @@ def oauth_callback(
     error_description: str | None = None,
 ):
     if provider == "alipay":
-        # Native H5 authorization must run at the exact registered callback URL.
-        # Empty navigation serves the client; OAuth responses still use the
-        # original cookie-bound, single-use callback checks below.
-        if not request.query_params:
-            return FileResponse(FRONTEND_DIST / "index.html")
+        # Keep existing launch links working; container metadata is not an OAuth
+        # response. Any authorization field, even empty, retains strict checks.
+        oauth_fields = {"auth_code", "code", "state", "error", "error_description"}
+        if not oauth_fields.intersection(request.query_params):
+            return _alipay_inapp_web_entry()
         return _finish_oauth_callback(provider, request, dict(request.query_params))
     return _finish_oauth_callback(provider, request, _oauth_callback_payload(code, state, error, error_description))
 
