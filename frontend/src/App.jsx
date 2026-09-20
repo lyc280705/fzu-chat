@@ -33,6 +33,8 @@ import { ChatComposer } from './components/ChatComposer.jsx'
 import { AccountMenu } from './components/AccountMenu.jsx'
 import { EmptyChatState } from './components/EmptyChatState.jsx'
 import { AnimatedCollapse } from './components/AnimatedCollapse.jsx'
+import { AlipayMobileLogin } from './components/AlipayMobileLogin.jsx'
+import { mobileOutsideAlipay, mobileRequest, rememberMobileFlow, savedMobileFlow } from './lib/alipayMobile.js'
 import { ConfirmDialog, IconButton } from './components/ui.jsx'
 import { useEscapeKey } from './hooks/useEscapeKey.js'
 import { readableToolQuery } from './lib/toolQuery.js'
@@ -145,6 +147,7 @@ const DEFAULT_OAUTH_PROVIDERS = Object.entries(OAUTH_PROVIDER_LABELS).map(([prov
 const DEFAULT_OAUTH_PROVIDER_MAP = new Map(DEFAULT_OAUTH_PROVIDERS.map((provider) => [provider.provider, provider]))
 
 const OAUTH_CALLBACK_ERROR_MESSAGES = {
+  mobile_required: () => '手机端请重新点击“支付宝”，然后使用“打开支付宝授权”按钮。',
   cancelled: (provider) => `${provider}授权已取消，未完成访客登录。可以重新点击登录或改用教务登录。`,
   failed: (provider) => `${provider}登录未完成或已过期，请重新发起访客登录。`,
   unavailable: (provider) => `${provider}登录服务暂时不可用，请稍后再试。`,
@@ -1091,6 +1094,7 @@ function LoginPage({ onLogin }) {
   const [loading, setLoading] = useState(false)
   const [oauthProviders, setOauthProviders] = useState([])
   const [oauthLoadingProvider, setOauthLoadingProvider] = useState('')
+  const [alipayFlow, setAlipayFlow] = useState(savedMobileFlow)
   const [error, setError] = useState('')
   const studentIdRef = useRef(null)
   const passwordRef = useRef(null)
@@ -1180,7 +1184,7 @@ function LoginPage({ onLogin }) {
     }
   }
 
-  const handleOauthLogin = (provider) => {
+  const handleOauthLogin = async (provider) => {
     if (loading || oauthLoadingProvider) return
     if (!acceptedLegal) {
       setError('请先阅读并勾选同意《用户协议》和《隐私政策》。')
@@ -1198,8 +1202,19 @@ function LoginPage({ onLogin }) {
     }
     setError('')
     setOauthLoadingProvider(provider)
+    if (provider === 'alipay' && mobileOutsideAlipay(navigator.userAgent, navigator.maxTouchPoints)) {
+      try {
+        const flow = await mobileRequest('prepare', { accepted_legal: true })
+        rememberMobileFlow(flow.flow)
+        setAlipayFlow(flow)
+      } catch (err) { setError(err.message) }
+      finally { setOauthLoadingProvider('') }
+      return
+    }
     window.location.assign(`/api/auth/oauth/${provider}/start?accepted_legal=true`)
   }
+
+  if (alipayFlow) return <main className="alipay-handoff-page"><div className="alipay-handoff-owner"><AlipayMobileLogin initial={alipayFlow} onCancel={() => setAlipayFlow(null)} /></div></main>
 
   return (
     <main className="login-page login-page--auth">

@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v7.23](CHANGELOG.md)
+Current tagged release: [v7.24](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -118,7 +118,7 @@ docker compose up -d --build
 # 3. Visit http://localhost:80
 ```
 
-Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, provision the session encryption key below, then run `FZU_CHAT_VERSION=v7.23 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build. Hosts using additional Compose files (resource limits or Alipay secrets) must include **all** override files in their deployment commands rather than using this single-file helper.
+Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, provision the session encryption key below, then run `FZU_CHAT_VERSION=v7.24 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build. Hosts using additional Compose files (resource limits or Alipay secrets) must include **all** override files in their deployment commands rather than using this single-file helper.
 
 Frontend builds use `npm ci` to install the committed lockfile and run `npm run audit:security` before producing the Docker image. Known npm advisories at low severity or above block the build; resolve them by updating compatible dependencies rather than disabling the check. This check covers npm dependencies, not a full Python or operating-system security audit.
 
@@ -182,6 +182,37 @@ retains request paths/status/timing without logging authorization codes, state o
 referrer URLs. Existing historical logs are not altered. Verify `nginx -t` before
 reloading. The Alipay glyph uses Simple Icons (CC0); the Alipay trademark belongs
 to its respective owner.
+
+#### Mobile browsers outside Alipay
+
+Mobile Safari/Chrome cannot directly display Alipay's H5 authorization page. The
+mobile login button now prepares a five-minute handoff and provides an explicit
+user-gesture `alipays://platformapi/startapp?appId=20000067&url=...` link. The
+destination is our own landing page; its launch ticket is fragment-only, removed
+from history on load, and is not a site login token. Existing desktop and
+Alipay-internal browser login flows remain direct. Mobile users should:
+
+1. Note the six-digit confirmation code and tap “打开支付宝授权”.
+2. Enter that code in Alipay, then grant the requested login authorization.
+3. Manually return to the original browser and confirm the displayed account.
+
+The original browser keeps a separate HttpOnly/Secure/SameSite=Strict owner
+cookie. Alipay creates its own browser-bound OAuth state cookie; callback
+verification is not weakened. The callback publishes only an encrypted minimal
+profile into Redis, never creates a site session in Alipay, and never exposes a
+session token in a URL. Only an authenticated owner claim with matching task ID,
+same-origin JSON POST and custom header can create the final site session.
+Redis compare-and-set transitions prevent duplicate claims and late callbacks
+from resurrecting cancelled tasks; no polling or retries extend expiry. If
+production Redis is unavailable, handoffs fail closed instead of falling back
+to process-local state. Confirmation-code attempts are rate-limited per ticket.
+
+Only the non-secret task ID is retained in the originating tab's sessionStorage
+for reload recovery. Polling pauses while the page is hidden and resumes on
+focus, pageshow and visibility changes. Users can cancel or choose another login
+method when Alipay is missing or app launching is blocked. Automatic return to
+Safari/Chrome is not promised; iOS and Android device authorization must be
+checked separately from the automated two-client callback tests.
 
 ### Authentication
 - `POST /api/auth/login` – Login with student ID + password
