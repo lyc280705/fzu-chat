@@ -3,6 +3,15 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.22] - 2026-09-20
+
+- Update vulnerable frontend build dependencies to patched versions, including Vite 7.3.6, esbuild 0.28.2, PostCSS 8.5.28, js-yaml 4.3.2, and their affected transitive dependencies.
+- Use `npm ci` and a full npm audit gate for Docker builds; no forced major upgrades or advisory dismissals.
+- 修复前端开发、构建依赖中的已知安全漏洞，保留现有框架主版本与业务功能。
+- Docker 按锁文件安装，并在构建时执行 npm 安全检查；不忽略告警或通过强制大版本升级掩盖问题。
+
+---
+
 ## [v7.21] - 2026-09-20
 
 - Synchronize education connection state across devices with revision-guarded updates and visible mobile reconnect notices.

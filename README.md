@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v7.21](CHANGELOG.md)
+Current tagged release: [v7.22](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -97,7 +97,7 @@ export FZU_CHAT_GITHUB_CLIENT_SECRET=...
 uvicorn app.server:app --host 0.0.0.0 --port 8000
 
 # 4. Start frontend dev server
-cd frontend && npm install && npm run dev
+cd frontend && npm ci && npm run dev
 
 # 5. Open http://localhost:5173
 ```
@@ -118,7 +118,9 @@ docker compose up -d --build
 # 3. Visit http://localhost:80
 ```
 
-Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, provision the session encryption key below, then run `FZU_CHAT_VERSION=v7.21 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build.
+Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, provision the session encryption key below, then run `FZU_CHAT_VERSION=v7.22 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build.
+
+Frontend builds use `npm ci` to install the committed lockfile and run `npm run audit:security` before producing the Docker image. Known npm advisories at low severity or above block the build; resolve them by updating compatible dependencies rather than disabling the check. This check covers npm dependencies, not a full Python or operating-system security audit.
 
 Before starting either Docker Compose configuration, create the persistent session encryption key once:
 
