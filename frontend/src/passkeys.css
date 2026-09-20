@@ -1,0 +1,9 @@
+.passkey-create { margin-top: 12px; }
+.passkey-settings h3 { display: flex; align-items: center; gap: 8px; }
+.passkey-settings ul { list-style: none; padding: 0; margin: 16px 0; }
+.passkey-settings li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; border-bottom: 1px solid #ffffff12; }
+.passkey-settings small { display: block; margin-top: 6px; color: #98a7b5; font-size: 12px; }
+.passkey-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.passkey-settings .passkey-hint { color: #98a7b5; font-size: 12px; line-height: 1.7; margin-top: 14px; }
+.passkey-settings .passkey-error { color: #f2a9a9; }
+@media (max-width: 480px) { .passkey-settings li { align-items: flex-start; flex-wrap: wrap; } }

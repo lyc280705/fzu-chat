@@ -167,6 +167,20 @@ class AlipayOAuthTests(unittest.TestCase):
         for forbidden in ("private-access-token", "private-refresh-token", "not-retained", self.subject):
             self.assertNotIn(forbidden, serialized)
 
+    def test_alipay_webview_finishes_login_and_opens_chat_in_same_browser(self):
+        self.client.headers["User-Agent"] = "Mozilla/5.0 Android Mobile AlipayClient/10.6"
+        _, state = self.start()
+        self.assertFalse(state.startswith("am_"))
+        with patch("app.alipay_oauth.requests.post", side_effect=[
+            self.signed_response("alipay.system.oauth.token", {"access_token": "test-token", "open_id": self.subject}),
+            self.signed_response("alipay.user.info.share", {"code": "10000", "open_id": self.subject, "nick_name": "支付宝访客"}),
+        ]):
+            result = self.callback(state)
+        self.assertEqual(result.headers["location"], "/")
+        self.assertEqual(self.client.get("/api/auth/me").json()["user_id"], self.user_id)
+        with TestClient(app, base_url="https://testserver") as original_browser:
+            self.assertEqual(original_browser.get("/api/auth/me").status_code, 401)
+
     def test_identity_mismatch_rejected(self):
         _, state = self.start()
         with patch("app.alipay_oauth.requests.post", side_effect=[

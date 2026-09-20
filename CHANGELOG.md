@@ -3,6 +3,17 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.27] - 2026-09-20
+
+- Keep new mobile Alipay logins and chat in Alipay's own webview. Start and finish the cookie-bound OAuth flow there; remove the browser-return handoff from the login UI. Keep protected legacy endpoints for older clients.
+- Add independent, username-free visitor signup and discoverable login with WebAuthn passkeys; existing identities can enroll additional keys in account settings. Require user verification, exact RP/origin, single-use cookie-bound challenges and recent sessions for management.
+- Persist public-key credentials in a private SQLite store, support synced zero-counter passkeys, prevent cross-identity reassignment/removal, and revoke credentials with account deletion. No private key or biometric is stored by the service.
+- Add native-API/entry-UI tests and real ES256/CBOR verification regressions. Real Android/iOS app switching and OS passkey dialogs still require device acceptance.
+- 支付宝授权后直接在支付宝内使用，不再依赖返回 Edge。新增与第三方登录并列的“通行密钥 · Passkey”入口，无需先注册或绑定账号；首次创建生成独立访客身份，下次用同一密钥继续使用。
+- 更新隐私政策与用户协议中的通行密钥说明；账号信息可管理密钥，删除账号会删除本站公钥凭据。明确密钥备份、身份不自动合并及全部密钥丢失后的恢复限制。
+
+---
+
 ## [v7.26] - 2026-09-20
 
 - Launch the official Alipay authorization page directly, removing the pre-authorization site landing and its redundant external-site transition.

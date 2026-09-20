@@ -14,3 +14,4 @@ uvicorn
 beautifulsoup4
 redis
 cryptography
+webauthn==3.0.0

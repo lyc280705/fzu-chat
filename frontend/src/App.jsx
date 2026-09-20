@@ -10,6 +10,7 @@ import {
   Eye,
   EyeOff,
   Footprints,
+  Fingerprint,
   GraduationCap,
   LockKeyhole,
   MapPin,
@@ -33,8 +34,8 @@ import { ChatComposer } from './components/ChatComposer.jsx'
 import { AccountMenu } from './components/AccountMenu.jsx'
 import { EmptyChatState } from './components/EmptyChatState.jsx'
 import { AnimatedCollapse } from './components/AnimatedCollapse.jsx'
-import { AlipayMobileLogin } from './components/AlipayMobileLogin.jsx'
-import { mobileOutsideAlipay, mobileRequest, rememberMobileFlow, returnBrowser, savedMobileFlow } from './lib/alipayMobile.js'
+import { alipayInAppUrl, mobileOutsideAlipay, rememberMobileFlow } from './lib/alipayMobile.js'
+import { PasskeyLogin, PasskeySettings } from './components/PasskeyPanel.jsx'
 import { ConfirmDialog, IconButton } from './components/ui.jsx'
 import { useEscapeKey } from './hooks/useEscapeKey.js'
 import { readableToolQuery } from './lib/toolQuery.js'
@@ -183,6 +184,7 @@ const PRIVACY_POLICY_SECTIONS = [
     title: '二、我们处理的信息',
     items: [
       '账号与认证信息：学生登录所需的学号、学生类型和登录会话；第三方登录返回的昵称、头像及经哈希处理的平台用户标识。系统不保存第三方 access token。',
+      '通行密钥信息：选择 Passkey 时，我们保存随机身份标识、凭据标识、公钥、验证计数及创建与使用时间，用于验证登录；不收集或保存指纹、面容模板、设备解锁密码或通行密钥私钥。密钥同步由你选择的系统或密码管理器处理。',
       '教务认证信息：你主动提交的教务密码仅用于当次认证，不写入对话、长期记忆或浏览器长期存储；为维持教务连接，服务端可能在当前登录会话中暂存教务 Cookie。',
       '服务内容数据：你的提问、助手回复、会话标题、工具调用结果、消息反馈、所选模型及推理设置，以及你明确确认保存的长期偏好和记忆。',
       '位置与校园上下文：只有在你主动开启定位提醒并授权浏览器定位后，系统才处理用于附近地点推荐的坐标与路线偏好；坐标不写入会话和长期记忆。',
@@ -217,8 +219,9 @@ const PRIVACY_POLICY_SECTIONS = [
     title: '六、你的权利与账号删除',
     items: [
       '你可以查看账号数据统计、逐条删除会话、管理长期记忆、关闭定位提醒，或清空当前账号已保存的数据。',
+      '你可以在账号设置中添加、移除通行密钥。删除账号会同时删除本站保存的通行密钥验证凭据；设备或密码管理器中的条目需要你自行删除。',
       '你可以在本页面选择“删除账号及全部信息”。确认后，系统将删除该账号的会话、消息反馈、长期记忆、动态校园上下文和账号专属文件，撤销该账号在本服务中的全部登录会话，清除当前浏览器中的本服务偏好并退出登录。',
-      '删除不可撤销；之后再次使用同一身份登录将创建一个空白的本地服务账号。依法必须保留的信息、安全审计记录或尚未轮换的备份副本，可能在法定或必要期限内受限保存，并在期限届满后删除或匿名化。',
+      '删除不可撤销；第三方或教务身份之后重新登录会创建空白账号，已删除的 Passkey 身份不能再用原密钥登录。依法必须保留的信息、安全审计记录或尚未轮换的备份副本，可能在法定或必要期限内受限保存，并在期限届满后删除或匿名化。',
     ],
   },
   {
@@ -261,6 +264,7 @@ const USER_AGREEMENT_SECTIONS = [
       '你应确保所提交的身份信息真实、合法，并仅使用你本人有权使用的账号进行登录与查询。',
       '你应妥善保管教务账号及相关凭证，不得借用、出租、转让、出售或冒用他人身份使用本软件。',
       '使用第三方登录时，你同时受对应身份提供方的条款约束。发现账号被冒用或会话异常时，应及时退出、删除账号或联系服务管理员。',
+      '你也可以直接创建通行密钥（Passkey），无需提交用户名、邮箱或绑定第三方账号；系统会建立独立访客身份，不会自动合并其他登录方式的数据。请妥善保存、同步或备份通行密钥，全部丢失且没有其他可用登录方式时，本服务无法恢复该身份。',
     ],
   },
   {
@@ -292,7 +296,7 @@ const USER_AGREEMENT_SECTIONS = [
     items: [
       '个人信息处理适用《福大灵犀隐私政策》。你可以管理或清空已保存数据，也可以删除账号及全部信息。',
       '账号删除后，本服务会撤销该账号的全部站内登录会话并退出登录；该操作不等同于删除第三方身份提供方账号或撤销第三方平台授权。',
-      '删除账号不可撤销。再次使用同一身份登录时，系统将按新的空白本地服务账号处理。',
+      '删除账号不可撤销。教务或第三方身份再次登录时，系统将按新的空白本地服务账号处理；已删除身份的通行密钥将失效，不能用来恢复原身份或数据。',
     ],
   },
   {
@@ -333,7 +337,7 @@ const LEGAL_DOCUMENTS = {
     label: '隐私政策',
     title: '福大灵犀隐私政策',
     intro: '本政策用于说明本软件在账号登录、教务查询、问答会话、个性化记忆和本地设置等场景下的数据处理方式，以及你可行使的管理与删除权利。',
-    version: '2.1',
+    version: '2.2',
     effectiveDate: '2026-09-20',
     audience: '适用于所有访问、登录或使用本软件的用户',
     sections: PRIVACY_POLICY_SECTIONS,
@@ -343,8 +347,8 @@ const LEGAL_DOCUMENTS = {
     label: '用户协议',
     title: '福大灵犀用户协议',
     intro: '本协议用于说明你在登录和使用本软件时应遵守的规则，以及平台服务范围、责任边界和协议更新机制。',
-    version: '2.0',
-    effectiveDate: '2026-09-19',
+    version: '2.1',
+    effectiveDate: '2026-09-20',
     audience: '适用于所有登录并使用本软件功能的用户',
     sections: USER_AGREEMENT_SECTIONS,
   },
@@ -1094,7 +1098,8 @@ function LoginPage({ onLogin }) {
   const [loading, setLoading] = useState(false)
   const [oauthProviders, setOauthProviders] = useState([])
   const [oauthLoadingProvider, setOauthLoadingProvider] = useState('')
-  const [alipayFlow, setAlipayFlow] = useState(savedMobileFlow)
+  const [alipayFlow, setAlipayFlow] = useState(null)
+  const [passkeyOpen, setPasskeyOpen] = useState(false)
   const [error, setError] = useState('')
   const studentIdRef = useRef(null)
   const passwordRef = useRef(null)
@@ -1138,6 +1143,7 @@ function LoginPage({ onLogin }) {
   }, [])
 
   useEffect(() => {
+    rememberMobileFlow(null)
     const callbackError = oauthCallbackErrorFromUrl()
     if (callbackError) setError(callbackError)
   }, [])
@@ -1203,20 +1209,19 @@ function LoginPage({ onLogin }) {
     setError('')
     setOauthLoadingProvider(provider)
     if (provider === 'alipay' && mobileOutsideAlipay(navigator.userAgent, navigator.maxTouchPoints)) {
-      try {
-        const flow = await mobileRequest('prepare', { accepted_legal: true, return_browser: returnBrowser(navigator.userAgent, navigator.maxTouchPoints) })
-        rememberMobileFlow(flow.flow)
-        setAlipayFlow(flow)
-        // If the OS requires another gesture after prepare, keep the real launch link.
-        window.location.assign(flow.launch_url)
-      } catch (err) { setError(err.message) }
-      finally { setOauthLoadingProvider('') }
+      // Start OAuth inside Alipay so its own state cookie and final session stay
+      // in that browser. No cross-browser receipt/return path is involved.
+      const launch = alipayInAppUrl(window.location.origin)
+      setAlipayFlow(launch)
+      setOauthLoadingProvider('')
+      window.location.assign(launch)
       return
     }
     window.location.assign(`/api/auth/oauth/${provider}/start?accepted_legal=true`)
   }
 
-  if (alipayFlow) return <main className="alipay-handoff-page"><div className="alipay-handoff-owner"><AlipayMobileLogin initial={alipayFlow} onCancel={() => setAlipayFlow(null)} /></div></main>
+  if (passkeyOpen) return <main className="alipay-handoff-page"><PasskeyLogin acceptedLegal={acceptedLegal} onBack={() => setPasskeyOpen(false)} /></main>
+  if (alipayFlow) return <main className="alipay-handoff-page"><section className="alipay-handoff alipay-handoff--page"><h1>在支付宝内继续使用</h1><p>授权完成后会直接在支付宝内打开聊天，无需返回 Edge 或其他浏览器。</p><a className="alipay-handoff__primary" href={alipayFlow}>打开支付宝</a><p className="alipay-handoff__hint">原浏览器不会自动登录。你也可以返回选择 Passkey，在当前浏览器直接使用。</p><button type="button" className="alipay-handoff__cancel" onClick={() => setAlipayFlow(null)}>返回其他登录方式</button></section></main>
 
   return (
     <main className="login-page login-page--auth">
@@ -1320,8 +1325,6 @@ function LoginPage({ onLogin }) {
             {loading ? <><span className="send-spinner" aria-hidden="true" />正在登录…</> : <>登录并开始对话<ArrowRight size={17} aria-hidden="true" /></>}
           </button>
 
-          {availableOauthProviders.length > 0 && (
-            <>
               <div className="login-divider"><span>也可以通过以下方式登录</span></div>
               <div className="oauth-login-grid" aria-label="访客登录方式">
                 {availableOauthProviders.map((providerStatus) => {
@@ -1347,10 +1350,21 @@ function LoginPage({ onLogin }) {
                     </button>
                   )
                 })}
+                <button
+                  type="button"
+                  className="oauth-login-btn oauth-login-btn--passkey"
+                  aria-label="Passkey 通行密钥登录"
+                  disabled={loading || Boolean(oauthLoadingProvider)}
+                  onClick={() => {
+                    if (!acceptedLegal) { setError('请先阅读并同意用户协议与隐私政策。'); return }
+                    setPasskeyOpen(true)
+                  }}
+                >
+                  <span className="oauth-login-mark" aria-hidden="true"><Fingerprint size={20} /></span>
+                  <span>Passkey</span>
+                </button>
               </div>
-              <p className="oauth-login-note">第三方账号可使用公共问答与校园建议，<br />个人教务查询需使用本科生账号登录。</p>
-            </>
-          )}
+              <p className="oauth-login-note">第三方账号与 Passkey 身份可使用公共问答与校园建议，<br />个人教务查询需使用本科生账号登录。</p>
         </form>
         <p className="login-footer"><LockKeyhole size={13} aria-hidden="true" />教务密码仅用于当次认证，不会保存</p>
       </div>
@@ -2551,6 +2565,7 @@ function PrivacyPolicyView({
           ))}
         </div>
 
+        <PasskeySettings />
         <div className="privacy-card privacy-card--location">
           <div>
             <h3>定位与智能提醒</h3>
@@ -2753,7 +2768,7 @@ function App() {
   const userId = user?.user_id ?? ''
   const needsEduRelogin = user?.student_type === 'undergraduate' && !user?.edu_authenticated
   const isVisitorUser = user?.student_type === 'visitor'
-  const authProviderLabel = OAUTH_PROVIDER_LABELS[user?.auth_provider] || '访客'
+  const authProviderLabel = user?.auth_provider === 'passkey' ? 'Passkey' : OAUTH_PROVIDER_LABELS[user?.auth_provider] || '访客'
   const userModeText = isVisitorUser
     ? `${authProviderLabel}访客`
     : `${user?.student_type === 'undergraduate' ? '本科生' : '研究生'}${user?.edu_authenticated ? ' · 教务已连接' : needsEduRelogin ? ' · 教务待重新连接' : ''}`

@@ -70,6 +70,8 @@ from .jwch_client import JwchClient, JwchLoginError, JwchSessionError
 from .memory_store import user_memory_store
 from .oauth_logging import install_oauth_log_filter
 from . import alipay_mobile
+from . import passkeys
+from .passkey_routes import install_passkey_routes
 from .oauth import (
     OAUTH_STATE_TTL_SECONDS,
     OAuthConfigError,
@@ -408,7 +410,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="FZU Chat API",
-    version="7.22.0",
+    version="7.27.0",
     lifespan=lifespan,
     docs_url="/docs" if PUBLIC_DOCS else None,
     redoc_url="/redoc" if PUBLIC_DOCS else None,
@@ -2164,6 +2166,10 @@ def auth_me(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     }
 
 
+install_passkey_routes(app, require_auth, _request_origin, _use_secure_cookie,
+                       _set_auth_cookie, AUTH_COOKIE_NAME, _client_ip)
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -2213,7 +2219,7 @@ async def delete_account(
     user: AuthUser = Depends(require_auth),
 ) -> JSONResponse:
     """Delete all service-side user data, revoke every session, and sign out."""
-    revoked_session_count = invalidate_user_sessions(user.user_id)
+    revoked_session_count = passkeys.store.delete_user(user.user_id, invalidate_user_sessions)
     await stop_user_runtime_activity(user.user_id)
     cleared_conversations = chat_store.delete_all_conversations(user.user_id)
     cleared_memories = user_memory_store.purge_all_memories(user.user_id)

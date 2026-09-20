@@ -2,6 +2,14 @@ export const MOBILE_FLOW_STORAGE = 'fzu_alipay_mobile_flow'
 export const mobileOutsideAlipay = (ua, touchPoints = 0) => !/AlipayClient|AliApp\(AP\//i.test(ua)
   && (/Android|iPhone|iPad|iPod|Mobile/i.test(ua) || (/Macintosh/i.test(ua) && touchPoints > 1))
 
+// Establish the state cookie and the final session in the same Alipay webview.
+// No third-party authorization code or browser-return receipt crosses apps.
+export function alipayInAppUrl(origin) {
+  const base = new URL(origin)
+  const landing = `${base.origin}/api/auth/oauth/alipay/start?accepted_legal=true`
+  return `alipays://platformapi/startapp?${new URLSearchParams({ appId: '20000067', url: landing })}`
+}
+
 export function returnBrowser(ua, touchPoints = 0) {
   const ios = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && touchPoints > 1)
   if (ios && /CriOS\//i.test(ua)) return 'chrome_ios'
