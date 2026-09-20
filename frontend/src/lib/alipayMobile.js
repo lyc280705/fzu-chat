@@ -2,6 +2,27 @@ export const MOBILE_FLOW_STORAGE = 'fzu_alipay_mobile_flow'
 export const mobileOutsideAlipay = (ua, touchPoints = 0) => !/AlipayClient|AliApp\(AP\//i.test(ua)
   && (/Android|iPhone|iPad|iPod|Mobile/i.test(ua) || (/Macintosh/i.test(ua) && touchPoints > 1))
 
+export function returnBrowser(ua, touchPoints = 0) {
+  const ios = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && touchPoints > 1)
+  if (ios && /CriOS\//i.test(ua)) return 'chrome_ios'
+  if (ios && /Version\/.*Safari\//i.test(ua) && !/FxiOS|EdgiOS|OPiOS/i.test(ua)) return 'safari'
+  if (/Android.*Chrome\//i.test(ua) && !/EdgA|OPR|SamsungBrowser|HuaweiBrowser|; wv\)/i.test(ua)) return 'chrome_android'
+  return 'system'
+}
+
+// Fixed browser schemes only; never accept a return URL, package or scheme from input.
+// Safari's scheme and native app switching are best-effort, not an OS guarantee.
+export function browserReturnUrl(origin, entry) {
+  const base = new URL(origin)
+  if (base.protocol !== 'https:' || !/^[a-f0-9]{64}$/.test(entry.flow) || !/^[a-f0-9]{64}$/.test(entry.receipt)) return ''
+  const url = `${base.origin}/?alipay_mobile=complete#${new URLSearchParams({ flow: entry.flow, receipt: entry.receipt, browser: entry.browser })}`
+  if (entry.browser === 'safari') return url.replace(/^https:/, 'x-safari-https:')
+  if (entry.browser === 'chrome_ios') return url.replace(/^https:/, 'googlechromes:')
+  // HTTPS-only BROWSABLE intent; the target package is fixed.
+  if (entry.browser === 'chrome_android') return `intent:${url.slice(6)}#Intent;scheme=https;package=com.android.chrome;end`
+  return ''
+}
+
 export function savedMobileFlow() {
   try {
     const flow = window.sessionStorage.getItem(MOBILE_FLOW_STORAGE) || ''
@@ -44,7 +65,10 @@ export async function mobileRequest(action, body, signal) {
 export function readMobileEntry(location) {
   const params = new URLSearchParams(location.search)
   const mode = params.get('alipay_mobile')
-  if (!['authorize', 'result'].includes(mode)) return null
-  const ticket = new URLSearchParams(location.hash.slice(1)).get('ticket') || ''
-  return { mode, ticket: /^[a-f0-9]{64}$/.test(ticket) ? ticket : '', status: params.get('status') || '' }
+  if (!['authorize', 'result', 'complete'].includes(mode)) return null
+  const fragment = new URLSearchParams(location.hash.slice(1))
+  const secret = (name) => /^[a-f0-9]{64}$/.test(fragment.get(name) || '') ? fragment.get(name) : ''
+  const browser = fragment.get('browser') || 'system'
+  return { mode, ticket: secret('ticket'), flow: secret('flow'), receipt: secret('receipt'),
+    browser: ['safari', 'chrome_ios', 'chrome_android'].includes(browser) ? browser : 'system', status: params.get('status') || '' }
 }

@@ -34,7 +34,7 @@ import { AccountMenu } from './components/AccountMenu.jsx'
 import { EmptyChatState } from './components/EmptyChatState.jsx'
 import { AnimatedCollapse } from './components/AnimatedCollapse.jsx'
 import { AlipayMobileLogin } from './components/AlipayMobileLogin.jsx'
-import { mobileOutsideAlipay, mobileRequest, rememberMobileFlow, savedMobileFlow } from './lib/alipayMobile.js'
+import { mobileOutsideAlipay, mobileRequest, rememberMobileFlow, returnBrowser, savedMobileFlow } from './lib/alipayMobile.js'
 import { ConfirmDialog, IconButton } from './components/ui.jsx'
 import { useEscapeKey } from './hooks/useEscapeKey.js'
 import { readableToolQuery } from './lib/toolQuery.js'
@@ -1204,9 +1204,11 @@ function LoginPage({ onLogin }) {
     setOauthLoadingProvider(provider)
     if (provider === 'alipay' && mobileOutsideAlipay(navigator.userAgent, navigator.maxTouchPoints)) {
       try {
-        const flow = await mobileRequest('prepare', { accepted_legal: true })
+        const flow = await mobileRequest('prepare', { accepted_legal: true, return_browser: returnBrowser(navigator.userAgent, navigator.maxTouchPoints) })
         rememberMobileFlow(flow.flow)
         setAlipayFlow(flow)
+        // If the OS requires another gesture after prepare, keep the real launch link.
+        window.location.assign(flow.launch_url)
       } catch (err) { setError(err.message) }
       finally { setOauthLoadingProvider('') }
       return

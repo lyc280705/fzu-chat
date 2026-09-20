@@ -1,7 +1,8 @@
 """Short-lived, encrypted cross-browser Alipay login handoffs.
 
 Launch tickets can start authorization, but cannot read or claim its result.
-Only the originating browser's separate HttpOnly owner cookie can do that.
+Claim needs both the original HttpOnly owner cookie and a one-time receipt
+delivered only to the authorizing browser. Polling never releases that receipt.
 All transitions use compare-and-set; cancellation/consumption cannot be undone.
 """
 from __future__ import annotations
@@ -110,14 +111,14 @@ def _owner(owner, flow):
     return _flow_key(flow)
 
 
-def prepare(redirect_uri):
+def prepare(redirect_uri, return_browser="system"):
     owner = secrets.token_hex(32)
     flow = digest(owner)
     ticket = secrets.token_hex(32)
     record = {
         "flow": flow, "status": "waiting", "expires_at": time.time() + TTL,
         "redirect_uri": redirect_uri, "ticket": ticket,
-        "verification_code": f"{secrets.randbelow(1000000):06d}",
+        "return_browser": return_browser,
     }
     if not _cas(_flow_key(flow), None, record):
         raise BridgeError()
@@ -131,15 +132,13 @@ def status(owner, flow):
     return _read(_owner(owner, flow))[1]
 
 
-def check_launch(ticket, code):
+def check_launch(ticket):
     if not _valid(ticket):
         raise BridgeError()
     _, index = _read("alipay_mobile:launch:" + digest(ticket))
     _, record = _read(_flow_key(index["flow"]))
     if record["status"] != "waiting":
         raise BridgeError("授权已开始或已结束，请返回原浏览器查看。", 409)
-    if not hmac.compare_digest(record["verification_code"].encode(), code.encode()):
-        raise BridgeError("确认码不正确，请输入原浏览器显示的六位数字。", 400)
     return record
 
 
@@ -159,20 +158,26 @@ def finish(flow, state, profile=None, error="failed"):
     if record["status"] != "authorizing" or not hmac.compare_digest(record.get("state_hash", ""), digest(state)):
         raise BridgeError()
     record.update(status="ready" if profile else error)
+    receipt = secrets.token_hex(32) if profile else ""
     if profile:
         record["profile"] = profile  # Encrypted before any storage, never a token.
+        record["receipt_hash"] = digest(receipt)
     record.pop("ticket", None)
     record.pop("verification_code", None)
     if not _cas(key, raw, record):
         raise BridgeError()
+    return {"flow": flow, "receipt": receipt, "browser": record.get("return_browser", "system")}
 
 
-def claim(owner, flow):
+def claim(owner, flow, receipt):
     key = _owner(owner, flow)
     raw, record = _read(key)
     if record["status"] != "ready":
         raise BridgeError("尚未授权或结果已领取，请重新检查。", 409)
+    if not _valid(receipt) or not hmac.compare_digest(record.get("receipt_hash", ""), digest(receipt)):
+        raise BridgeError("请使用支付宝授权完成后的返回按钮继续登录。", 403)
     profile = record.pop("profile")
+    record.pop("receipt_hash", None)
     record["status"] = "consumed"
     if not _cas(key, raw, record):
         raise BridgeError("本次登录结果已领取。", 409)

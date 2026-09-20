@@ -3,6 +3,16 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.25] - 2026-09-20
+
+- Simplify mobile Alipay login: attempt app launch immediately, remove the manually entered confirmation code, and finish automatically when the authorization return link reaches the originating browser.
+- Replace polling-only result claims with a one-time receipt AND the original HttpOnly cookie. Only the authorizing browser receives the receipt; polling cannot expose it or the user profile.
+- Keep replay, cancellation, expiry, signature and state checks. Add allowlisted best-effort browser return links with explicit fallback guidance; native device return still requires real-device acceptance.
+- 手机点击支付宝登录后直接尝试唤起授权，不再手输确认码或点击“继续登录”。授权完成后尝试返回原 Safari/Chrome，失败时保留返回按钮和菜单打开指引。
+- 返回链接的一次性凭据必须与原浏览器 Cookie 同时匹配；仅轮询成功或转发唤起链接无法领取登录结果，不在查询参数中传递登录凭证。
+
+---
+
 ## [v7.24] - 2026-09-20
 
 - Add a mobile-browser Alipay handoff with an explicit launch button, short-lived confirmation code, encrypted result relay and owner-bound one-time claim.

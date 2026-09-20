@@ -1706,15 +1706,19 @@ def oauth_providers(request: Request):
 
 class AlipayMobilePrepare(BaseModel):
     accepted_legal: bool = False
+    return_browser: str = Field(default="system", pattern=r"^(system|safari|chrome_ios|chrome_android)$")
 
 
 class AlipayMobileBegin(BaseModel):
     ticket: str = Field(pattern=r"^[a-f0-9]{64}$")
-    verification_code: str = Field(pattern=r"^[0-9]{6}$")
 
 
 class AlipayMobileFlow(BaseModel):
     flow: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class AlipayMobileClaim(AlipayMobileFlow):
+    receipt: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 @app.exception_handler(alipay_mobile.BridgeError)
@@ -1742,12 +1746,9 @@ def _mobile_config(request: Request):
 def _mobile_snapshot(record):
     result = {key: record[key] for key in ("flow", "status", "expires_at")}
     if record["status"] in {"waiting", "authorizing"}:
-        result["verification_code"] = record["verification_code"]
         callback = urlparse(record["redirect_uri"])
         landing = f"{callback.scheme}://{callback.netloc}/?alipay_mobile=authorize#ticket={record['ticket']}"
         result["launch_url"] = "alipays://platformapi/startapp?" + urlencode({"appId": "20000067", "url": landing})
-    if record["status"] == "ready":
-        result["display_name"] = record["profile"]["display_name"]
     return result
 
 
@@ -1766,7 +1767,7 @@ def alipay_mobile_prepare(payload: AlipayMobilePrepare, request: Request):
         except alipay_mobile.BridgeError as exc:
             if exc.status_code not in {403, 410}:
                 raise
-    owner, record = alipay_mobile.prepare(config.redirect_uri)
+    owner, record = alipay_mobile.prepare(config.redirect_uri, payload.return_browser)
     response = JSONResponse(_mobile_snapshot(record))
     response.set_cookie(alipay_mobile.OWNER_COOKIE, owner, max_age=alipay_mobile.TTL, httponly=True,
                         secure=_use_secure_cookie(request), samesite="strict", path=alipay_mobile.COOKIE_PATH)
@@ -1777,9 +1778,9 @@ def alipay_mobile_prepare(payload: AlipayMobilePrepare, request: Request):
 def alipay_mobile_begin(payload: AlipayMobileBegin, request: Request):
     _mobile_integrity(request)
     config = _mobile_config(request)
-    _enforce_rate_limit("alipay-mobile-code:" + alipay_mobile.digest(payload.ticket), 5, alipay_mobile.TTL,
-                        "确认码尝试次数过多，请返回原浏览器重新发起。")
-    record = alipay_mobile.check_launch(payload.ticket, payload.verification_code)
+    _enforce_rate_limit("alipay-mobile-begin:" + alipay_mobile.digest(payload.ticket), 5, alipay_mobile.TTL,
+                        "授权尝试过于频繁，请返回原浏览器重新发起。")
+    record = alipay_mobile.check_launch(payload.ticket)
     if record["redirect_uri"] != config.redirect_uri:
         raise alipay_mobile.BridgeError()
     state = create_oauth_state("alipay", config.redirect_uri, bridge_flow=record["flow"])
@@ -1803,10 +1804,10 @@ def _clear_mobile_cookie(response, request):
 
 
 @app.post("/api/auth/oauth/alipay/mobile/claim")
-def alipay_mobile_claim(payload: AlipayMobileFlow, request: Request):
+def alipay_mobile_claim(payload: AlipayMobileClaim, request: Request):
     _mobile_integrity(request)
     _mobile_config(request)
-    profile = alipay_mobile.claim(request.cookies.get(alipay_mobile.OWNER_COOKIE, ""), payload.flow)
+    profile = alipay_mobile.claim(request.cookies.get(alipay_mobile.OWNER_COOKIE, ""), payload.flow, payload.receipt)
     response = _visitor_session_response("alipay", request, profile, as_json=True)
     _clear_mobile_cookie(response, request)
     return response
@@ -1916,10 +1917,12 @@ def _complete_oauth_callback(provider: OAuthProviderName, request: Request, payl
 
     if state_payload.get("bridge_flow"):
         try:
-            alipay_mobile.finish(state_payload["bridge_flow"], state, profile=profile)
+            completion = alipay_mobile.finish(state_payload["bridge_flow"], state, profile=profile)
         except alipay_mobile.BridgeError:
             return failed("failed")
-        return RedirectResponse("/?alipay_mobile=result&status=success", status_code=302)
+        # The receipt never appears in polling responses, query strings or logs.
+        # A forwarded launch link alone cannot log its owner into the victim's account.
+        return RedirectResponse("/?alipay_mobile=complete#" + urlencode(completion), status_code=302)
     return _visitor_session_response(provider, request, profile)
 
 
