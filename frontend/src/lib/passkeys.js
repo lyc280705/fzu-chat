@@ -2,6 +2,22 @@ export function supportsPasskeys() {
   return Boolean(globalThis.isSecureContext && globalThis.PublicKeyCredential && globalThis.navigator?.credentials?.create && globalThis.navigator?.credentials?.get)
 }
 
+export function passkeyErrorMessage(error, register = false) {
+  const name = error?.name || ''
+  if (name === 'NotReadableError' || /credential manager/i.test(error?.message || '')) {
+    return '暂时无法连接手机的通行密钥服务。请检查系统中的密码／通行密钥提供方是否已启用；若使用 Google 密码管理工具，请确认 Google Play 服务可用后重试。也可以返回选择其他登录方式。'
+  }
+  if (name === 'NotAllowedError') return register
+    ? '通行密钥创建已取消或超时。请确认设备已设置锁屏密码，并在系统提示中完成确认后重试。'
+    : '操作已取消、超时或未找到可用的通行密钥。首次使用请选择“创建通行密钥并进入”。'
+  if (name === 'InvalidStateError') return '此设备已保存该身份的通行密钥，请直接登录。'
+  if (name === 'SecurityError') return '此页面无法安全使用通行密钥，请从 https://mylingxi.cn 重新打开后尝试。'
+  if (name === 'NotSupportedError') return '当前浏览器或密钥管理工具暂不支持此操作，请使用其他支持通行密钥的浏览器或登录方式。'
+  if (name === 'AbortError') return '本次通行密钥操作已中断，请重新尝试。'
+  if (/[\u3400-\u9fff]/.test(error?.message || '')) return error.message
+  return '暂时无法完成通行密钥操作，请检查网络和系统密钥服务，或选择其他登录方式。'
+}
+
 export const decode = value => Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0))
 export const encode = value => btoa(Array.from(new Uint8Array(value), n => String.fromCharCode(n)).join('')).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 
@@ -46,9 +62,6 @@ export async function runPasskeyCeremony(register = false, enroll = false) {
     if (!credential) throw new Error('未取得通行密钥，请重试。')
     await passkeyRequest(`${kind}/verify`, { credential: credentialJSON(credential) })
   } catch (error) {
-    if (error.name === 'NotAllowedError') throw new Error('操作已取消、超时或设备中没有可用的通行密钥。首次使用请点击“创建通行密钥并进入”。')
-    if (error.name === 'InvalidStateError') throw new Error('此设备已保存该身份的通行密钥，请直接登录。')
-    if (['NotSupportedError', 'SecurityError'].includes(error.name)) throw new Error('当前浏览器或设备无法使用此通行密钥，请在支持的浏览器中重试。')
-    throw error
+    throw new Error(passkeyErrorMessage(error, register))
   }
 }

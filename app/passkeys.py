@@ -34,9 +34,10 @@ MAX_KEYS = 10
 
 
 class PasskeyError(RuntimeError):
-    def __init__(self, message="通行密钥验证失败，请重新尝试。", status=400):
+    def __init__(self, message="通行密钥验证失败，请重新尝试。", status=400, code="verification_failed"):
         super().__init__(message)
         self.status = status
+        self.code = code
 
 
 def digest(value):
@@ -110,7 +111,7 @@ class PasskeyStore:
             row = db.execute("SELECT * FROM ceremonies WHERE id=?", (digest(cookie),)).fetchone()
             db.execute("DELETE FROM ceremonies WHERE id=?", (digest(cookie),))
         if not row or row["expires"] <= time.time() or row["purpose"] != purpose:
-            raise PasskeyError("本次验证已过期或已使用，请重新开始。")
+            raise PasskeyError("本次验证已过期或已使用，请关闭其他登录弹窗后重新尝试。", code="challenge_expired")
         return dict(row), json.loads(row["data"])
 
     def register_options(self, *, token="", old_cookie=""):
@@ -177,10 +178,10 @@ class PasskeyStore:
             credential_id = bytes_to_base64url(base64url_to_bytes(credential.get("id", "")))
             key = db.execute("SELECT c.*, a.handle, a.profile FROM credentials c JOIN accounts a ON a.user_id=c.user_id WHERE c.id=?", (credential_id,)).fetchone()
             if not key:
-                raise PasskeyError()
+                raise PasskeyError("这个通行密钥未在本站登记，或关联账号已删除。请选择其他已登记的密钥；如需重新开始，请创建新的通行密钥。", code="credential_not_found")
             user_handle = base64url_to_bytes(credential.get("response", {}).get("userHandle") or "")
             if not hmac.compare_digest(user_handle, key["handle"]):
-                raise PasskeyError()
+                raise PasskeyError("密钥管理工具返回的身份信息不匹配。请重新选择正确的通行密钥，或换用其他支持的密钥管理工具。", code="identity_mismatch")
             verified = verify_authentication_response(credential=credential,
                 expected_challenge=base64url_to_bytes(data["challenge"]), expected_origin=ORIGIN, expected_rp_id=RP_ID,
                 credential_public_key=key["public_key"], credential_current_sign_count=key["sign_count"], require_user_verification=True)

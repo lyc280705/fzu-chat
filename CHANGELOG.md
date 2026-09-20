@@ -3,6 +3,16 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.28] - 2026-09-20
+
+- Use Alipay's native H5 authorization sheet at the registered callback page to avoid the web-authorization round trip; keep browser-bound, single-use state and signed provider verification. Show a manual web fallback only on native failure, without automatic redirect loops.
+- Localize Passkey credential-manager errors, cancellation and unsupported-device messages. Explain stale/deleted-account keys separately; retain all signature, origin, user-verification and replay checks. Diagnostic logs contain reason categories only, never credential contents.
+- 支付宝优先在当前页面使用原生授权浮层，减少一次站外往返；客户端不支持时可手动回退网页授权，平台外链提示次数仍以真机为准。
+- Passkey 不再直接展示英文异常，补充 Google 凭据服务异常的处理建议；账号已删除、旧密钥未登记等情况提供明确提示。
+- 按用户要求跳过测试套件，仅做构建／静态检查与上线健康检查；支付宝原生浮层需真机确认。
+
+---
+
 ## [v7.27] - 2026-09-20
 
 - Keep new mobile Alipay logins and chat in Alipay's own webview. Start and finish the cookie-bound OAuth flow there; remove the browser-return handoff from the login UI. Keep protected legacy endpoints for older clients.

@@ -410,7 +410,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="FZU Chat API",
-    version="7.27.0",
+    version="7.28.0",
     lifespan=lifespan,
     docs_url="/docs" if PUBLIC_DOCS else None,
     redoc_url="/redoc" if PUBLIC_DOCS else None,
@@ -1723,6 +1723,52 @@ class AlipayMobileClaim(AlipayMobileFlow):
     receipt: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
+class AlipayNativeComplete(BaseModel):
+    state: str = Field(pattern=r"^[a-f0-9]{64}$")
+    auth_code: str = Field(min_length=1, max_length=2048)
+
+
+ALIPAY_NATIVE_COOKIE = "fzu_alipay_native_state"
+ALIPAY_NATIVE_PATH = "/api/auth/oauth/alipay/native"
+
+
+@app.post(ALIPAY_NATIVE_PATH + "/prepare")
+def alipay_native_prepare(payload: AlipayMobilePrepare, request: Request):
+    _mobile_integrity(request)
+    if not payload.accepted_legal:
+        raise HTTPException(400, "请先阅读并同意用户协议与隐私政策。")
+    config = _mobile_config(request)
+    _enforce_rate_limit(_rate_limit_key("alipay-native", request), LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
+                        LOGIN_RATE_LIMIT_WINDOW_SECONDS, "登录尝试过于频繁，请稍后重试。")
+    state = create_oauth_state("alipay-native", config.redirect_uri)
+    response = JSONResponse({"app_id": config.client_id, "state": state})
+    response.set_cookie(ALIPAY_NATIVE_COOKIE, state, max_age=OAUTH_STATE_TTL_SECONDS,
+                        httponly=True, secure=_use_secure_cookie(request), samesite="strict", path=ALIPAY_NATIVE_PATH)
+    return response
+
+
+@app.post(ALIPAY_NATIVE_PATH + "/complete")
+def alipay_native_complete(payload: AlipayNativeComplete, request: Request):
+    _mobile_integrity(request)
+    config = _mobile_config(request)
+    _enforce_rate_limit(_rate_limit_key("alipay-native-complete", request), LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
+                        LOGIN_RATE_LIMIT_WINDOW_SECONDS, "登录尝试过于频繁，请稍后重试。")
+    cookie = request.cookies.get(ALIPAY_NATIVE_COOKIE, "")
+    if not cookie or not hmac.compare_digest(cookie.encode(), payload.state.encode()):
+        raise HTTPException(403, "本次授权与当前页面不匹配，请重新发起登录。")
+    try:
+        state = consume_oauth_state(payload.state, "alipay-native")
+        if state.get("redirect_uri") != config.redirect_uri:
+            raise OAuthError("授权配置已更新。")
+        profile = fetch_visitor_profile(config, payload.auth_code)
+        response = _visitor_session_response("alipay", request, profile, as_json=True)
+    except (OAuthError, requests.RequestException):
+        response = JSONResponse({"detail": "支付宝授权未完成或已过期，请重新尝试。"}, status_code=400)
+    response.delete_cookie(ALIPAY_NATIVE_COOKIE, path=ALIPAY_NATIVE_PATH, httponly=True,
+                           secure=_use_secure_cookie(request), samesite="strict")
+    return response
+
+
 @app.exception_handler(alipay_mobile.BridgeError)
 async def alipay_mobile_error_handler(request: Request, exc: alipay_mobile.BridgeError):
     return JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
@@ -1999,6 +2045,11 @@ def oauth_callback(
     error_description: str | None = None,
 ):
     if provider == "alipay":
+        # Native H5 authorization must run at the exact registered callback URL.
+        # Empty navigation serves the client; OAuth responses still use the
+        # original cookie-bound, single-use callback checks below.
+        if not request.query_params:
+            return FileResponse(FRONTEND_DIST / "index.html")
         return _finish_oauth_callback(provider, request, dict(request.query_params))
     return _finish_oauth_callback(provider, request, _oauth_callback_payload(code, state, error, error_description))
 

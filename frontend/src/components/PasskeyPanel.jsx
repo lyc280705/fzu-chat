@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Fingerprint, Plus, Trash2 } from 'lucide-react'
-import { passkeyRequest, supportsPasskeys, runPasskeyCeremony } from '../lib/passkeys.js'
+import { passkeyErrorMessage, passkeyRequest, supportsPasskeys, runPasskeyCeremony } from '../lib/passkeys.js'
 import '../passkeys.css'
 import '../alipay-mobile.css'
 
@@ -12,7 +12,7 @@ export function PasskeyLogin({ acceptedLegal, onBack }) {
     setBusy(register ? 'register' : 'login')
     setError('')
     try { await runPasskeyCeremony(register); window.location.replace('/') }
-    catch (err) { setError(err.message); setBusy('') }
+    catch (err) { setError(passkeyErrorMessage(err, register)); setBusy('') }
   }
   return <section className="alipay-handoff alipay-handoff--page" aria-label="通行密钥登录">
     <Fingerprint size={32} aria-hidden="true" /><h1>使用通行密钥</h1>
@@ -33,13 +33,13 @@ export function PasskeySettings() {
   const [removing, setRemoving] = useState('')
   useEffect(() => {
     let active = true
-    passkeyRequest('credentials').then(value => { if (active) setKeys(value) }).catch(err => { if (active) setError(err.message) })
+    passkeyRequest('credentials').then(value => { if (active) setKeys(value) }).catch(err => { if (active) setError(passkeyErrorMessage(err)) })
     return () => { active = false }
   }, [])
   const act = async action => {
     setBusy(true); setError('')
     try { await action(); setKeys(await passkeyRequest('credentials')); setRemoving('') }
-    catch (err) { setError(err.message) }
+    catch (err) { setError(passkeyErrorMessage(err)) }
     finally { setBusy(false) }
   }
   return <section className="privacy-card passkey-settings" aria-label="管理通行密钥">

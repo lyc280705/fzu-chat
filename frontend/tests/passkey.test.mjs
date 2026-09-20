@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { buildSync } from 'esbuild'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { credentialJSON, encode, decode, runPasskeyCeremony, supportsPasskeys } from '../src/lib/passkeys.js'
+import { credentialJSON, encode, decode, passkeyErrorMessage, runPasskeyCeremony, supportsPasskeys } from '../src/lib/passkeys.js'
 import { alipayInAppUrl, mobileOutsideAlipay } from '../src/lib/alipayMobile.js'
 
 const bytes = new Uint8Array([0, 255, 17, 250])
@@ -77,10 +77,17 @@ test('Alipay launch keeps authorization and chat inside its webview, with no bro
   const launch = new URL(alipayInAppUrl('https://mylingxi.cn'))
   assert.equal(launch.protocol, 'alipays:')
   assert.equal(launch.searchParams.get('appId'), '20000067')
-  assert.equal(launch.searchParams.get('url'), 'https://mylingxi.cn/api/auth/oauth/alipay/start?accepted_legal=true')
+  assert.equal(launch.searchParams.get('url'), 'https://mylingxi.cn/api/auth/oauth/alipay/callback#native_consent=1')
   assert.doesNotMatch(launch.href, /receipt|flow|complete|intent:|return_browser/)
   assert.equal(mobileOutsideAlipay('Android EdgA/1'), true)
   assert.equal(mobileOutsideAlipay('Android AlipayClient/10'), false)
+})
+
+test('credential-manager and unknown native errors never leak raw English', () => {
+  assert.match(passkeyErrorMessage(new DOMException('An unknown error occurred while talking to the credential manager.', 'NotReadableError')), /Google Play 服务/)
+  assert.match(passkeyErrorMessage(new Error('Failed to fetch')), /检查网络/)
+  assert.match(passkeyErrorMessage(new DOMException('', 'NotAllowedError'), true), /创建已取消/)
+  assert.equal(passkeyErrorMessage(new Error('本次验证已过期。')), '本次验证已过期。')
 })
 
 test('real passkey login panel exposes both independent entry paths and recovery warning', t => {

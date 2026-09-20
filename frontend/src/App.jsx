@@ -1209,12 +1209,15 @@ function LoginPage({ onLogin }) {
     setError('')
     setOauthLoadingProvider(provider)
     if (provider === 'alipay' && mobileOutsideAlipay(navigator.userAgent, navigator.maxTouchPoints)) {
-      // Start OAuth inside Alipay so its own state cookie and final session stay
-      // in that browser. No cross-browser receipt/return path is involved.
+      // Authorize in Alipay's native sheet without leaving the site again.
       const launch = alipayInAppUrl(window.location.origin)
       setAlipayFlow(launch)
       setOauthLoadingProvider('')
       window.location.assign(launch)
+      return
+    }
+    if (provider === 'alipay' && /AlipayClient|AliApp\(AP\//i.test(navigator.userAgent)) {
+      window.location.assign('/api/auth/oauth/alipay/callback#native_consent=1')
       return
     }
     window.location.assign(`/api/auth/oauth/${provider}/start?accepted_legal=true`)

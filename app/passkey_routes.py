@@ -1,12 +1,40 @@
 """HTTP boundaries for anonymous passkey signup/login and signed-in key management."""
 import json
+import logging
+import sqlite3
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from webauthn.helpers.exceptions import WebAuthnException
 
 from . import passkeys
 from .auth import create_session, update_session, invalidate_session
 from .runtime_state import fixed_window_rate_limit
+
+logger = logging.getLogger(__name__)
+
+
+def verification_error(exc):
+    if isinstance(exc, passkeys.PasskeyError):
+        return str(exc), exc.status, exc.code
+    if isinstance(exc, sqlite3.IntegrityError):
+        return "此通行密钥已登记，请使用已有通行密钥登录。", 400, "credential_conflict"
+    if isinstance(exc, WebAuthnException):
+        # Match library reasons internally; never expose/log the raw exception,
+        # which may contain origins, credential material or other client data.
+        message = str(exc).lower()
+        if "challenge" in message:
+            return "验证请求已更新，请关闭其他登录弹窗后重新尝试。", 400, "challenge_mismatch"
+        if "user verification" in message or "user was not present" in message:
+            return "尚未完成设备解锁验证，请使用指纹、面容或锁屏密码确认。", 400, "user_verification_required"
+        if "origin" in message or "rp id" in message:
+            return "通行密钥与当前网站不匹配，请从 https://mylingxi.cn 重新打开。", 400, "origin_mismatch"
+        if "sign count" in message:
+            return "密钥使用状态异常，请换用其他已登记的通行密钥或登录方式。", 400, "counter_rejected"
+        if "signature" in message:
+            return "密钥签名验证未通过，请重新选择密钥；持续失败时请换用其他登录方式。", 400, "signature_rejected"
+        return "密钥管理工具返回的数据无法验证，请更新浏览器或换用其他登录方式。", 400, "invalid_credential"
+    return "通行密钥服务暂时无法完成验证，请稍后重试。", 400, "verification_unavailable"
 
 
 class Begin(BaseModel):
@@ -90,9 +118,9 @@ def install_passkey_routes(app, require_auth, request_origin, secure_cookie, set
             for token in created:
                 invalidate_session(token)
             # Never log client data, biometric assertions, credential IDs or keys.
-            response = JSONResponse({"detail": str(exc) if isinstance(exc, passkeys.PasskeyError)
-                                     else "通行密钥验证失败，请重新尝试。"},
-                                    status_code=exc.status if isinstance(exc, passkeys.PasskeyError) else 400)
+            detail, status, reason = verification_error(exc)
+            logger.warning("Passkey %s rejected: %s", "register" if registering else "login", reason)
+            response = JSONResponse({"detail": detail, "code": reason}, status_code=status)
         response.delete_cookie(passkeys.COOKIE, path=passkeys.COOKIE_PATH, httponly=True,
                                secure=secure_cookie(request), samesite="strict")
         return response

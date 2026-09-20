@@ -2,11 +2,11 @@ export const MOBILE_FLOW_STORAGE = 'fzu_alipay_mobile_flow'
 export const mobileOutsideAlipay = (ua, touchPoints = 0) => !/AlipayClient|AliApp\(AP\//i.test(ua)
   && (/Android|iPhone|iPad|iPod|Mobile/i.test(ua) || (/Macintosh/i.test(ua) && touchPoints > 1))
 
-// Establish the state cookie and the final session in the same Alipay webview.
-// No third-party authorization code or browser-return receipt crosses apps.
+// Open the exact registered callback page for Alipay's in-page native consent.
+// The fragment carries consent only, never a code, state or session credential.
 export function alipayInAppUrl(origin) {
   const base = new URL(origin)
-  const landing = `${base.origin}/api/auth/oauth/alipay/start?accepted_legal=true`
+  const landing = `${base.origin}/api/auth/oauth/alipay/callback#native_consent=1`
   return `alipays://platformapi/startapp?${new URLSearchParams({ appId: '20000067', url: landing })}`
 }
 
@@ -54,11 +54,15 @@ export function rememberMobileFlow(flow) {
   } catch { /* Storage can be unavailable in private browsing. */ }
 }
 
-export async function mobileRequest(action, body, signal) {
+export function nativeRequest(action, body) {
+  return mobileRequest(action, body, null, 'native')
+}
+
+export async function mobileRequest(action, body, signal, scope = 'mobile') {
   const controller = signal ? null : new AbortController()
   const timer = controller ? setTimeout(() => controller.abort(), 12000) : null
   try {
-    const response = await fetch(`/api/auth/oauth/alipay/mobile/${action}`, {
+    const response = await fetch(`/api/auth/oauth/alipay/${scope}/${action}`, {
       method: body ? 'POST' : 'GET', credentials: 'same-origin', signal: signal || controller.signal,
       headers: { 'X-FZU-Alipay-Mobile': '1', ...(body ? { 'Content-Type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
