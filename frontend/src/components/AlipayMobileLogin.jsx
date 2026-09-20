@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowRight, Check, LockKeyhole, RefreshCw, Smartphone } from 'lucide-react'
-import { browserReturnUrl, mobileRequest, rememberMobileFlow } from '../lib/alipayMobile.js'
+import { mobileRequest, rememberMobileFlow } from '../lib/alipayMobile.js'
+import AlipayReturnActions from './AlipayReturnActions.jsx'
 import '../alipay-mobile.css'
 
 const terminalLabels = {
@@ -80,11 +81,11 @@ export function AlipayMobileLogin({ initial, onCancel }) {
     <div className="alipay-handoff__heading"><Smartphone size={18} aria-hidden="true" /><strong>支付宝登录</strong></div>
     <h1>{terminal ? terminalLabels[snapshot.status] : snapshot.status === 'ready' ? '授权已完成' : '正在前往支付宝'}</h1>
     {terminal ? <p>请重新发起或选择其他登录方式。</p> : snapshot.status === 'ready' ? <>
-      <p>请使用支付宝授权完成页的“返回浏览器”按钮，返回后即可自动登录。</p>
+      <p>请点击支付宝授权完成页的返回按钮；如果被拦截，可复制返回链接，在原浏览器地址栏粘贴打开。</p>
       <p className="alipay-handoff__hint">为保护账号，单纯切换应用不会领取授权结果。</p>
     </> : <>
       <p>在支付宝确认授权后，使用返回按钮即可完成登录，无需输入确认码。</p>
-      {snapshot.launch_url && snapshot.status === 'waiting' && <a className="alipay-handoff__primary" href={snapshot.launch_url}>打开支付宝<ArrowRight size={16} aria-hidden="true" /></a>}
+      {snapshot.launch_url && <a className="alipay-handoff__primary" href={snapshot.launch_url}>打开支付宝<ArrowRight size={16} aria-hidden="true" /></a>}
       <p className="alipay-handoff__hint">没有自动打开？可点上方按钮重试。未安装支付宝，或在微信、QQ 内打开时，可换用其他登录方式。</p>
     </>}
     {error && <p role="alert" className="alipay-handoff__error">{error}</p>}
@@ -96,24 +97,18 @@ export function AlipayHandoffPage({ entry }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(true)
   const requestRef = useRef(null)
-  const returnAttempted = useRef(false)
   const [attempt, setAttempt] = useState(0)
   const inAlipay = /AlipayClient|AliApp\(AP\//i.test(navigator.userAgent)
   const completing = entry.mode === 'complete'
   const validReceipt = Boolean(entry.flow && entry.receipt)
   const returning = completing && inAlipay && validReceipt
-  const nativeReturn = returning ? browserReturnUrl(window.location.origin, entry) : ''
 
   useEffect(() => {
-    // Keep the completion fragment only inside Alipay for its "open in browser"
-    // menu. It is short-lived and useless without the original owner cookie.
+    // Keep the completion fragment inside Alipay for explicit retry/copy only.
+    // It is short-lived and useless without the original owner cookie.
     // The receiving browser removes it before API calls and never persists it.
     if (!returning) window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
     if (returning) {
-      if (nativeReturn && !returnAttempted.current) {
-        returnAttempted.current = true
-        try { window.location.assign(nativeReturn) } catch { /* Keep the explicit return link. */ }
-      }
       setBusy(false)
       return
     }
@@ -139,7 +134,7 @@ export function AlipayHandoffPage({ entry }) {
       if (!disposed) { setError(err.message); setBusy(false) }
     })
     return () => { disposed = true }
-  }, [attempt, completing, entry, inAlipay, nativeReturn, returning, validReceipt])
+  }, [attempt, completing, entry, inAlipay, returning, validReceipt])
 
   const retry = () => { requestRef.current = null; setError(''); setBusy(true); setAttempt(value => value + 1) }
   return <main className="alipay-handoff-page">
@@ -147,10 +142,8 @@ export function AlipayHandoffPage({ entry }) {
       <div className="alipay-handoff__brand"><img src="/assets/FZU.png" alt="" /><span>福大灵犀</span></div>
       <div className="alipay-handoff__symbol">{returning ? <Check size={28} /> : busy ? <RefreshCw className="alipay-handoff__spinner" size={24} /> : <Smartphone size={26} />}</div>
       {returning ? <>
-        <h1>授权成功，返回即可登录</h1>
-        <p>{nativeReturn ? '正在尝试返回原浏览器，无需再次确认账号。' : '请从支付宝右上角菜单在原浏览器中打开此页，即可自动登录。'}</p>
-        {nativeReturn && <a className="alipay-handoff__primary" href={nativeReturn}>返回浏览器<ArrowRight size={16} aria-hidden="true" /></a>}
-        <p className="alipay-handoff__hint">没有跳转？请从支付宝右上角菜单选择“在浏览器中打开”，并使用刚才发起登录的浏览器。请勿复制或转发此链接。</p>
+        <h1>还差一步，返回浏览器</h1>
+        <AlipayReturnActions origin={window.location.origin} entry={entry} />
       </> : completing ? <>
         <h1>{busy ? '正在完成登录' : '暂时无法完成登录'}</h1>
         <p>{busy ? '正在安全接收授权结果，即将进入聊天。' : '请使用原浏览器及相同浏览模式打开支付宝的返回链接。不要打开他人转发的登录链接。'}</p>

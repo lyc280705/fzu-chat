@@ -1706,7 +1706,7 @@ def oauth_providers(request: Request):
 
 class AlipayMobilePrepare(BaseModel):
     accepted_legal: bool = False
-    return_browser: str = Field(default="system", pattern=r"^(system|safari|chrome_ios|chrome_android)$")
+    return_browser: str = Field(default="system", pattern=r"^(system|safari|chrome_ios|chrome_android|edge_android)$")
 
 
 class AlipayMobileBegin(BaseModel):
@@ -1746,8 +1746,13 @@ def _mobile_config(request: Request):
 def _mobile_snapshot(record):
     result = {key: record[key] for key in ("flow", "status", "expires_at")}
     if record["status"] in {"waiting", "authorizing"}:
-        callback = urlparse(record["redirect_uri"])
-        landing = f"{callback.scheme}://{callback.netloc}/?alipay_mobile=authorize#ticket={record['ticket']}"
+        if record.get("direct_state"):
+            config = get_provider_config("alipay", record["redirect_uri"])
+            landing = build_authorization_url(config, record["direct_state"])
+        else:
+            # Let already-issued v7.25 tasks finish within their five-minute TTL.
+            callback = urlparse(record["redirect_uri"])
+            landing = f"{callback.scheme}://{callback.netloc}/?alipay_mobile=authorize#ticket={record['ticket']}"
         result["launch_url"] = "alipays://platformapi/startapp?" + urlencode({"appId": "20000067", "url": landing})
     return result
 
@@ -1767,7 +1772,7 @@ def alipay_mobile_prepare(payload: AlipayMobilePrepare, request: Request):
         except alipay_mobile.BridgeError as exc:
             if exc.status_code not in {403, 410}:
                 raise
-    owner, record = alipay_mobile.prepare(config.redirect_uri, payload.return_browser)
+    owner, record = alipay_mobile.prepare(config.redirect_uri, payload.return_browser, direct=True)
     response = JSONResponse(_mobile_snapshot(record))
     response.set_cookie(alipay_mobile.OWNER_COOKIE, owner, max_age=alipay_mobile.TTL, httponly=True,
                         secure=_use_secure_cookie(request), samesite="strict", path=alipay_mobile.COOKIE_PATH)
@@ -1869,7 +1874,11 @@ def _finish_oauth_callback(provider: OAuthProviderName, request: Request, payloa
     if provider == "alipay":
         state = str(payload.get("state") or "")
         cookie = request.cookies.get(ALIPAY_STATE_COOKIE, "")
-        if not state or not cookie or not hmac.compare_digest(state.encode(), cookie.encode()):
+        if state.startswith(alipay_mobile.DIRECT_STATE_PREFIX):
+            # This namespace cannot overlap normal 64-hex OAuth states. It is
+            # verified/consumed from the encrypted handoff store, never by UA.
+            response = _complete_oauth_callback(provider, request, payload, mobile_direct=True)
+        elif not state or not cookie or not hmac.compare_digest(state.encode(), cookie.encode()):
             response = _oauth_callback_error_redirect(provider, "failed")
         else:
             response = _complete_oauth_callback(provider, request, payload)
@@ -1882,7 +1891,7 @@ def _finish_oauth_callback(provider: OAuthProviderName, request: Request, payloa
     return response
 
 
-def _complete_oauth_callback(provider: OAuthProviderName, request: Request, payload: Dict[str, Any]) -> RedirectResponse:
+def _complete_oauth_callback(provider: OAuthProviderName, request: Request, payload: Dict[str, Any], *, mobile_direct=False) -> RedirectResponse:
     error = str(payload.get("error") or "").strip()
     code = str(payload.get("auth_code" if provider == "alipay" else "code") or "").strip()
     state = str(payload.get("state") or "").strip()
@@ -1894,13 +1903,15 @@ def _complete_oauth_callback(provider: OAuthProviderName, request: Request, payl
                 alipay_mobile.finish(state_payload["bridge_flow"], state, error=reason)
             except alipay_mobile.BridgeError:
                 pass  # Cancelled/expired tasks must never be resurrected.
+        if mobile_direct or state_payload.get("bridge_flow"):
             return RedirectResponse(f"/?alipay_mobile=result&status={reason}", status_code=302)
         return _oauth_callback_error_redirect(provider, reason)
     if error and provider != "alipay":
         logger.warning("OAuth callback rejected by %s: %s", provider, error)
         return _oauth_callback_error_redirect(provider, "cancelled")
     try:
-        state_payload = consume_oauth_state(state, provider)
+        state_payload = (alipay_mobile.consume_direct_state(state) if mobile_direct
+                         else consume_oauth_state(state, provider))
         if error:
             return failed("cancelled")
         config = get_provider_config(provider, str(state_payload.get("redirect_uri") or ""))
@@ -1908,6 +1919,8 @@ def _complete_oauth_callback(provider: OAuthProviderName, request: Request, payl
     except OAuthConfigError as exc:
         logger.warning("OAuth callback config failed for %s: %s", provider, exc)
         return failed("unavailable")
+    except alipay_mobile.BridgeError:
+        return failed("failed")
     except OAuthError as exc:
         logger.warning("OAuth callback failed for %s: %s", provider, exc)
         return failed("failed")

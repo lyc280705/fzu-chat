@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v7.25](CHANGELOG.md)
+Current tagged release: [v7.26](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -118,7 +118,7 @@ docker compose up -d --build
 # 3. Visit http://localhost:80
 ```
 
-Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, provision the session encryption key below, then run `FZU_CHAT_VERSION=v7.25 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build. Hosts using additional Compose files (resource limits or Alipay secrets) must include **all** override files in their deployment commands rather than using this single-file helper.
+Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, provision the session encryption key below, then run `FZU_CHAT_VERSION=v7.26 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build. Hosts using additional Compose files (resource limits or Alipay secrets) must include **all** override files in their deployment commands rather than using this single-file helper.
 
 Frontend builds use `npm ci` to install the committed lockfile and run `npm run audit:security` before producing the Docker image. Known npm advisories at low severity or above block the build; resolve them by updating compatible dependencies rather than disabling the check. This check covers npm dependencies, not a full Python or operating-system security audit.
 
@@ -185,24 +185,31 @@ to its respective owner.
 
 #### Mobile browsers outside Alipay
 
-Mobile Safari/Chrome cannot directly display Alipay's H5 authorization page. The
+Mobile Safari/Chrome/Edge cannot directly display Alipay's H5 authorization page. The
 mobile login button prepares a five-minute handoff and immediately attempts to
 launch Alipay, keeping an explicit user-gesture launch link as fallback. The
-destination is our own landing page; its launch ticket is fragment-only, removed
-from history on load, and is not a site login token. Existing desktop and
+destination is now the official `openauth.alipay.com` authorization page, not an
+intermediate page on our domain. Existing desktop and
 Alipay-internal browser login flows remain direct. Mobile users should:
 
 1. Tap Alipay login and grant the requested authorization in Alipay.
-2. The completion page attempts to open the original Safari/Chrome. If blocked,
-   tap “返回浏览器”, or use Alipay's “open in browser” menu with the original browser.
+2. On our completion page, tap “返回 Edge 完成登录” (or the originating browser).
+   Return links require an explicit user gesture; there is no automatic return loop.
+   If blocked, tap “复制返回链接”, then paste it into the original browser's address bar.
+   Clipboard denial reveals a selectable link. Alipay's top-right menu is not required.
 3. The receiving browser verifies the result and enters chat automatically.
 
 No six-digit code or second account confirmation is required. Merely switching
 apps without opening the completion link is insufficient: this is intentional.
 
 The original browser keeps a separate HttpOnly/Secure/SameSite=Strict owner
-cookie. Alipay creates its own browser-bound OAuth state cookie; callback
-verification is not weakened. The callback publishes only an encrypted minimal
+cookie. Direct mobile OAuth uses an independent `am_` state namespace, a 256-bit
+random nonce, an encrypted state-to-owner-flow binding, and atomic consumption
+before any provider exchange. Expired/cancelled callbacks cannot exchange a code.
+No website session is created by this cross-browser callback. Desktop and legacy
+flows still require their original Alipay OAuth state cookie. Old handoffs remain
+supported until expiry, but new requests never use the intermediate landing page.
+The callback publishes only an encrypted minimal
 profile into Redis, never creates a site session in Alipay, and never exposes a
 session token in a URL. The callback creates a random, one-time receipt whose
 hash is stored with the encrypted result. Only the authorizing browser receives
@@ -213,19 +220,21 @@ launch link cannot poll and claim the victim's identity from another device.
 Redis compare-and-set transitions prevent duplicate claims and late callbacks
 from resurrecting cancelled tasks; no polling or retries extend expiry. If
 production Redis is unavailable, handoffs fail closed instead of falling back
-to process-local state. Authorization attempts are rate-limited per ticket.
+to process-local state. Preparation is rate-limited; direct callback states and
+receipts are one-use and independently validated.
 
 Only the non-secret task ID is retained in the originating tab's sessionStorage
 for reload recovery. Polling pauses while the page is hidden and resumes on
 focus, pageshow and visibility changes. Users can cancel or choose another login
 method when Alipay is missing or app launching is blocked. Return links use a
 fixed allowlist of browser schemes; there is no arbitrary return URL or package.
-The completion fragment is retained only inside Alipay for its external-browser
-menu, and removed on arrival in the receiving browser, without persistent storage.
-Safari's `x-safari-https`, Chrome iOS's `googlechromes`, and Android Chrome intents
+The completion fragment is retained only inside Alipay for explicit return/retry
+or user-requested copying, and removed on arrival in the receiving browser.
+Safari's `x-safari-https`, Chrome iOS's `googlechromes`, and Android Chrome/Edge intents
 are best-effort compatibility paths, not a guarantee of switching to a particular
-tab/profile. Other browsers use Alipay's external-browser menu. Automatic return
-is not promised; iOS and Android device authorization must be
+tab/profile. Other browsers retain the copy-link fallback rather than a dead-end
+completion screen. Platform external-site warnings cannot be disabled by our code.
+Automatic return is not promised; iOS and Android device authorization must be
 checked separately from the automated two-client callback tests.
 
 ### Authentication

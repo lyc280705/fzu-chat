@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from app import alipay_mobile as bridge, oauth
 from app.auth import delete_user_storage, invalidate_user_sessions
-from app.server import app, AUTH_COOKIE_NAME, ALIPAY_STATE_COOKIE
+from app.server import app, AUTH_COOKIE_NAME, ALIPAY_STATE_COOKIE, _mobile_snapshot
 
 HEADERS = {"Origin": "https://testserver", "X-FZU-Alipay-Mobile": "1"}
 MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile Safari/604.1"
@@ -45,15 +45,28 @@ class AlipayMobileTests(unittest.TestCase):
             self.addCleanup(mocked.stop)
 
     def prepare(self):
-        response = self.owner.post("/api/auth/oauth/alipay/mobile/prepare", json={"accepted_legal": True, "return_browser": "safari"})
+        response = self.owner.post("/api/auth/oauth/alipay/mobile/prepare", json={"accepted_legal": True, "return_browser": "edge_android"})
         self.assertEqual(response.status_code, 200, response.text)
         data = response.json()
         landing = parse_qs(urlparse(data["launch_url"]).query)["url"][0]
-        ticket = parse_qs(urlparse(landing).fragment)["ticket"][0]
-        self.assertNotIn("ticket", urlparse(landing).query)
-        return data, ticket
+        self.assertEqual(urlparse(landing).netloc, "openauth.alipay.com")
+        self.assertEqual(urlparse(landing).path, "/oauth2/publicAppAuthorize.htm")
+        state = parse_qs(urlparse(landing).query)["state"][0]
+        self.assertTrue(state.startswith(bridge.DIRECT_STATE_PREFIX))
+        self.assertNotIn("alipay_mobile=authorize", landing)
+        return data, state
+
+    def legacy_prepare(self):
+        # Keep already-issued pre-v7.26 flows supported, without issuing new ones.
+        secret, record = bridge.prepare("https://testserver/api/auth/oauth/alipay/callback", "safari")
+        self.owner.cookies.set(bridge.OWNER_COOKIE, secret, domain="testserver.local", path=bridge.COOKIE_PATH)
+        return _mobile_snapshot(record), record["ticket"]
 
     def begin(self, data, ticket):
+        if ticket.startswith(bridge.DIRECT_STATE_PREFIX):
+            self.assertEqual(data["status"], "authorizing")
+            self.assertFalse(self.phone.cookies.get(ALIPAY_STATE_COOKIE))
+            return ticket
         response = self.phone.post("/api/auth/oauth/alipay/mobile/begin", json={
             "ticket": ticket,
         })
@@ -79,7 +92,7 @@ class AlipayMobileTests(unittest.TestCase):
         completion = parse_qs(location.fragment)
         data["receipt"] = completion["receipt"][0]
         self.assertEqual(completion["flow"][0], data["flow"])
-        self.assertEqual(completion["browser"], ["safari"])
+        self.assertEqual(completion["browser"], ["edge_android"])
         self.assertEqual(response.headers["referrer-policy"], "no-referrer")
         return data
 
@@ -128,23 +141,51 @@ class AlipayMobileTests(unittest.TestCase):
         self.assertEqual(self.owner.post("/api/auth/oauth/alipay/mobile/claim", json={"flow": data["flow"]}).status_code, 422)
 
     def test_begin_attempts_rate_limited(self):
-        data, ticket = self.prepare()
+        data, ticket = self.legacy_prepare()
         with patch("app.server.fixed_window_rate_limit", return_value=False):
             response = self.phone.post("/api/auth/oauth/alipay/mobile/begin", json={"ticket": ticket})
         self.assertEqual(response.status_code, 429)
 
     def test_launch_is_single_use(self):
-        data, ticket = self.prepare()
+        data, ticket = self.legacy_prepare()
         self.begin(data, ticket)
         response = self.phone.post("/api/auth/oauth/alipay/mobile/begin", json={"ticket": ticket})
         self.assertEqual(response.status_code, 409)
 
     def test_callback_cookie_required_in_alipay_browser(self):
-        data, ticket = self.prepare()
+        data, ticket = self.legacy_prepare()
         state = self.begin(data, ticket)
         self.phone.cookies.clear()
         self.assertIn("oauth_error=failed", self.callback(state).headers["location"])
         self.assertEqual(self.status(data["flow"]).json()["status"], "authorizing")
+
+    def test_direct_state_is_consumed_once_without_creating_an_alipay_session(self):
+        data, state = self.prepare()
+        with patch("app.server.fetch_visitor_profile", return_value=self.profile) as fetch:
+            self.assertIn("alipay_mobile=complete", self.callback(state).headers["location"])
+            self.assertIn("status=failed", self.callback(state).headers["location"])
+            fetch.assert_called_once()
+        self.assertFalse(self.phone.cookies.get(AUTH_COOKIE_NAME))
+        self.assertEqual(self.status(data["flow"]).json()["status"], "ready")
+
+    def test_forged_direct_namespace_does_not_bypass_cookie_check(self):
+        result = self.owner.get("/api/auth/oauth/alipay/start?accepted_legal=true", follow_redirects=False)
+        normal_state = parse_qs(urlparse(result.headers["location"]).query)["state"][0]
+        with patch("app.server.fetch_visitor_profile") as fetch:
+            self.assertIn("status=failed", self.callback(bridge.DIRECT_STATE_PREFIX + normal_state).headers["location"])
+            fetch.assert_not_called()
+        self.assertIn(normal_state, oauth._memory_states)
+
+    def test_direct_callback_expiry_and_cancel_reject_before_provider_exchange(self):
+        data, state = self.prepare()
+        with patch("app.server.fetch_visitor_profile") as fetch:
+            with patch("app.alipay_mobile.time.time", return_value=data["expires_at"] + 1):
+                self.assertIn("status=failed", self.callback(state).headers["location"])
+            fetch.assert_not_called()
+        self.owner.post("/api/auth/oauth/alipay/mobile/cancel", json={"flow": data["flow"]})
+        with patch("app.server.fetch_visitor_profile") as fetch:
+            self.assertIn("status=failed", self.callback(state).headers["location"])
+            fetch.assert_not_called()
 
     def test_cancel_and_late_callback_cannot_resurrect_task(self):
         data, ticket = self.prepare()
@@ -176,7 +217,7 @@ class AlipayMobileTests(unittest.TestCase):
         self.assertNotEqual(first["flow"], second["flow"])
         self.assertEqual(self.status(first["flow"]).status_code, 403)
         with self.assertRaises(bridge.BridgeError):
-            bridge.check_launch(ticket)
+            bridge.consume_direct_state(ticket)
 
     def test_expiration_is_not_extended_by_polling(self):
         data, _ = self.prepare()
@@ -195,7 +236,7 @@ class AlipayMobileTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         response = self.owner.post("/api/auth/oauth/alipay/mobile/cancel", json={"flow": data["flow"]}, headers={"X-FZU-Alipay-Mobile": ""})
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(self.status(data["flow"]).json()["status"], "waiting")
+        self.assertEqual(self.status(data["flow"]).json()["status"], "authorizing")
 
     def test_legal_consent_required(self):
         self.assertEqual(self.owner.post("/api/auth/oauth/alipay/mobile/prepare", json={"accepted_legal": False}).status_code, 400)
@@ -266,6 +307,15 @@ class AlipayMobileTests(unittest.TestCase):
             with ThreadPoolExecutor(max_workers=8) as pool:
                 self.assertEqual(sum(x is not None for x in pool.map(claim, range(8))), 1)
             self.assertEqual(bridge.status(secret, flow)["status"], "consumed")
+
+            _, direct = bridge.prepare("https://testserver/api/auth/oauth/alipay/callback", direct=True)
+            def consume(_):
+                try:
+                    return bridge.consume_direct_state(direct["direct_state"])
+                except bridge.BridgeError:
+                    return None
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                self.assertEqual(sum(x is not None for x in pool.map(consume, range(8))), 1)
 
 
 if __name__ == "__main__":

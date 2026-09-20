@@ -19,6 +19,7 @@ from .runtime_state import get_redis_client, redis_configured
 from .session_crypto import open_session, seal_session
 
 TTL = 300
+DIRECT_STATE_PREFIX = "am_"
 OWNER_COOKIE = "fzu_alipay_mobile_owner"
 COOKIE_PATH = "/api/auth/oauth/alipay"
 _memory: dict[str, str] = {}
@@ -111,21 +112,49 @@ def _owner(owner, flow):
     return _flow_key(flow)
 
 
-def prepare(redirect_uri, return_browser="system"):
+def prepare(redirect_uri, return_browser="system", *, direct=False):
     owner = secrets.token_hex(32)
     flow = digest(owner)
-    ticket = secrets.token_hex(32)
     record = {
         "flow": flow, "status": "waiting", "expires_at": time.time() + TTL,
-        "redirect_uri": redirect_uri, "ticket": ticket,
+        "redirect_uri": redirect_uri,
         "return_browser": return_browser,
     }
+    if direct:
+        state = DIRECT_STATE_PREFIX + secrets.token_hex(32)
+        record.update(status="authorizing", direct_state=state, state_hash=digest(state))
+        index_key = "alipay_mobile:state:" + digest(state)
+    else:
+        record["ticket"] = secrets.token_hex(32)
+        index_key = "alipay_mobile:launch:" + digest(record["ticket"])
     if not _cas(_flow_key(flow), None, record):
         raise BridgeError()
     index = {"flow": flow, "expires_at": record["expires_at"]}
-    if not _cas("alipay_mobile:launch:" + digest(ticket), None, index):
+    if not _cas(index_key, None, index):
         raise BridgeError()
     return owner, record
+
+
+def consume_direct_state(state):
+    """Validate and consume the direct OAuth state before exchanging a code.
+
+    No Alipay cookie exists when opening its official authorization URL directly.
+    This callback ONLY creates an encrypted handoff; the original cookie and
+    separate return receipt are still both required to create a website session.
+    Normal/legacy OAuth callbacks retain their existing cookie validation.
+    """
+    if not state.startswith(DIRECT_STATE_PREFIX) or not _valid(state[len(DIRECT_STATE_PREFIX):]):
+        raise BridgeError()
+    _, index = _read("alipay_mobile:state:" + digest(state))
+    key = _flow_key(index["flow"])
+    raw, record = _read(key)
+    if (record["status"] != "authorizing" or not record.get("direct_state")
+            or not hmac.compare_digest(record.get("state_hash", ""), digest(state))):
+        raise BridgeError()
+    record["status"] = "exchanging"
+    if not _cas(key, raw, record):
+        raise BridgeError()
+    return {"bridge_flow": record["flow"], "redirect_uri": record["redirect_uri"]}
 
 
 def status(owner, flow):
@@ -155,7 +184,8 @@ def authorize(flow, state):
 def finish(flow, state, profile=None, error="failed"):
     key = _flow_key(flow)
     raw, record = _read(key)
-    if record["status"] != "authorizing" or not hmac.compare_digest(record.get("state_hash", ""), digest(state)):
+    expected_status = "exchanging" if record.get("direct_state") else "authorizing"
+    if record["status"] != expected_status or not hmac.compare_digest(record.get("state_hash", ""), digest(state)):
         raise BridgeError()
     record.update(status="ready" if profile else error)
     receipt = secrets.token_hex(32) if profile else ""
@@ -164,6 +194,7 @@ def finish(flow, state, profile=None, error="failed"):
         record["receipt_hash"] = digest(receipt)
     record.pop("ticket", None)
     record.pop("verification_code", None)
+    record.pop("direct_state", None)
     if not _cas(key, raw, record):
         raise BridgeError()
     return {"flow": flow, "receipt": receipt, "browser": record.get("return_browser", "system")}

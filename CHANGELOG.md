@@ -3,6 +3,16 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.26] - 2026-09-20
+
+- Launch the official Alipay authorization page directly, removing the pre-authorization site landing and its redundant external-site transition.
+- Add Android Edge detection and an explicit “Return to Edge” action, with a copyable HTTPS return link and manual-selection fallback for blocked clipboard access. Do not depend on Alipay's top-right menu or automatic app switching.
+- Bind direct mobile callbacks to a separate encrypted, expiring, atomically consumed state; still require the original browser cookie AND return receipt to create a site session. Preserve desktop/legacy state-cookie checks.
+- 修复安卓 Edge 授权后没有返回按钮的问题，去掉授权前的本站中转页；平台自己的外链提示仍可能出现。
+- 授权完成后点击“返回 Edge 完成登录”；跳转受限时可复制返回链接到原 Edge 地址栏打开，不再依赖支付宝右上角菜单。原浏览器收到并验证返回凭据后才算网站登录成功。
+
+---
+
 ## [v7.25] - 2026-09-20
 
 - Simplify mobile Alipay login: attempt app launch immediately, remove the manually entered confirmation code, and finish automatically when the authorization return link reaches the originating browser.
