@@ -163,7 +163,7 @@ and [official Python SDK protocol reference](https://github.com/alipay/alipay-sd
 - Keep `FZU_CHAT_ALIPAY_ENABLED=false` until review is approved. Configured but pending providers render as a disabled “待上线” entry. After approval, set it to `true` and recreate only the app container with all overrides.
 
 ```bash
-docker compose -f docker-compose.prod.yml -f docker-compose.2g.override.yml -f docker-compose.alipay.yml pull fzu-chat
+docker compose -f docker-compose.prod.yml -f docker-compose.2g.override.yml -f docker-compose.alipay.yml pull --policy always fzu-chat
 docker compose -f docker-compose.prod.yml -f docker-compose.2g.override.yml -f docker-compose.alipay.yml up -d --no-deps fzu-chat
 ```
 
