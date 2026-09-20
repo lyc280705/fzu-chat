@@ -18,12 +18,9 @@ from urllib.parse import parse_qs, urlparse
 from typing import Any, Dict, List, Tuple
 
 import requests
-import urllib3
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE_URL = "https://jwcjwxt2.fzu.edu.cn"
 JWCH_PREFIX = f"{BASE_URL}:81"
@@ -638,7 +635,8 @@ class JwchClient:
         self.password = password
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": _UA})
-        self.session.verify = False
+        # A deployment may supply its trusted CA bundle, but never disable verification.
+        self.session.verify = os.getenv("FZU_CHAT_JWCH_CA_BUNDLE", "").strip() or True
         self.identifier: str = ""
         self._logged_in = False
 
@@ -726,30 +724,30 @@ class JwchClient:
         except JwchError:
             raise
         except requests.RequestException as exc:
-            raise JwchLoginError(f"教务系统网络连接失败: {exc}") from exc
+            raise JwchLoginError("教务系统网络连接失败，请稍后重试。") from exc
         except Exception as exc:
-            raise JwchLoginError(f"登录失败: {exc}") from exc
+            raise JwchLoginError("教务系统登录失败，请稍后重试。") from exc
 
     def _recognise_captcha(self, image_bytes: bytes) -> str:
         image_type = imghdr.what(None, image_bytes) or "gif"
         data_url = f"data:image/{image_type};base64,{base64.b64encode(image_bytes).decode()}"
         try:
-            resp = requests.post(CAPTCHA_AI_URL, data={"validateCode": data_url}, timeout=JWCH_CAPTCHA_TIMEOUT_SECONDS, verify=False)
+            resp = requests.post(CAPTCHA_AI_URL, data={"validateCode": data_url}, timeout=JWCH_CAPTCHA_TIMEOUT_SECONDS)
             if resp.status_code == 200:
                 payload = resp.json()
                 code = payload.get("message") or payload.get("data") or ""
                 if code:
                     return str(code).strip()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Captcha recognition failed: %s", exc)
+            logger.warning("Captcha recognition failed: %s", type(exc).__name__)
 
         try:
             b64 = base64.b64encode(image_bytes).decode()
-            resp = requests.post(CAPTCHA_AI_URL.rsplit("?", 1)[0], json={"image": b64}, timeout=JWCH_CAPTCHA_TIMEOUT_SECONDS, verify=False)
+            resp = requests.post(CAPTCHA_AI_URL.rsplit("?", 1)[0], json={"image": b64}, timeout=JWCH_CAPTCHA_TIMEOUT_SECONDS)
             if resp.status_code == 200:
                 return str(resp.json().get("data", "")).strip()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Captcha recognition fallback failed: %s", exc)
+            logger.warning("Captcha recognition fallback failed: %s", type(exc).__name__)
         return ""
 
     def validate_session(self) -> bool:

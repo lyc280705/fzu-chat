@@ -146,11 +146,33 @@
 .app-shell .user-avatar { width: 34px; height: 34px; border-radius: 50%; background: #2d3f3c; color: #dae8e2; font-size: 13px; }
 .app-shell .user-info strong { font-size: 12px; line-height: 1.6; font-weight: 500; }
 .app-shell .user-info span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8591a1; font-size: 10px; line-height: 1.8; }
-.sidebar-reconnect summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; padding: 9px 12px; color: #cbb386; font-size: 12px; border-radius: 8px; }
-.sidebar-reconnect summary::-webkit-details-marker { display: none; }
-.sidebar-reconnect summary span { flex: 1; }
-.sidebar-reconnect[open] summary > svg:last-child { transform: rotate(180deg); }
-.sidebar-reconnect .edu-warn { max-height: 30dvh; overflow-y: auto; margin-top: 5px; }
+.sidebar-reconnect { border: 1px solid #c6a57522; border-radius: 12px; background: #c6a57506; }
+.sidebar-reconnect-trigger { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: transparent; cursor: pointer; padding: 10px 12px; color: #cbb994; font: inherit; font-size: 12px; border-radius: 11px; text-align: left; }
+.sidebar-reconnect-trigger:hover { background: #ffffff04; }
+.sidebar-reconnect-trigger:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: -3px; }
+.sidebar-reconnect-trigger span { flex: 1; }
+.sidebar-reconnect .edu-warn { max-height: 46dvh; overflow-y: auto; margin: 0; padding: 12px; gap: 10px; border: 0; border-top: 1px solid #ffffff0b; border-radius: 0 0 11px 11px; background: #1b2430; }
+.sidebar-reconnect .edu-warn-title { color: #dfe6ee; font-size: 14px; font-weight: 500; }
+.sidebar-reconnect .edu-warn-note { margin: 0; color: #9daabb; font-size: 12px; line-height: 1.7; }
+.edu-relogin-account, .edu-relogin-hint { color: #8f9dac; font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+.edu-relogin-hint { margin: 0; }
+.sidebar-reconnect .edu-relogin-field { color: #c3cedc; font-size: 12px; font-weight: 400; gap: 7px; }
+.sidebar-reconnect .edu-relogin-field input { width: 100%; min-width: 0; min-height: 42px; padding: 10px 11px; border: 1px solid #ffffff18; border-radius: 9px; background: #111a24; color: #e4ebf2; font-size: 14px; }
+.sidebar-reconnect .edu-relogin-field input:focus { border-color: #a8cbb980; box-shadow: 0 0 0 3px #a8cbb90a; }
+.sidebar-reconnect .edu-relogin-btn { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 9px 12px; border-radius: 9px; background: #d7e9e0; color: #21362a; font-size: 12px; font-weight: 500; }
+.sidebar-reconnect .edu-relogin-btn:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
+.sidebar-reconnect .edu-relogin-error { color: #e9a6a6; font-size: 12px; line-height: 1.6; }
+.edu-status-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; min-height: 34px; padding: 6px 10px; border: 1px solid #c6a57528; border-radius: 9px; background: #c6a57508; color: #cbb994; font-size: 12px; cursor: pointer; }
+.edu-status-trigger:hover { background: #c6a57514; }
+.edu-status-trigger:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
+.edu-mobile-notice { display: none; }
+.edu-reconnect-dialog { position: fixed; width: min(380px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; color: #dfe6ee; border: 1px solid #ffffff18; border-radius: 18px; background: #1b2430; box-shadow: 0 24px 80px #00000050; overflow-y: auto; }
+.edu-reconnect-dialog::backdrop { background: #080c1499; backdrop-filter: blur(5px); }
+.edu-reconnect-dialog__header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px 0; }
+.edu-reconnect-dialog__header h2 { margin: 0; font-size: 18px; font-weight: 500; }
+.edu-reconnect-dialog__header button { width: 32px; height: 32px; border: 0; border-radius: 8px; background: #ffffff05; color: #9dacbd; }
+.edu-reconnect-dialog .edu-warn { max-height: none; border: 0; padding: 16px 20px 20px; gap: 14px; }
+.edu-reconnect-dialog .edu-relogin-btn { min-height: 44px; font-size: 14px; }
 
 .account-menu { position: relative; }
 .app-shell .account-menu-trigger { width: 100%; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background 160ms ease; }
@@ -172,6 +194,16 @@
 }
 
 @media (max-width: 768px) {
+  .sidebar-reconnect .edu-relogin-field input { font-size: 16px; }
+  .edu-status-trigger { display: none; }
+  .edu-mobile-notice { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border: 1px solid #c6a57524; border-radius: 11px; background: #c6a57508; color: #cbb994; }
+  .edu-mobile-notice > svg { flex-shrink: 0; }
+  .edu-mobile-notice > div { min-width: 0; flex: 1; }
+  .edu-mobile-notice strong, .edu-mobile-notice span { display: block; }
+  .edu-mobile-notice strong { font-size: 12px; line-height: 1.7; font-weight: 500; }
+  .edu-mobile-notice span { font-size: 10px; line-height: 1.6; color: #97a5b6; }
+  .edu-mobile-notice button { flex-shrink: 0; min-height: 36px; padding: 7px 9px; border: 1px solid #a8cbb925; border-radius: 8px; background: #a8cbb912; color: #d7e9e0; font-size: 12px; cursor: pointer; }
+  .edu-mobile-notice button:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
   .login-page--auth { display: flex; padding: max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom)); background: radial-gradient(ellipse at 50% 0, #1c2c32 0, transparent 55%), #0d131d; }
   .auth-layout { display: flex; flex-direction: column; width: min(100%, 420px); gap: 22px; margin: auto; }
   .auth-intro { align-self: center; padding: 0; }

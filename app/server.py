@@ -34,7 +34,9 @@ from .auth import (
     get_session,
     invalidate_session,
     invalidate_user_sessions,
+    migrate_legacy_sessions,
     update_session,
+    update_user_edu_session,
 )
 from .campus_recommendations import (
     build_contextual_recommendation,
@@ -393,13 +395,14 @@ def _extract_auth_token(authorization: str | None, session_cookie: str | None) -
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    await asyncio.to_thread(migrate_legacy_sessions)
     warm_teaching_week_cache_async()
     yield
 
 
 app = FastAPI(
     title="FZU Chat API",
-    version="7.20.0",
+    version="7.21.0",
     lifespan=lifespan,
     docs_url="/docs" if PUBLIC_DOCS else None,
     redoc_url="/redoc" if PUBLIC_DOCS else None,
@@ -945,9 +948,14 @@ def extract_text_content(content: Any) -> str:
 
 def summarize_tool_args(args: Any) -> str:
     if isinstance(args, str):
+        if args.lstrip().startswith(("{", "[")):
+            try:
+                return summarize_tool_args(json.loads(args))
+            except (ValueError, TypeError):
+                return ""
         return args
     if not isinstance(args, dict):
-        return str(args or "")
+        return ""
     if any(key in args for key in ("scenario", "manual_location_id", "latitude", "longitude", "travel_mode")):
         scenario_label = {
             "auto": "智能校园推荐",
@@ -1007,7 +1015,8 @@ def summarize_tool_args(args: Any) -> str:
         if parts:
             return "；".join(parts)
     if args.get("query"):
-        return str(args.get("query"))
+        query = args.get("query")
+        return summarize_tool_args(query) if isinstance(query, str) else ""
     if args.get("content"):
         parts: List[str] = []
         category = str(args.get("category", "") or "").strip()
@@ -1040,7 +1049,7 @@ def summarize_tool_args(args: Any) -> str:
             parts.append(f"{label_map.get(key, key)}：{value}")
     if parts:
         return "；".join(parts)
-    return json.dumps(args, ensure_ascii=False) if args else ""
+    return ""
 
 
 def append_text_part(parts: List[Dict[str, Any]], delta: str) -> None:
@@ -1491,14 +1500,15 @@ def refresh_edu_session_status(token: str) -> Dict[str, Any] | None:
         return session
 
     expires_at = float(session.get("edu_session_expires_at") or 0)
+    revision = str(session.get("edu_revision") or "")
     if expires_at and expires_at <= time.time():
         logger.info("Edu session timed out for %s", mask_user_id(session.get("user_id", "")))
-        clear_edu_session(token, "教务连接已超时，请在侧栏重新连接教务。")
+        clear_edu_session(token, "教务连接已超时，请重新连接教务。", expected_revision=revision)
         return get_session(token)
 
     cookies = session.get("edu_cookies") or []
     if not cookies:
-        clear_edu_session(token, "教务登录已过期，请在侧栏重新连接教务。")
+        clear_edu_session(token, "教务登录已过期，请重新连接教务。", expected_revision=revision)
         return get_session(token)
 
     try:
@@ -1508,16 +1518,15 @@ def refresh_edu_session_status(token: str) -> Dict[str, Any] | None:
             session.get("edu_identifier", ""),
         )
         client.validate_session()
-        if not expires_at:
-            update_session(token, {"edu_session_expires_at": int(time.time()) + EDU_SESSION_TTL})
-            session = get_session(token) or session
-        if session.get("edu_status_message"):
-            update_session(token, {"edu_status_message": ""})
-            return get_session(token)
-        return session
+        update_user_edu_session(session["user_id"], {
+            **session,
+            "edu_session_expires_at": expires_at or int(time.time()) + EDU_SESSION_TTL,
+            "edu_status_message": "",
+        }, expected_revision=revision)
+        return get_session(token)
     except JwchSessionError:
         logger.info("Edu session expired for %s", mask_user_id(session.get("user_id", "")))
-        clear_edu_session(token, "教务登录已过期，请在侧栏重新连接教务。")
+        clear_edu_session(token, "教务登录已过期，请重新连接教务。", expected_revision=revision)
         return get_session(token)
     except Exception as exc:
         logger.warning("Edu session validation failed: %s", type(exc).__name__)
@@ -1571,9 +1580,12 @@ def schedule_signal_snapshot_refresh(user_id: str, edu_ctx: Dict[str, Any] | Non
     thread.start()
 
 
-def clear_edu_session(token: str, status_message: str = "") -> None:
-    update_session(
-        token,
+def clear_edu_session(token: str, status_message: str = "", *, expected_revision: str | None = None) -> None:
+    session = get_session(token)
+    if not session or session.get("student_type") != "undergraduate":
+        return
+    update_user_edu_session(
+        session["user_id"],
         {
             "edu_authenticated": False,
             "edu_cookies": None,
@@ -1581,7 +1593,30 @@ def clear_edu_session(token: str, status_message: str = "") -> None:
             "edu_status_message": status_message,
             "edu_session_expires_at": None,
         },
+        expected_revision=expected_revision if expected_revision is not None else str(session.get("edu_revision") or ""),
     )
+
+
+def public_auth_sync_state(token: str) -> Dict[str, Any]:
+    """A credential-free snapshot for all devices, without upstream polling."""
+    session = get_session(token)
+    if session and session.get("student_type") == "undergraduate" and session.get("edu_authenticated"):
+        expires_at = float(session.get("edu_session_expires_at") or 0)
+        if expires_at and expires_at <= time.time():
+            clear_edu_session(token, "教务连接已超时，请重新连接教务。",
+                              expected_revision=str(session.get("edu_revision") or ""))
+            session = get_session(token)
+    if not session:
+        return {"authenticated": False}
+    return {"authenticated": True, "edu_authenticated": bool(session.get("edu_authenticated")),
+            "edu_error": session.get("edu_status_message") or ""}
+
+
+def connect_user_edu_session(user_id: str, client: JwchClient) -> None:
+    try:
+        update_user_edu_session(user_id, _build_edu_session_state(client))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="教务连接状态暂时无法同步，请稍后重试。") from exc
 
 
 def _resolve_memory_proposal(
@@ -1833,18 +1868,16 @@ def login(req: LoginRequest, request: Request) -> JSONResponse:
     finally:
         release_slot(login_slot)
 
+    connect_user_edu_session(req.student_id, client)
     existing_token = request.cookies.get(AUTH_COOKIE_NAME)
     if existing_token:
         invalidate_session(existing_token)
-
     token = create_session(
         user_id=req.student_id,
         student_type=req.student_type,
         display_name=req.student_id,
-        edu_authenticated=True,
-        edu_cookies=[{"name": c.name, "value": c.value} for c in client.session.cookies],
+        edu_authenticated=False,
     )
-    update_session(token, _build_edu_session_state(client))
     warm_teaching_week_cache_async()
     schedule_signal_snapshot_refresh(req.student_id, _edu_context_from_session(req.student_id, get_session(token)))
 
@@ -1891,7 +1924,7 @@ def relogin_edu(req: EduReloginRequest, request: Request, user: AuthUser = Depen
     finally:
         release_slot(relogin_slot)
 
-    update_session(user.token, _build_edu_session_state(client))
+    connect_user_edu_session(user.user_id, client)
     warm_teaching_week_cache_async()
 
     session = get_session(user.token) or {}
@@ -1917,7 +1950,6 @@ def logout(
 ) -> JSONResponse:
     token = _extract_auth_token(authorization, session_cookie)
     if token:
-        clear_edu_session(token)
         invalidate_session(token)
     response = JSONResponse({"ok": True})
     _clear_auth_cookie(response, request)
@@ -2076,12 +2108,19 @@ async def stream_conversation_events(request: Request, user: AuthUser = Depends(
     queue = register_conversation_event_subscriber(user.user_id)
 
     async def event_stream() -> AsyncIterator[bytes]:
+        last_auth_state = None
         try:
             while True:
                 if await request.is_disconnected():
                     break
+                auth_state = await asyncio.to_thread(public_auth_sync_state, user.token)
+                if auth_state != last_auth_state:
+                    yield serialize_event("auth", auth_state)
+                    last_auth_state = auth_state
+                if not auth_state["authenticated"]:
+                    break
                 try:
-                    payload = await asyncio.wait_for(queue.get(), timeout=15)
+                    payload = await asyncio.wait_for(queue.get(), timeout=3)
                 except asyncio.TimeoutError:
                     yield b": keep-alive\n\n"
                     continue

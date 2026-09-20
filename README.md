@@ -9,7 +9,7 @@ A Fuzhou University intelligent Q&A system with student authentication and educa
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
 
-Current tagged release: [v7.20](CHANGELOG.md)
+Current tagged release: [v7.21](CHANGELOG.md)
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -118,7 +118,21 @@ docker compose up -d --build
 # 3. Visit http://localhost:80
 ```
 
-Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, then run `FZU_CHAT_VERSION=v7.20 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build.
+Production deployment can use `docker-compose.prod.yml` with an internal Redis container. Set a URL-safe `REDIS_PASSWORD` such as `openssl rand -hex 32`, provision the session encryption key below, then run `FZU_CHAT_VERSION=v7.21 ./scripts/deploy-ghcr.sh`; if GHCR image pull fails, the script falls back to a local production image build.
+
+Before starting either Docker Compose configuration, create the persistent session encryption key once:
+
+```bash
+python scripts/generate-session-key.py
+```
+
+The script creates `session_encryption_key.txt` with owner-only permissions and refuses to overwrite an existing key. Compose mounts it read-only as a secret; it is excluded from Git. Keep this file across releases and protect its backup separately from Redis. Do not regenerate it during ordinary deployments: losing or replacing it invalidates encrypted sessions.
+
+Redis session values (including education cookies) use authenticated encryption, and website bearer tokens are hashed before use as Redis keys. Startup migrates existing plaintext sessions without changing browser tokens or extending their lifetime. A missing/invalid key blocks startup rather than silently storing plaintext. Rolling back to a release predating encrypted sessions requires users to sign in again; conversation data is unaffected. Encryption does not protect against an attacker who controls the application server and can also read its key.
+
+Education connections are shared only across authenticated undergraduate sessions for the same account. A revision check prevents stale requests from invalidating a newly connected session. The device event stream sends only connection status, never credentials; normal logout affects that device only, while account deletion revokes all devices and removes shared credentials. Browser focus/online events and periodic refresh reconcile missed status updates.
+
+Teaching-system and CAPTCHA requests validate TLS certificates. A private trusted CA bundle can be configured through `FZU_CHAT_JWCH_CA_BUNDLE` for the teaching-system client; disabling certificate verification is not supported.
 
 Useful production environment variables:
 

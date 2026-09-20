@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   Bike,
   ArrowRight,
   ArrowLeft,
   Check,
   ChevronDown,
-  ChevronUp,
   BookOpen,
   Copy,
   Eye,
@@ -33,12 +32,15 @@ import remarkGfm from 'remark-gfm'
 import { ChatComposer } from './components/ChatComposer.jsx'
 import { AccountMenu } from './components/AccountMenu.jsx'
 import { EmptyChatState } from './components/EmptyChatState.jsx'
+import { AnimatedCollapse } from './components/AnimatedCollapse.jsx'
 import { ConfirmDialog, IconButton } from './components/ui.jsx'
 import { useEscapeKey } from './hooks/useEscapeKey.js'
+import { readableToolQuery } from './lib/toolQuery.js'
 import './App.css'
 import './auth-navigation.css'
 import './chat-surface.css'
 import './settings-surface.css'
+import './disclosure-motion.css'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -479,6 +481,8 @@ const toDomIdFragment = (value = '') => String(value).trim().replace(/[^a-zA-Z0-
 const getCitationAnchorId = (messageId, toolKey, citationId) =>
   `citation-${toDomIdFragment(messageId)}-${toDomIdFragment(toolKey)}-${toDomIdFragment(citationId)}`
 
+const getToolExpansionKey = (messageId, part) => JSON.stringify([messageId, part.tool_id ?? part.tool_name])
+
 const buildCitationLinkMap = (messageId, parts = []) => {
   const citationMap = {}
 
@@ -507,11 +511,11 @@ const scrollToCitation = (href = '') => {
   if (!href.startsWith('#') || typeof document === 'undefined') return
   const target = document.getElementById(href.slice(1))
   if (!target) return
-  target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  target.focus({ preventScroll: true })
+  target.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' })
   target.classList.add('tool-citation-item--targeted')
-  if (typeof window !== 'undefined') {
-    window.setTimeout(() => target.classList.remove('tool-citation-item--targeted'), 1800)
-  }
+  const timer = window.setTimeout(() => target.classList.remove('tool-citation-item--targeted'), 1800)
+  return () => { window.clearTimeout(timer); target.classList.remove('tool-citation-item--targeted') }
 }
 
 const compactParts = (parts = []) => {
@@ -790,9 +794,9 @@ const toolQueryText = (part = {}) => {
     const summary = campusRecommendationArgsSummary(part.query, data)
     if (summary) return summary
     const raw = String(part.query || '').trim()
-    return raw.startsWith('{') ? '' : raw
+    return readableToolQuery(raw)
   }
-  return String(part.query || '').trim()
+  return readableToolQuery(part.query) || readableToolQuery(part.args)
 }
 
 const toolResultSummary = (part = {}) => {
@@ -1322,7 +1326,8 @@ function LoginPage({ onLogin }) {
   )
 }
 
-function EduReloginPanel({ message, studentId, onSubmit }) {
+function EduReloginPanel({ message, studentId, onSubmit, showTitle = true }) {
+  const passwordId = useId()
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -1333,7 +1338,7 @@ function EduReloginPanel({ message, studentId, onSubmit }) {
     setLoading(true)
     setError('')
     try {
-      await onSubmit(password.trim())
+      await onSubmit(password)
       setPassword('')
     } catch (err) {
       setError(err.message || '重新连接教务失败')
@@ -1344,25 +1349,80 @@ function EduReloginPanel({ message, studentId, onSubmit }) {
 
   return (
     <div className="edu-warn edu-warn--interactive">
-      <div className="edu-warn-title">{message || '教务登录已过期，请重新连接教务。'}</div>
-      <div className="edu-warn-note">重新连接后不会退出当前账号，也不会丢失现有对话。</div>
+      {showTitle && <div className="edu-warn-title">重新连接教务</div>}
+      <p className="edu-warn-note">{message || '教务连接已过期，验证密码后即可继续查询。'}</p>
+      {studentId && <div className="edu-relogin-account">学号 {studentId}</div>}
       <form className="edu-relogin-form" onSubmit={handleSubmit}>
         <label className="edu-relogin-field">
-          <span>{studentId ? `当前学号：${studentId}` : '教务密码'}</span>
+          <span>教务密码</span>
           <input
             type="password"
+            id={passwordId}
             value={password}
-            onChange={(event) => setPassword(event.target.value)}
+            onChange={(event) => { setPassword(event.target.value); setError('') }}
             placeholder="请输入教务密码"
             autoComplete="current-password"
+            disabled={loading}
+            aria-invalid={Boolean(error)}
+            aria-describedby={error ? `${passwordId}-error` : undefined}
           />
         </label>
         <button type="submit" className="edu-relogin-btn" disabled={loading || !password.trim()}>
-          {loading ? '重新连接中…' : '重新连接教务'}
+          <RefreshCw size={14} aria-hidden="true" />{loading ? '重新连接中…' : '重新连接教务'}
         </button>
       </form>
-      {error && <div className="edu-relogin-error">{error}</div>}
+      <p className="edu-relogin-hint">密码不会保存，现有对话不受影响。</p>
+      {error && <div id={`${passwordId}-error`} className="edu-relogin-error" role="alert">{error}</div>}
     </div>
+  )
+}
+
+function EduReconnectDialog({ open, message, studentId, onSubmit, onClose }) {
+  const dialogRef = useRef(null)
+  const previousFocusRef = useRef(null)
+  const [present, setPresent] = useState(open)
+  const titleId = useId()
+  if (open && !present) setPresent(true)
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!open && !dialog.open) return undefined
+    if (open && !dialog.open) {
+      previousFocusRef.current = document.activeElement
+      dialog.showModal()
+    }
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const animation = dialog.animate(open ? [
+      { opacity: 0, transform: 'translateY(12px) scale(0.98)' },
+      { opacity: 1, transform: 'translateY(0) scale(1)' },
+    ] : [
+      { opacity: 1, transform: 'translateY(0) scale(1)' },
+      { opacity: 0, transform: 'translateY(6px) scale(0.99)' },
+    ], { duration: reducedMotion ? 0 : open ? 280 : 180, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' })
+    animation.finished.then(() => {
+      if (open) return
+      dialog.close()
+      setPresent(false) // Clear the password by unmounting only after the exit.
+      if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus({ preventScroll: true })
+    }).catch(() => {}) // A reversed transition or unmount cancels the animation.
+    return () => animation.cancel()
+  }, [open])
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    return () => {
+      dialog.close()
+      if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus({ preventScroll: true })
+    }
+  }, [])
+  return (
+    <dialog ref={dialogRef} className="edu-reconnect-dialog sidebar-reconnect" data-open={open} aria-labelledby={titleId} onCancel={(event) => { event.preventDefault(); onClose() }} onClick={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <div className="edu-reconnect-dialog__header">
+        <h2 id={titleId}>重新连接教务</h2>
+        <IconButton label="关闭教务重连窗口" onClick={onClose}><X size={18} aria-hidden="true" /></IconButton>
+      </div>
+      {present && <EduReloginPanel message={message} studentId={studentId} onSubmit={onSubmit} showTitle={false} />}
+    </dialog>
   )
 }
 
@@ -2211,7 +2271,7 @@ function ContextualRecommendationCard({ data }) {
   )
 }
 
-function MessageMarkdown({ content, citationMap = {} }) {
+function MessageMarkdown({ content, citationMap = {}, onCitation }) {
   const linkedContent = content ? linkifyCitationReferences(content, citationMap) : ''
   const normalizedContent = linkedContent ? normalizeMarkdownTables(linkedContent) : ''
   if (!content) return null
@@ -2230,7 +2290,7 @@ function MessageMarkdown({ content, citationMap = {} }) {
                   className="citation-ref"
                   onClick={(event) => {
                     event.preventDefault()
-                    scrollToCitation(href)
+                    onCitation?.(href)
                   }}
                 >
                   {children}
@@ -2268,7 +2328,8 @@ function MessageMarkdown({ content, citationMap = {} }) {
 /*  Tool Card                                                          */
 /* ================================================================== */
 
-function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
+function ToolCard({ part, conversationId, messageId, onMemoryProposalAction, expanded, onExpandedChange }) {
+  const bodyId = useId()
   const icon = TOOL_ICONS[part.tool_name] || '🔧'
   const isRunning = part.status === 'running'
   const isStopped = part.status === 'stopped'
@@ -2278,7 +2339,6 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
   const title = toolCardTitle(part)
   const summary = toolResultSummary(part)
   const showRawUrls = !['query_cultivate_plan', 'retrieve', 'bocha_websearch_tool'].includes(part.tool_name)
-  const [expanded, setExpanded] = useState(() => !EDUCATIONAL_TOOL_NAMES.has(part.tool_name))
   const displayQuery = toolQueryText(part)
   const recommendationData = part.tool_name === 'recommend_campus_context'
     ? normalizeCampusRecommendationData(part.data)
@@ -2352,17 +2412,18 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
           <button
             type="button"
             className="tool-card-toggle"
-            onClick={() => setExpanded((value) => !value)}
+            onClick={() => onExpandedChange(!expanded)}
             aria-expanded={expanded}
+            aria-controls={bodyId}
             aria-label={expanded ? '收起工具结果' : '展开工具结果'}
           >
-            {expanded ? <ChevronUp size={15} aria-hidden="true" /> : <ChevronDown size={15} aria-hidden="true" />}
+            <ChevronDown size={15} aria-hidden="true" />
             <span>{expanded ? '收起' : '展开'}</span>
           </button>
           {isRunning && <span className="tool-spinner" />}
         </div>
       </div>
-      {expanded && (
+      <AnimatedCollapse open={expanded} id={bodyId} className="tool-card-disclosure">
         <div className="tool-card-body">
           {displayQuery && <div className="tool-card-query">{displayQuery}</div>}
           {renderData()}
@@ -2374,7 +2435,7 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction }) {
             </div>
           )}
         </div>
-      )}
+      </AnimatedCollapse>
     </div>
   )
 }
@@ -2554,6 +2615,8 @@ function PrivacyPolicyView({
 function App() {
   const [user, setUser] = useState(null)
   const [eduError, setEduError] = useState('')
+  const [eduReconnectOpen, setEduReconnectOpen] = useState(false)
+  const [eduDialogOpen, setEduDialogOpen] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
   const [viewMode, setViewMode] = useState('chat')
 
@@ -2564,6 +2627,8 @@ function App() {
   const [conversationLoadingMore, setConversationLoadingMore] = useState(false)
   const [activeId, setActiveId] = useState(null)
   const [msgStore, setMsgStore] = useState({})
+  const [expandedTools, setExpandedTools] = useState({})
+  const [citationTarget, setCitationTarget] = useState(null)
   const [input, setInput] = useState('')
   const [selModel, setSelModel] = useState('glm-5.3')
   const [reasoningByModel, setReasoningByModel] = useState(() => {
@@ -2617,6 +2682,7 @@ function App() {
   const shouldAutoScrollRef = useRef(true)
   const draftThinkingTimersRef = useRef(new Map())
   const conversationEventsRef = useRef(null)
+  const authRequestSequenceRef = useRef(0)
   const copiedMessageTimerRef = useRef(null)
   const recentLocationRef = useRef(null)
   const lastLocationFailureAtRef = useRef(0)
@@ -2749,6 +2815,7 @@ function App() {
   }, [setConversationStopPending, setConversationStreaming])
 
   const resetAuthState = useCallback(() => {
+    authRequestSequenceRef.current += 1
     if (conversationEventsRef.current) {
       conversationEventsRef.current.close()
       conversationEventsRef.current = null
@@ -2759,11 +2826,15 @@ function App() {
     draftThinkingTimersRef.current.clear()
     setUser(null)
     setEduError('')
+    setEduReconnectOpen(false)
+    setEduDialogOpen(false)
     setViewMode('chat')
     setConversations([])
     setConversationCursor(null)
     setConversationLoadingMore(false)
     setMsgStore({})
+    setExpandedTools({})
+    setCitationTarget(null)
     setActiveId(null)
     setStreamingConversations({})
     setStopPendingConversations({})
@@ -2803,7 +2874,9 @@ function App() {
   }, [])
 
   const refreshAuthState = useCallback(async () => {
+    const sequence = ++authRequestSequenceRef.current
     const response = await api('/api/auth/me')
+    if (sequence !== authRequestSequenceRef.current) return null
     if (response.status === 401) {
       resetAuthState()
       return null
@@ -2813,11 +2886,52 @@ function App() {
     }
 
     const nextUser = await response.json()
+    if (sequence !== authRequestSequenceRef.current) return null
     suppressPreferencePersistenceRef.current = false
     setUser(nextUser)
     setEduError(nextUser.edu_error || '')
     return nextUser
   }, [resetAuthState])
+
+  const handleCitation = useCallback((messageId, parts, href) => {
+    const owner = parts.find((part) => part.type === 'tool' && SEARCH_RESULT_TOOL_NAMES.has(part.tool_name)
+      && part.data?.items?.some((item) => href === `#${getCitationAnchorId(messageId, part.tool_id ?? part.tool_name, item.citation_id)}`))
+    if (!owner) return
+    setExpandedTools((previous) => ({ ...previous, [getToolExpansionKey(messageId, owner)]: true }))
+    setCitationTarget({ href })
+  }, [])
+
+  useEffect(() => {
+    if (!citationTarget) return undefined
+    let cleanup
+    let cancelled = false
+    const frame = requestAnimationFrame(async () => {
+      const target = document.getElementById(citationTarget.href.slice(1))
+      const panel = target?.closest('.animated-collapse')
+      // Center against the final geometry, not the almost-zero opening frame.
+      if (panel) await Promise.allSettled(panel.getAnimations().map((animation) => animation.finished))
+      if (!cancelled && (!panel || panel.dataset.open === 'true')) cleanup = scrollToCitation(citationTarget.href)
+    })
+    return () => { cancelled = true; cancelAnimationFrame(frame); cleanup?.() }
+  }, [citationTarget])
+
+  // Reconcile after a sleeping tab, a lost stream, or a device reconnects.
+  useEffect(() => {
+    if (!userId) return undefined
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void refreshAuthState().catch(() => {})
+    }
+    const timer = window.setInterval(refresh, 60000)
+    window.addEventListener('focus', refresh)
+    window.addEventListener('online', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener('focus', refresh)
+      window.removeEventListener('online', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [refreshAuthState, userId])
 
   const handleMsgListWheel = useCallback((event) => {
     if (event.deltaY < 0) {
@@ -3002,15 +3116,31 @@ function App() {
     }
 
     source.addEventListener('title', handleTitle)
+    const handleAuth = (event) => {
+      try {
+        const state = JSON.parse(event.data)
+        if (state.authenticated === false) { resetAuthState(); return }
+        if (state.authenticated !== true || typeof state.edu_authenticated !== 'boolean') return
+        authRequestSequenceRef.current += 1
+        setUser((current) => current ? { ...current, edu_authenticated: state.edu_authenticated } : current)
+        setEduError(state.edu_error || '')
+        if (state.edu_authenticated) { setEduReconnectOpen(false); setEduDialogOpen(false) }
+      } catch { /* Ignore malformed events; focus and polling still reconcile state. */ }
+    }
+    const handleOpen = () => { void refreshAuthState().catch(() => {}) }
+    source.addEventListener('auth', handleAuth)
+    source.addEventListener('open', handleOpen)
 
     return () => {
       source.removeEventListener('title', handleTitle)
+      source.removeEventListener('auth', handleAuth)
+      source.removeEventListener('open', handleOpen)
       source.close()
       if (conversationEventsRef.current === source) {
         conversationEventsRef.current = null
       }
     }
-  }, [applyConversationSummary, userId])
+  }, [applyConversationSummary, refreshAuthState, resetAuthState, userId])
 
   // --- Load conversation messages on select ---
   useEffect(() => {
@@ -3035,6 +3165,7 @@ function App() {
 
   // --- Handlers ---
   const handleLogin = useCallback((u, eduErr) => {
+    authRequestSequenceRef.current += 1
     suppressPreferencePersistenceRef.current = false
     setUser(u)
     setEduError(eduErr)
@@ -3060,6 +3191,7 @@ function App() {
   }, [resetAuthState])
 
   const handleEduRelogin = useCallback(async (password) => {
+    authRequestSequenceRef.current += 1
     const response = await api('/api/auth/edu-login', {
       method: 'POST',
       body: JSON.stringify({ password }),
@@ -3072,8 +3204,11 @@ function App() {
     if (!response.ok) {
       throw new Error(payload.detail || '重新连接教务失败')
     }
+    authRequestSequenceRef.current += 1
     setUser(payload.user)
     setEduError(payload.edu_error || '')
+    setEduReconnectOpen(false)
+    setEduDialogOpen(false)
     return payload.user
   }, [resetAuthState])
 
@@ -3874,12 +4009,17 @@ function App() {
           </div>
         </nav>
         <div className="sidebar-footer">
-          {needsEduRelogin ? (
-            <details className="sidebar-reconnect">
-              <summary><GraduationCap size={16} aria-hidden="true" /><span>教务连接已过期</span><ChevronDown size={14} aria-hidden="true" /></summary>
-              <EduReloginPanel message={eduError} studentId={user.user_id} onSubmit={handleEduRelogin} />
-            </details>
-          ) : eduError ? <div className="edu-warn">{eduError}</div> : null}
+          <AnimatedCollapse open={needsEduRelogin} className="sidebar-reconnect-presence">
+            <div className="sidebar-reconnect">
+              <button className="sidebar-reconnect-trigger" type="button" aria-expanded={eduReconnectOpen} aria-controls="edu-reconnect-fields" onClick={() => setEduReconnectOpen((previous) => !previous)}>
+                <GraduationCap size={16} aria-hidden="true" /><span>教务连接已过期</span><ChevronDown size={14} aria-hidden="true" />
+              </button>
+              <AnimatedCollapse open={eduReconnectOpen} id="edu-reconnect-fields">
+                <EduReloginPanel key={String(needsEduRelogin)} message={eduError} studentId={user.user_id} onSubmit={handleEduRelogin} />
+              </AnimatedCollapse>
+            </div>
+          </AnimatedCollapse>
+          {!needsEduRelogin && eduError && <div className="edu-warn">{eduError}</div>}
           <AccountMenu user={user} avatarUrl={userAvatarUrl} modeText={userModeText} privacyActive={isPrivacyView} onPrivacy={handleOpenPrivacyView} onLogout={handleLogout} />
         </div>
       </aside>
@@ -3902,8 +4042,20 @@ function App() {
               {isPrivacyView && <p>管理你的账号、个人信息与使用偏好</p>}
             </div>
           </div>
-          {!isPrivacyView && <span className="chat-header-mode">{isVisitorUser ? '访客模式' : '校园助手'}</span>}
+          {needsEduRelogin ? <button className="edu-status-trigger" type="button" onClick={() => { setSidebarCollapsed(false); setSidebarOpen(true); setEduReconnectOpen(true) }} aria-label="教务连接已过期，重新连接教务"><GraduationCap size={15} aria-hidden="true" />重新连接教务</button>
+            : !isPrivacyView && <span className="chat-header-mode">{isVisitorUser ? '访客模式' : '校园助手'}</span>}
+          <AnimatedCollapse open={needsEduRelogin} className="edu-mobile-notice-motion">
+            <div className="edu-mobile-notice-space">
+              <div className="edu-mobile-notice" role="status">
+                <GraduationCap size={18} aria-hidden="true" />
+                <div><strong>教务连接已过期</strong><span>校园问答仍可正常使用</span></div>
+                <button type="button" onClick={() => setEduDialogOpen(true)}>重新连接</button>
+              </div>
+            </div>
+          </AnimatedCollapse>
         </header>
+
+        <EduReconnectDialog open={eduDialogOpen && needsEduRelogin} message={eduError} studentId={user.user_id} onSubmit={handleEduRelogin} onClose={() => setEduDialogOpen(false)} />
 
         {isPrivacyView ? (
           <PrivacyPolicyView
@@ -3991,9 +4143,11 @@ function App() {
                                 conversationId={activeId}
                                 messageId={m.id}
                                 onMemoryProposalAction={handleMemoryProposalAction}
+                                expanded={expandedTools[getToolExpansionKey(m.id, p)] ?? !EDUCATIONAL_TOOL_NAMES.has(p.tool_name)}
+                                onExpandedChange={(expanded) => setExpandedTools((previous) => ({ ...previous, [getToolExpansionKey(m.id, p)]: expanded }))}
                               />
                             ) : (
-                              <MessageMarkdown key={`${m.id}-text-${i}`} content={p.content} citationMap={citationMap} />
+                              <MessageMarkdown key={`${m.id}-text-${i}`} content={p.content} citationMap={citationMap} onCitation={(href) => handleCitation(m.id, parts, href)} />
                             ),
                           )}
                           {showThinkingIndicator && (

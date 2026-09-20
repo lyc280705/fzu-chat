@@ -11,6 +11,7 @@ services:
       FZU_CHAT_ENABLE_LANGSMITH_TRACING: "true"
       FZU_CHAT_CHECKPOINT_PATH: /app/app/storage/conversation_history.sqlite
       FZU_CHAT_REDIS_URL: redis://:${REDIS_PASSWORD:-fzu-chat-dev-redis}@redis:6379/0
+      FZU_CHAT_SESSION_ENCRYPTION_KEY_FILE: /run/secrets/session_encryption_key
       FZU_CHAT_PUBLIC_DOCS: "false"
       FZU_CHAT_STATIC_FALLBACK: strict
       FZU_CHAT_GLOBAL_STREAM_LIMIT: ${FZU_CHAT_GLOBAL_STREAM_LIMIT:-80}
@@ -50,6 +51,7 @@ services:
       - langsmith_api_key
       - huaweicloud_maas_api_key
       - amap_web_service_key
+      - session_encryption_key
     read_only: true
     tmpfs:
       - /tmp
@@ -103,3 +105,5 @@ secrets:
     file: ./huaweicloud_maas_api_key.txt
   amap_web_service_key:
     file: ./amap_web_service_key.txt
+  session_encryption_key:
+    file: ./session_encryption_key.txt

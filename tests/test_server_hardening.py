@@ -45,7 +45,7 @@ class ServerHardeningTests(unittest.TestCase):
         self.addCleanup(invalidate_session, current_token)
         self.addCleanup(invalidate_session, second_token)
         self.addCleanup(delete_user_storage, user_id)
-        self.client.cookies.set("fzu_session", current_token)
+        self.client.cookies.set("fzu_session", current_token, domain="testserver.local", path="/")
 
         response = self.client.delete("/api/account")
 

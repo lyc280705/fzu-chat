@@ -3,6 +3,19 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.21] - 2026-09-20
+
+- Synchronize education connection state across devices with revision-guarded updates and visible mobile reconnect notices.
+- Encrypt Redis sessions, hash bearer-token keys, migrate legacy sessions without extending expiry, and verify education-service TLS certificates.
+- Unify tool-card styling, hide raw argument JSON, and expand citation sources before scrolling to them.
+- Add reversible disclosure animations, rotating chevrons, gentle reconnect-dialog transitions, and reduced-motion support.
+- 教务连接状态跨设备同步，防止旧请求覆盖新连接；手机聊天顶部直接显示重连入口。
+- Redis 会话加密、Token 索引哈希化、旧会话自动迁移，并启用教务 HTTPS 证书校验。部署必须保留独立加密密钥。
+- 统一工具卡片样式，避免参数 JSON 直接显示；点击引用先展开卡片再定位。
+- 提醒和工具卡片平滑展开、收起，箭头同步旋转，重连弹窗柔和进出，支持减少动态效果。
+
+---
+
 ## [v7.20] - 2026-09-19
 
 - Increase chat text size and tighten tool-card spacing while preserving card width.

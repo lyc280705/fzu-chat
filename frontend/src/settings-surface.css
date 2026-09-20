@@ -128,6 +128,20 @@
 .chat-area .data-table th { background: #ffffff05; color: #aebdce; }
 .chat-area .data-table td { color: #c6d1dd; }
 .chat-area .data-table th, .chat-area .data-table td { border-color: #ffffff0c; }
+/* The inner result cards use the same surfaces as their tool container. */
+.chat-area .tool-citation-item, .chat-area .memory-proposal-card, .chat-area .selection-category, .chat-area .cultivate-plan-item, .chat-area .campus-recommendation-item, .chat-area .info-card { border-color: var(--ui-border); background: #ffffff03; border-radius: 9px; }
+.chat-area .tool-citation-badge { min-width: 30px; padding: 3px 6px; border-radius: 6px; color: #a8cbb9; background: #a8cbb910; font-weight: 500; }
+.chat-area .tool-citation-link, .chat-area .cultivate-plan-item-title, .chat-area .campus-recommendation-item__title strong { color: #cbd9e4; font-size: 14px; font-weight: 500; }
+.chat-area .tool-summary, .chat-area .cultivate-plan-item-content, .chat-area .cultivate-plan-outline-text, .chat-area .info-value { font-size: 14px; line-height: 1.75; color: #bbc8d7; }
+.chat-area .info-label, .chat-area .selection-meta, .chat-area .memory-proposal-note { color: #97a6b7; font-size: 12px; }
+.chat-area .tool-link-btn, .chat-area .memory-action-btn--primary { color: #d7e9e0; border: 1px solid #a8cbb925; background: #a8cbb912; border-radius: 8px; font-weight: 500; }
+.chat-area .tool-link-btn:hover, .chat-area .memory-action-btn--primary:hover:not(:disabled) { background: #a8cbb920; }
+.chat-area .campus-recommendation-card__icon, .chat-area .campus-recommendation-item__rank { color: #afcabb; background: #a8cbb90d; border-color: #a8cbb91f; }
+.chat-area .tool-citation-item--targeted { background: #a8cbb914; border-color: #a8cbb970; box-shadow: 0 0 0 2px #a8cbb91a; outline: none; }
+.chat-area .tool-citation-item:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
+.chat-area .grade-group { background: #ffffff03; border-color: var(--ui-border); border-radius: 9px; }
+.chat-area .grade-group summary { padding: 10px 12px; color: #c5d0dd; font-size: 14px; font-weight: 500; }
+.chat-area .grade-group[open] summary { border-color: var(--ui-border); }
 @media (min-width: 769px) {
   .chat-area .data-table td { white-space: nowrap; }
 }

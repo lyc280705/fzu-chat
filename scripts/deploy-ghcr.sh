@@ -37,6 +37,11 @@ fi
 
 export FZU_CHAT_VERSION="$VERSION"
 
+if [[ ! -s session_encryption_key.txt ]]; then
+  echo "Missing session_encryption_key.txt; run python scripts/generate-session-key.py once before deployment." >&2
+  exit 1
+fi
+
 if docker compose -f "$COMPOSE_FILE" pull fzu-chat redis; then
   docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
 else

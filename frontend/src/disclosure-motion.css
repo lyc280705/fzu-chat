@@ -1,0 +1,73 @@
+/* Shared, reversible motion for reconnect notices and tool disclosures. */
+:root {
+  --disclosure-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --disclosure-duration: 320ms;
+}
+
+.animated-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  min-height: 0;
+  min-width: 0;
+  visibility: hidden;
+  transition: grid-template-rows 240ms var(--disclosure-ease), visibility 0s 240ms;
+}
+.animated-collapse[data-open='true'] {
+  grid-template-rows: 1fr;
+  visibility: visible;
+  transition: grid-template-rows var(--disclosure-duration) var(--disclosure-ease), visibility 0s;
+}
+.animated-collapse__clip { min-height: 0; min-width: 0; overflow: hidden; }
+.animated-collapse__content {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 150ms ease, transform 240ms var(--disclosure-ease);
+}
+.animated-collapse[data-open='true'] > .animated-collapse__clip > .animated-collapse__content {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 220ms ease, transform var(--disclosure-duration) var(--disclosure-ease);
+}
+
+.sidebar-reconnect-trigger > svg:last-child,
+.tool-card-toggle > svg {
+  flex-shrink: 0;
+  transition: transform var(--disclosure-duration) var(--disclosure-ease);
+}
+.sidebar-reconnect-trigger[aria-expanded='true'] > svg:last-child,
+.tool-card-toggle[aria-expanded='true'] > svg { transform: rotate(180deg); }
+.sidebar-reconnect-trigger,
+.chat-area .tool-card-toggle,
+.edu-mobile-notice button {
+  transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+.chat-area .tool-card-toggle:hover { background: #ffffff09; color: #d3e0da; }
+.chat-area .tool-card-toggle:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
+.chat-area .tool-card-toggle:active,
+.edu-mobile-notice button:active { background: #a8cbb925; box-shadow: inset 0 1px 3px #00000020; }
+.chat-area .tool-card-body { overscroll-behavior: contain; scrollbar-gutter: stable; }
+.chat-area .tool-citation-item { transition: background-color 240ms ease, border-color 240ms ease, box-shadow 240ms ease; }
+
+/* The notice takes part in header layout, including during its exit. */
+.animated-collapse.edu-mobile-notice-motion { display: none; }
+@media (max-width: 768px) {
+  .chat-area .chat-header { flex-wrap: wrap; row-gap: 0; }
+  .animated-collapse.edu-mobile-notice-motion { display: grid; flex: 1 0 calc(100% + 42px); margin-left: -42px; }
+  .edu-mobile-notice-space { padding-top: 10px; }
+}
+
+.edu-reconnect-dialog[data-open='true']::backdrop { animation: edu-backdrop-enter 240ms ease both; }
+.edu-reconnect-dialog[data-open='false']::backdrop { animation: edu-backdrop-exit 180ms ease both; }
+@keyframes edu-backdrop-enter { from { opacity: 0; } to { opacity: 1; } }
+@keyframes edu-backdrop-exit { from { opacity: 1; } to { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .animated-collapse,
+  .animated-collapse[data-open='true'],
+  .animated-collapse__content,
+  .animated-collapse[data-open='true'] > .animated-collapse__clip > .animated-collapse__content,
+  .sidebar-reconnect-trigger > svg:last-child,
+  .tool-card-toggle > svg,
+  .chat-area .tool-citation-item { transition: none; }
+  .edu-reconnect-dialog::backdrop { animation: none !important; }
+}
