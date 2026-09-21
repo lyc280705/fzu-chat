@@ -2039,28 +2039,20 @@ function UserMemorySaveCard({ part, data, conversationId, messageId, onAction })
     }
   }
 
-  const summary = Object.fromEntries(
-    Object.entries({
-      分类: data?.category || '未分类',
-      内容: data?.content || '—',
-      原因: data?.reason || '—',
-      重要度: data?.importance ? `${data.importance}/100` : '',
-      相似度: data?.duplicate_similarity ? `${Math.round(Number(data.duplicate_similarity) * 100)}%` : '',
-    }).filter(([, value]) => value),
-  )
-
   return (
     <div className="tool-sections">
       <section className={`memory-proposal-card memory-proposal-card--${status}`}>
-        <div className="selection-category-header">
-          <strong>{data?.message || '这条信息值得长期记住'}</strong>
-          <MemoryStatusBadge status={status} />
+        <div className="memory-proposal-meta">
+          <span>{data?.category || '未分类'}</span>
+          {data?.importance != null && <span>重要度 {data.importance}/100</span>}
+          {data?.duplicate_similarity != null && <span>相似度 {Math.round(Number(data.duplicate_similarity) * 100)}%</span>}
         </div>
-        <StudentInfoCard data={summary} />
+        <div className="memory-proposal-content">{data?.content || data?.message || '暂无记忆内容'}</div>
+        {data?.reason && <div className="memory-proposal-reason"><span>保存原因</span>{data.reason}</div>}
 
         {status === 'pending_confirmation' && (
           <>
-            <div className="memory-proposal-note">确认后会直接写入你的个性化记忆，后续回答可以按需调用。</div>
+            <div className="memory-proposal-note">仅在你确认后保存，用于个性化回答。</div>
             <div className="memory-action-row">
               <button
                 type="button"
@@ -2129,7 +2121,6 @@ function UserMemoryDeleteCard({ part, data, conversationId, messageId, onAction 
       <section className={`memory-proposal-card memory-proposal-card--${status}`}>
         <div className="selection-category-header">
           <strong>{data?.message || `计划删除 ${items.length || data?.memory_ids?.length || 0} 条个性化记忆`}</strong>
-          <MemoryStatusBadge status={status} />
         </div>
 
         {items.length > 0 ? (
@@ -2192,7 +2183,7 @@ function StudentInfoCard({ data }) {
   return (
     <div className="info-card">
       {entries.map(([k, v]) => (
-        <div key={k} className="info-row">
+        <div key={k} className={`info-row${String(v).length > 32 ? ' info-row--wide' : ''}`}>
           <span className="info-label">{k}</span>
           <span className="info-value">{String(v)}</span>
         </div>
@@ -2386,9 +2377,10 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction, exp
   const isFailed = part.status === 'error' || ['invalid', 'unavailable', 'error'].includes(part.data?.status)
   const statusClass = isRunning ? 'running' : isStopped ? 'stopped' : isFailed ? 'error' : needsConfirmation ? 'action' : 'done'
   const title = toolCardTitle(part)
-  const summary = toolResultSummary(part)
+  const isMemoryAction = ['save_user_memory', 'delete_user_memory'].includes(part.tool_name)
+  const summary = isMemoryAction ? '' : toolResultSummary(part)
   const showRawUrls = !['query_cultivate_plan', 'retrieve', 'bocha_websearch_tool'].includes(part.tool_name)
-  const displayQuery = toolQueryText(part)
+  const displayQuery = isMemoryAction && part.data ? '' : toolQueryText(part)
   const recommendationData = part.tool_name === 'recommend_campus_context'
     ? normalizeCampusRecommendationData(part.data)
     : null
@@ -2450,7 +2442,7 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction, exp
   }
 
   return (
-    <div className={`tool-card tool-card--${statusClass}`}>
+    <div className={`tool-card tool-card--${statusClass}${['save_user_memory', 'delete_user_memory', 'query_user_memory'].includes(part.tool_name) ? ' tool-card--memory' : ''}`}>
       <div className="tool-card-header">
         <div className="tool-card-heading">
           <span className="tool-card-icon">{icon}</span>

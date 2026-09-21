@@ -134,6 +134,29 @@
 .chat-area .tool-citation-link, .chat-area .cultivate-plan-item-title, .chat-area .campus-recommendation-item__title strong { color: #cbd9e4; font-size: 14px; font-weight: 500; }
 .chat-area .tool-summary, .chat-area .cultivate-plan-item-content, .chat-area .cultivate-plan-outline-text, .chat-area .info-value { font-size: 14px; line-height: 1.75; color: #bbc8d7; }
 .chat-area .info-label, .chat-area .selection-meta, .chat-area .memory-proposal-note { color: #97a6b7; font-size: 12px; }
+.chat-area .memory-proposal-card { padding: 4px 0 2px; border: 0; border-radius: 0; background: transparent; gap: 12px; }
+.chat-area .memory-proposal-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; color: #97a6b7; font-size: 12px; }
+.chat-area .memory-proposal-meta > :first-child { color: #afcabb; }
+.chat-area .memory-proposal-content { color: #e1e9ef; font-size: 16px; font-weight: 500; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-area .memory-proposal-reason { display: flex; flex-direction: column; gap: 4px; padding-left: 12px; border-left: 2px solid #a8cbb930; color: #bbc8d7; font-size: 13px; line-height: 1.75; overflow-wrap: anywhere; }
+.chat-area .memory-proposal-reason > span { color: #97a6b7; font-size: 12px; }
+.chat-area .memory-action-row { gap: 8px; }
+.chat-area .memory-action-btn { min-height: 36px; min-width: 80px; padding: 7px 14px; font-size: 13px; }
+.chat-area .memory-action-btn:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 3px; }
+.chat-area .info-card { grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); align-items: start; }
+.chat-area .info-row { min-width: 0; align-items: baseline; }
+.chat-area .info-row--wide { grid-column: 1 / -1; }
+.chat-area .info-value { min-width: 0; overflow-wrap: anywhere; }
+.chat-area .tool-card-heading { min-width: 0; }
+.chat-area .tool-card-actions { flex-shrink: 0; }
+.chat-area .tool-card-query { overflow-wrap: anywhere; }
+.chat-area .selection-category-header { flex-wrap: wrap; }
+.chat-area .tool-card--memory .data-table { table-layout: fixed; min-width: 560px; width: 100%; }
+.chat-area .tool-card--memory .data-table th:nth-child(2), .chat-area .tool-card--memory .data-table th:nth-child(3) { width: 27%; }
+.chat-area .tool-card--memory .data-table td { white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
+@media (max-width: 768px) {
+  .chat-area .tool-card--memory .data-table { min-width: 0; }
+}
 .chat-area .tool-link-btn, .chat-area .memory-action-btn--primary { color: #d7e9e0; border: 1px solid #a8cbb925; background: #a8cbb912; border-radius: 8px; font-weight: 500; }
 .chat-area .tool-link-btn:hover, .chat-area .memory-action-btn--primary:hover:not(:disabled) { background: #a8cbb920; }
 .chat-area .campus-recommendation-card__icon, .chat-area .campus-recommendation-item__rank { color: #afcabb; background: #a8cbb90d; border-color: #a8cbb91f; }
