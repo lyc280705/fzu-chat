@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 OAUTH_PROVIDER_KEYS = ("wechat", "qq", "alipay", "microsoft", "apple", "github")
 OAUTH_STATE_TTL_SECONDS = max(60, int(os.getenv("FZU_CHAT_OAUTH_STATE_TTL_SECONDS", "600")))
 OAUTH_TIMEOUT_SECONDS = float(os.getenv("FZU_CHAT_OAUTH_TIMEOUT_SECONDS", "6"))
+OAUTH_DEBUG = os.getenv("FZU_CHAT_OAUTH_DEBUG", "false").lower() in {"1", "true", "yes", "on"}
 
 _memory_states: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _memory_states_lock = Lock()
@@ -294,6 +295,46 @@ def _parse_json_or_query_response(response: requests.Response) -> Dict[str, Any]
     return {key: values[0] if values else "" for key, values in parsed.items()}
 
 
+def _safe_oauth_error_details(payload: Any) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    allowed_keys = (
+        "error",
+        "error_description",
+        "error_codes",
+        "suberror",
+        "timestamp",
+        "trace_id",
+        "correlation_id",
+        "code",
+        "message",
+    )
+    return {key: payload[key] for key in allowed_keys if key in payload}
+
+
+def _log_oauth_error(provider: str, stage: str, payload: Any) -> None:
+    if not OAUTH_DEBUG:
+        return
+    details = _safe_oauth_error_details(payload)
+    logger.warning(
+        "OAuth provider detail provider=%s stage=%s details=%s",
+        provider,
+        stage,
+        details or "<no safe error fields>",
+    )
+
+
+def _raise_for_oauth_status(response: requests.Response, provider: str, stage: str) -> None:
+    if response.ok:
+        return
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {"message": response.text[:500]}
+    _log_oauth_error(provider, stage, payload)
+    response.raise_for_status()
+
+
 def _decode_jwt_payload(token: str) -> Dict[str, Any]:
     parts = (token or "").split(".")
     if len(parts) < 2:
@@ -365,15 +406,21 @@ def _safe_profile(provider: str, subject: str, profile: Dict[str, Any]) -> Dict[
     }
 
 
-def _token_post(url: str, data: Dict[str, str]) -> Dict[str, Any]:
+def _token_post(url: str, data: Dict[str, str], *, provider: str = "", stage: str = "token") -> Dict[str, Any]:
     response = requests.post(
         url,
         data=data,
         headers={"Accept": "application/json", "User-Agent": "fzu-chat"},
         timeout=OAUTH_TIMEOUT_SECONDS,
     )
-    response.raise_for_status()
-    return _parse_json_or_query_response(response)
+    if provider:
+        _raise_for_oauth_status(response, provider, stage)
+    else:
+        response.raise_for_status()
+    payload = _parse_json_or_query_response(response)
+    if provider and payload.get("error"):
+        _log_oauth_error(provider, stage, payload)
+    return payload
 
 
 def _find_github_primary_email(access_token: str) -> str:
@@ -510,6 +557,8 @@ def fetch_visitor_profile(
                 "redirect_uri": config.redirect_uri,
                 "grant_type": "authorization_code",
             },
+            provider="microsoft",
+            stage="token",
         )
         if token_payload.get("error"):
             raise OAuthError(str(token_payload.get("error_description") or "Microsoft 授权失败。"))
@@ -521,7 +570,7 @@ def fetch_visitor_profile(
             headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
             timeout=OAUTH_TIMEOUT_SECONDS,
         )
-        user_response.raise_for_status()
+        _raise_for_oauth_status(user_response, "microsoft", "userinfo")
         profile = _parse_json_or_query_response(user_response)
         id_token_claims = _decode_jwt_payload(str(token_payload.get("id_token") or ""))
         merged_profile = {**id_token_claims, **profile}
