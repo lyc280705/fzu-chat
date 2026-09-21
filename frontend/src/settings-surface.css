@@ -143,7 +143,7 @@
 .chat-area .memory-action-row { gap: 8px; }
 .chat-area .memory-action-btn { min-height: 36px; min-width: 80px; padding: 7px 14px; font-size: 13px; }
 .chat-area .memory-action-btn:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 3px; }
-.chat-area .info-card { grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); align-items: start; }
+.chat-area .info-card { grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); align-items: start; padding: 9px 12px; }
 .chat-area .info-row { min-width: 0; align-items: baseline; }
 .chat-area .info-row--wide { grid-column: 1 / -1; }
 .chat-area .info-value { min-width: 0; overflow-wrap: anywhere; }

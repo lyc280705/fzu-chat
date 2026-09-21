@@ -2378,9 +2378,14 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction, exp
   const statusClass = isRunning ? 'running' : isStopped ? 'stopped' : isFailed ? 'error' : needsConfirmation ? 'action' : 'done'
   const title = toolCardTitle(part)
   const isMemoryAction = ['save_user_memory', 'delete_user_memory'].includes(part.tool_name)
+  const hidesRedundantQuery = Boolean(part.data) && (
+    isMemoryAction
+    || part.tool_name === 'recommend_campus_context'
+    || (part.tool_name === 'select_course' && part.data?.mode === 'submit')
+  )
   const summary = isMemoryAction ? '' : toolResultSummary(part)
   const showRawUrls = !['query_cultivate_plan', 'retrieve', 'bocha_websearch_tool'].includes(part.tool_name)
-  const displayQuery = isMemoryAction && part.data ? '' : toolQueryText(part)
+  const displayQuery = hidesRedundantQuery ? '' : toolQueryText(part)
   const recommendationData = part.tool_name === 'recommend_campus_context'
     ? normalizeCampusRecommendationData(part.data)
     : null
