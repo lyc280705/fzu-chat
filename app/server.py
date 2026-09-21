@@ -1249,17 +1249,14 @@ def truncate_title(title: str) -> str:
 
 
 def build_title_summary_transcript(messages: List[Dict[str, Any]]) -> str:
-    lines: List[str] = []
     for message in messages:
         if message.get("role") != "user":
             continue
         content = (message.get("content") or "").strip()
         if not content:
             continue
-        lines.append(f"user: {content}")
-        if len(lines) >= 6:
-            break
-    return "\n".join(lines)
+        return f"user: {content}"
+    return ""
 
 
 async def summarize_title(messages: List[Dict[str, Any]]) -> str:

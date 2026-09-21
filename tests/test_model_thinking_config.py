@@ -102,19 +102,24 @@ class ModelReasoningConfigTests(unittest.TestCase):
             ["disabled", "low", "high", "max"],
         )
 
-    def test_title_summary_prompt_is_short_and_system_only(self):
+    def test_title_summary_prompt_keeps_title_rules_in_one_system_message(self):
         messages = graph.summary_prompt.format_messages(input="user: 今天晚饭去哪吃")
 
         self.assertEqual(len(messages), 1)
         self.assertIsInstance(messages[0], SystemMessage)
         content = messages[0].content
-        self.assertIn("聊天标题生成专家", content)
-        self.assertIn("晚餐食堂", content)
-        self.assertIn("学期成绩", content)
-        self.assertIn("无明确任务时输出“问候”", content)
+        self.assertIn("聊天会话标题生成器", content)
+        self.assertIn("核心意图 + 核心对象", content)
+        self.assertIn("记录、比较、修改、创建、排查、推荐、总结", content)
+        self.assertIn("文件名、数字、错误码和缩写", content)
+        self.assertIn("中文标题通常 4～12 个汉字", content)
+        self.assertIn("最多 18 个汉字", content)
+        self.assertIn("简单问候", content)
+        self.assertIn("请求：", content)
+        self.assertIn("标题：", content)
         self.assertIn("user: 今天晚饭去哪吃", content)
         self.assertNotIn("{input}", content)
-        self.assertLess(len(content), 320)
+        self.assertIn("只输出最终标题", content)
 
 
 if __name__ == "__main__":
