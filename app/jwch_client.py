@@ -193,6 +193,23 @@ def _text_content(node: Any) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _set_jwch_response_encoding(response: requests.Response) -> None:
+    """Use declared HTML encoding before guessing from the response bytes."""
+    header = re.search(r"charset\s*=\s*['\"]?([\w-]+)", response.headers.get("Content-Type", ""), re.I)
+    meta = re.search(rb"charset\s*=\s*['\"]?([\w-]+)", response.content[:4096], re.I)
+    declared = [header.group(1) if header else None, meta.group(1).decode("ascii") if meta else None]
+    for encoding in (*declared, "utf-8", "gb18030"):
+        if not encoding:
+            continue
+        try:
+            response.content.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+        response.encoding = encoding
+        return
+    response.encoding = response.apparent_encoding or "utf-8"
+
+
 def _normalize_match_text(value: str) -> str:
     return re.sub(r"\s+", "", value or "")
 
@@ -386,6 +403,9 @@ def _iter_cultivate_plan_blocks(root: Any):
     block_tags = set(CULTIVATE_PLAN_TEXT_TAGS) | {"table"}
     for tag in root.find_all(list(block_tags), recursive=True):
         if tag.name == "table":
+            direct_rows = [row for row in tag.find_all("tr") if row.find_parent("table") is tag]
+            if tag.find("table") and len(direct_rows) <= 1:
+                continue
             yield "table", tag
             continue
         if tag.find_parent("table"):
@@ -398,49 +418,87 @@ def _iter_cultivate_plan_blocks(root: Any):
 
 
 def _parse_cultivate_plan_table(table: Any, signatures: set[Tuple[Tuple[str, ...], ...]]) -> Dict[str, Any] | None:
-    tr_nodes = table.find_all("tr")
+    tr_nodes = [tr for tr in table.find_all("tr") if tr.find_parent("table") is table]
     if not tr_nodes:
         return None
 
-    rows: List[List[str]] = []
-    for tr in tr_nodes:
-        cells = [
-            _clean_cultivate_plan_text(cell)
-            for cell in tr.find_all(["th", "td"], recursive=False)
-        ]
-        cells = [cell for cell in cells if cell]
-        if cells:
-            rows.append(cells)
+    def span(cell: Any, attribute: str, limit: int) -> int:
+        try:
+            return min(max(int(cell.get(attribute, 1)), 1), limit)
+        except (TypeError, ValueError):
+            return 1
 
-    if len(rows) < 2:
-        return None
+    source_cells = [tr.find_all(["th", "td"], recursive=False) for tr in tr_nodes]
+    grid: List[List[str | None]] = [[] for _ in tr_nodes]
+    for row_index, cells in enumerate(source_cells):
+        column = 0
+        for cell in cells:
+            while column < len(grid[row_index]) and grid[row_index][column] is not None:
+                column += 1
+            value = _clean_cultivate_plan_text(cell)
+            colspan = span(cell, "colspan", 64)
+            rowspan = span(cell, "rowspan", len(grid) - row_index)
+            for target_row in range(row_index, row_index + rowspan):
+                if len(grid[target_row]) < column + colspan:
+                    grid[target_row].extend([None] * (column + colspan - len(grid[target_row])))
+                for target_column in range(column, column + colspan):
+                    grid[target_row][target_column] = value
+            column += colspan
 
-    width = max(len(row) for row in rows)
+    rows = [[cell or "" for cell in row] for row in grid]
+    width = max((len(row) for row in rows), default=0)
     if width < 2:
         return None
 
     normalized_rows = [row + [""] * (width - len(row)) for row in rows]
-    signature = tuple(tuple(row) for row in normalized_rows[:8])
-    if signature in signatures:
-        return None
-    signatures.add(signature)
+    header_tokens = (
+        "课程类别", "课程名称", "课程代码", "课程编号", "课程性质", "开课单位",
+        "开课学期", "学分", "学时", "周数", "考核", "类别", "名称", "序号",
+    )
+    title_rows = {
+        index
+        for index, cells in enumerate(source_cells)
+        if len(cells) == 1 and span(cells[0], "colspan", 64) > 1 and index < 3
+    }
+    header_index = next(
+        (
+            index
+            for index, row in enumerate(normalized_rows[:5])
+            if index not in title_rows
+            and (
+                any(cell.name == "th" for cell in source_cells[index])
+                or sum(any(token in text for token in header_tokens) for text in set(row) if text) >= 2
+            )
+        ),
+        None,
+    )
 
-    has_header = any(tr.find("th", recursive=False) for tr in tr_nodes)
-    if has_header:
-        headers = [cell or f"列{index + 1}" for index, cell in enumerate(normalized_rows[0])]
-        body_rows = normalized_rows[1:]
+    if header_index is None:
+        headers = [f"列{index + 1}" for index in range(width)]
+        body_rows = [row for index, row in enumerate(normalized_rows) if index not in title_rows]
     else:
-        first_row = normalized_rows[0]
-        if len(set(first_row)) == len(first_row):
-            headers = [cell or f"列{index + 1}" for index, cell in enumerate(first_row)]
-            body_rows = normalized_rows[1:]
-        else:
-            headers = [f"列{index + 1}" for index in range(width)]
-            body_rows = normalized_rows
+        headers = normalized_rows[header_index][:]
+        body_start = header_index + 1
+        if any(span(cell, "colspan", 64) > 1 for cell in source_cells[header_index]):
+            if body_start < len(source_cells):
+                subheaders = [_clean_cultivate_plan_text(cell) for cell in source_cells[body_start]]
+                if subheaders and all(text and len(text) <= 6 and not re.search(r"\d", text) for text in subheaders):
+                    headers = [
+                        f"{parent}-{child}" if parent and child and parent != child else child or parent
+                        for parent, child in zip(headers, normalized_rows[body_start])
+                    ]
+                    body_start += 1
+        headers = [cell or f"列{index + 1}" for index, cell in enumerate(headers)]
+        body_rows = [row for index, row in enumerate(normalized_rows[body_start:], body_start) if index not in title_rows]
 
     body_rows = [row for row in body_rows if any(cell for cell in row)]
     if not body_rows:
         return None
+
+    signature = tuple(tuple(row) for row in normalized_rows)
+    if signature in signatures:
+        return None
+    signatures.add(signature)
 
     return {
         "title": _find_cultivate_plan_table_title(table),
@@ -774,7 +832,7 @@ class JwchClient:
         if resp.status_code in (301, 302):
             raise JwchSessionError("教务系统会话已过期，请重新登录")
         resp.raise_for_status()
-        resp.encoding = resp.apparent_encoding or "utf-8"
+        _set_jwch_response_encoding(resp)
         if "重新登录" in resp.text or "处理URL失败" in resp.text:
             raise JwchSessionError("教务系统会话已过期，请重新登录")
         return BeautifulSoup(resp.text, "html.parser")
@@ -792,7 +850,7 @@ class JwchClient:
         if resp.status_code in (301, 302):
             raise JwchSessionError("教务系统会话已过期，请重新登录")
         resp.raise_for_status()
-        resp.encoding = resp.apparent_encoding or "utf-8"
+        _set_jwch_response_encoding(resp)
         if "重新登录" in resp.text or "处理URL失败" in resp.text:
             raise JwchSessionError("教务系统会话已过期，请重新登录")
         return BeautifulSoup(resp.text, "html.parser")
@@ -904,7 +962,7 @@ class JwchClient:
         if resp.status_code in (301, 302) and "login" in resp.headers.get("Location", "").lower():
             raise JwchSessionError("教务系统会话已过期，请重新登录")
         resp.raise_for_status()
-        resp.encoding = resp.apparent_encoding or "utf-8"
+        _set_jwch_response_encoding(resp)
         if "重新登录" in resp.text or "处理URL失败" in resp.text:
             raise JwchSessionError("教务系统会话已过期，请重新登录")
         return resp
