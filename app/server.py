@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import ipaddress
@@ -19,6 +21,7 @@ from typing import Any, AsyncIterator, Dict, Iterable, List, Literal
 from urllib.parse import parse_qs, urlencode, urlparse
 from uuid import uuid4
 
+import anyio.to_thread
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
@@ -55,6 +58,7 @@ from .chat_store import chat_store
 from .edu_tools import set_current_edu_session, submit_confirmed_course_selection
 from .graph import (
     CHAT_MODEL_OPTIONS,
+    DEEPSEEK_CHAT_MODEL,
     DEFAULT_CHAT_MODEL,
     KIMI_CHAT_MODEL,
     MODEL_REASONING_CONTROLS,
@@ -68,6 +72,7 @@ from .graph import (
 )
 from .jwch_client import JwchClient, JwchError, JwchLoginError, JwchSessionError
 from .memory_store import user_memory_store
+from .model_pacing import is_model_busy_error
 from .oauth_logging import install_oauth_log_filter
 from . import passkeys
 from .passkey_routes import install_passkey_routes
@@ -112,6 +117,8 @@ AUTH_COOKIE_SAMESITE = os.getenv("FZU_CHAT_AUTH_COOKIE_SAMESITE", "strict").stri
 EDU_SESSION_TTL = max(300, int(os.getenv("FZU_CHAT_EDU_SESSION_TTL", "14400")))
 LOGIN_RATE_LIMIT_WINDOW_SECONDS = max(60, int(os.getenv("FZU_CHAT_LOGIN_RATE_LIMIT_WINDOW", "900")))
 LOGIN_RATE_LIMIT_MAX_ATTEMPTS = max(1, int(os.getenv("FZU_CHAT_LOGIN_RATE_LIMIT_ATTEMPTS", "8")))
+# OAuth start is keyed by IP only; a class behind one campus NAT address shares it.
+OAUTH_START_RATE_LIMIT_MAX_ATTEMPTS = max(1, int(os.getenv("FZU_CHAT_OAUTH_START_RATE_LIMIT_ATTEMPTS", "60")))
 EDU_RELOGIN_RATE_LIMIT_WINDOW_SECONDS = max(60, int(os.getenv("FZU_CHAT_EDU_RELOGIN_RATE_LIMIT_WINDOW", "600")))
 EDU_RELOGIN_RATE_LIMIT_MAX_ATTEMPTS = max(1, int(os.getenv("FZU_CHAT_EDU_RELOGIN_RATE_LIMIT_ATTEMPTS", "6")))
 CONVERSATION_CREATE_RATE_LIMIT_WINDOW_SECONDS = max(60, int(os.getenv("FZU_CHAT_CONVERSATION_CREATE_RATE_LIMIT_WINDOW", "300")))
@@ -126,6 +133,11 @@ GLOBAL_STREAM_LIMIT = max(1, int(os.getenv("FZU_CHAT_GLOBAL_STREAM_LIMIT", "80")
 USER_STREAM_LIMIT = max(1, int(os.getenv("FZU_CHAT_USER_STREAM_LIMIT", "5")))
 STREAM_SLOT_TTL_SECONDS = max(60, int(os.getenv("FZU_CHAT_STREAM_SLOT_TTL_SECONDS", "900")))
 EDU_LOGIN_CONCURRENCY_LIMIT = max(1, int(os.getenv("FZU_CHAT_EDU_LOGIN_CONCURRENCY", "8")))
+EDU_LOGIN_SLOT_WAIT_SECONDS = max(0.0, float(os.getenv("FZU_CHAT_EDU_LOGIN_SLOT_WAIT_SECONDS", "10")))
+# Sync LangGraph nodes (model calls, tools) run on the default executor, which asyncio sizes
+# to cpu_count + 4 (6 threads on the 2-core server). Paced model calls wait inside these threads.
+WORKER_THREADS = max(8, int(os.getenv("FZU_CHAT_WORKER_THREADS", "160")))
+SYNC_ENDPOINT_THREADS = max(8, int(os.getenv("FZU_CHAT_SYNC_ENDPOINT_THREADS", "80")))
 STATIC_FALLBACK_MODE = os.getenv("FZU_CHAT_STATIC_FALLBACK", "strict").strip().lower()
 METRICS_ENABLED = env_flag("FZU_CHAT_METRICS_ENABLED", True)
 METRICS_TOKEN = os.getenv("FZU_CHAT_METRICS_TOKEN", "").strip()
@@ -150,6 +162,13 @@ if AUTH_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
     AUTH_COOKIE_SAMESITE = "strict"
 
 MODEL_OPTIONS = dict(CHAT_MODEL_OPTIONS)
+# Each model has its own per-minute provider quota, so new users are spread across these
+# defaults (stable per user). Empty disables the split and everyone starts on DEFAULT_CHAT_MODEL.
+DEFAULT_MODEL_ROTATION = [
+    model for model in (item.strip() for item in os.getenv(
+        "FZU_CHAT_DEFAULT_MODEL_ROTATION", f"{DEFAULT_CHAT_MODEL},{DEEPSEEK_CHAT_MODEL}"
+    ).split(",")) if model in MODEL_OPTIONS
+]
 
 TOOL_LABELS: Dict[str, Dict[str, str]] = {
     "retrieve": {"running": "正在查询知识库", "complete": "知识库查询完成"},
@@ -404,6 +423,8 @@ def _extract_auth_token(authorization: str | None, session_cookie: str | None) -
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=WORKER_THREADS, thread_name_prefix="fzu-worker"))
+    anyio.to_thread.current_default_thread_limiter().total_tokens = SYNC_ENDPOINT_THREADS
     await asyncio.to_thread(migrate_legacy_sessions)
     warm_teaching_week_cache_async()
     yield
@@ -526,7 +547,7 @@ class OAuthProviderStatus(BaseModel):
 
 
 class ConversationCreateRequest(BaseModel):
-    model: str = DEFAULT_CHAT_MODEL
+    model: str | None = None
 
 
 class ConversationUpdateRequest(BaseModel):
@@ -680,6 +701,13 @@ def create_conversation_record(model: str) -> Dict[str, Any]:
 
 def normalize_model_id(model: str | None) -> str:
     return model if model in MODEL_OPTIONS else DEFAULT_CHAT_MODEL
+
+
+def default_model_for_user(user_id: str | None) -> str:
+    if not user_id or not DEFAULT_MODEL_ROTATION:
+        return DEFAULT_CHAT_MODEL
+    digest = hashlib.sha256(user_id.encode("utf-8")).digest()
+    return DEFAULT_MODEL_ROTATION[int.from_bytes(digest[:4], "big") % len(DEFAULT_MODEL_ROTATION)]
 
 
 def serialize_event(event: str, data: Dict[str, Any]) -> bytes:
@@ -1738,6 +1766,7 @@ def readiness() -> JSONResponse:
             "global_stream": GLOBAL_STREAM_LIMIT,
             "user_stream": USER_STREAM_LIMIT,
             "edu_login_concurrency": EDU_LOGIN_CONCURRENCY_LIMIT,
+            "worker_threads": WORKER_THREADS,
         },
     }
     return JSONResponse(payload, status_code=200 if ok else 503)
@@ -1769,7 +1798,7 @@ def oauth_start(provider: OAuthProviderName, request: Request, accepted_legal: b
         raise HTTPException(status_code=404, detail="登录方式不可用。")
     _enforce_rate_limit(
         _rate_limit_key("oauth-start", request, provider),
-        LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
+        OAUTH_START_RATE_LIMIT_MAX_ATTEMPTS,
         LOGIN_RATE_LIMIT_WINDOW_SECONDS,
         "登录尝试过于频繁，请稍后再试。",
     )
@@ -1958,6 +1987,16 @@ async def oauth_callback_alias_post(provider_alias: str, request: Request):
     return _finish_oauth_callback(provider, request, payload)
 
 
+def _acquire_edu_login_slot():
+    """Wait briefly for an edu login slot so a class logging in together queues instead of failing."""
+    deadline = time.monotonic() + EDU_LOGIN_SLOT_WAIT_SECONDS
+    while True:
+        slot = acquire_slot("edu-login", EDU_LOGIN_CONCURRENCY_LIMIT, ttl_seconds=60)
+        if slot is not None or time.monotonic() >= deadline:
+            return slot
+        time.sleep(0.25)
+
+
 @app.post("/api/auth/login")
 def login(req: LoginRequest, request: Request) -> JSONResponse:
     _enforce_rate_limit(
@@ -1973,7 +2012,7 @@ def login(req: LoginRequest, request: Request) -> JSONResponse:
     if req.student_type != "undergraduate":
         raise HTTPException(status_code=403, detail="当前仅支持本科生通过教务系统登录，研究生登录暂未开放。")
 
-    login_slot = acquire_slot("edu-login", EDU_LOGIN_CONCURRENCY_LIMIT, ttl_seconds=60)
+    login_slot = _acquire_edu_login_slot()
     if login_slot is None:
         raise HTTPException(status_code=429, detail="教务登录请求较多，请稍后再试。")
     try:
@@ -2029,7 +2068,7 @@ def relogin_edu(req: EduReloginRequest, request: Request, user: AuthUser = Depen
     if user.student_type != "undergraduate":
         raise HTTPException(status_code=403, detail="当前账号不支持重新连接教务。")
 
-    relogin_slot = acquire_slot("edu-login", EDU_LOGIN_CONCURRENCY_LIMIT, ttl_seconds=60)
+    relogin_slot = _acquire_edu_login_slot()
     if relogin_slot is None:
         raise HTTPException(status_code=429, detail="教务登录请求较多，请稍后再试。")
     try:
@@ -2100,17 +2139,20 @@ install_passkey_routes(app, require_auth, _request_origin, _use_secure_cookie,
 # ---------------------------------------------------------------------------
 
 @app.get("/api/models")
-def list_models() -> List[Dict[str, Any]]:
+def list_models(user: AuthUser = Depends(require_auth)) -> List[Dict[str, Any]]:
+    # The web client starts new conversations on the first model, so list the user's default first.
+    preferred = default_model_for_user(user.user_id)
+    ordered = [preferred] + [model_id for model_id in MODEL_OPTIONS if model_id != preferred]
     return [
         {
             "id": model_id,
-            "label": label,
+            "label": MODEL_OPTIONS[model_id],
             "reasoning": {
                 "default": MODEL_REASONING_CONTROLS[model_id]["default"],
                 "options": [dict(option) for option in MODEL_REASONING_CONTROLS[model_id]["options"]],
             },
         }
-        for model_id, label in MODEL_OPTIONS.items()
+        for model_id in ordered
     ]
 
 
@@ -2265,9 +2307,10 @@ def create_conversation(req: ConversationCreateRequest, request: Request, user: 
         "创建对话过于频繁，请稍后再试。",
     )
 
+    requested = req.model if req.model in MODEL_OPTIONS else default_model_for_user(user.user_id)
     reusable = chat_store.find_reusable_conversation(user.user_id)
     if reusable is not None:
-        requested_model = normalize_model_id(req.model)
+        requested_model = requested
         current_model = normalize_model_id(reusable.get("model"))
         if requested_model != reusable.get("model") or current_model != reusable.get("model"):
             updated = chat_store.update_conversation(
@@ -2279,7 +2322,7 @@ def create_conversation(req: ConversationCreateRequest, request: Request, user: 
             if updated is not None:
                 reusable = updated
         return reusable
-    c = create_conversation_record(req.model)
+    c = create_conversation_record(requested)
     return chat_store.create_conversation(user.user_id, c)
 
 
@@ -2816,12 +2859,16 @@ async def create_message(
             logger.info("Stream cancelled for %s", cid)
             await build_done_payload(True)
             return
-        except Exception:
+        except Exception as exc:
             if final_payload is not None:
                 logger.exception("Stream failed after completion for %s", cid)
                 return
-            logger.exception("Stream failed for %s", cid)
-            fallback_text = "暂时无法生成回复，请稍后再试。"
+            if is_model_busy_error(exc):
+                logger.warning("Stream rejected for %s: model busy", cid)
+                fallback_text = "当前使用人数较多，模型接口繁忙，请稍等十几秒后重试。"
+            else:
+                logger.exception("Stream failed for %s", cid)
+                fallback_text = "暂时无法生成回复，请稍后再试。"
             fallback_msg = {
                 "id": str(uuid4()), "role": "assistant", "content": fallback_text,
                 "timestamp": now_iso(),

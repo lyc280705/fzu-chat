@@ -3,6 +3,17 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.32] - 2026-09-29
+
+- Pace model requests per model to Huawei's published limits (model list: glm-5.3 and deepseek-v4.1-flash RPM 100, TPM 1,000,000; run at 95% of both) through one shared httpx transport. Requests are spaced evenly (one every 0.63 s, under the provider's 4/s burst limit) and tokens are estimated per request for the TPM budget. Callers queue up to 45 s (90 s on the 2 GB deployment) and provider 429s are retried; a full queue returns a local 429 and the chat shows a "busy, retry shortly" message instead of the generic failure.
+- Split new users between glm-5.3 and deepseek-v4.1-flash (stable hash of the user id, `FZU_CHAT_DEFAULT_MODEL_ROTATION`), since each model has its own quota. `/api/models` lists the user's default first and new conversations use it; an explicit choice is kept and users can still switch models.
+- Size the default executor to 160 threads and the sync endpoint pool to 80. Sync LangGraph nodes ran on asyncio's default pool (cpu_count + 4 = 6 threads on the 2-core server), which capped the whole server at 6 concurrent model calls regardless of the stream limit.
+- Wait up to 10 s for an education login slot instead of failing immediately; make the per-IP OAuth start (default 60 per 15 min) and passkey (default 60 per 5 min) limits configurable, since a class on one campus NAT address shares them.
+- 支持约 100 人同时使用：按华为云官方限额（每个模型每分钟 100 次、100 万 Token）排队调用，新用户一半默认 GLM-5.3、一半默认 DeepSeek-V4.1-Flash，两个模型的额度叠加，每分钟约能回答 65 个问题；人数更多时排队，最多 90 秒，超时提示稍后重试。
+- Add 21 regression tests for pacing, RPM/TPM limits, retries, the busy message, the model split, login slot waiting and thread pool sizing.
+
+---
+
 ## [v7.31] - 2026-09-29
 
 - Require a server-side second confirmation for real course selection. `select_course` now only verifies the course with read-only requests and stores a pending, 10-minute request; nothing is sent to the educational system until the owner confirms it on the card.

@@ -40,6 +40,7 @@ from langgraph.graph import END, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from .memory_store import user_memory_store
+from .model_pacing import model_http_clients
 from .runtime_state import increment_counter
 from .security_utils import ensure_private_dir, ensure_private_file, env_flag
 
@@ -795,6 +796,7 @@ def build_chat_llm(
         "timeout": MODEL_REQUEST_TIMEOUT_SECONDS,
         "max_retries": MODEL_MAX_RETRIES,
     }
+    init_kwargs["http_client"], init_kwargs["http_async_client"] = model_http_clients()
     if normalized_model == DEEPSEEK_CHAT_MODEL and HUAWEICLOUD_OPENAI_BASE_URL.rstrip("/").endswith("/openai/v1"):
         # Huawei's legacy compatibility route ignores V4.1's thinking=False.
         # V2 accepts OpenAI chat completions and applies chat_template_kwargs.

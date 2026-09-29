@@ -1,6 +1,7 @@
 """HTTP boundaries for anonymous passkey signup/login and signed-in key management."""
 import json
 import logging
+import os
 import sqlite3
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -12,6 +13,8 @@ from .auth import create_session, update_session, invalidate_session
 from .runtime_state import fixed_window_rate_limit
 
 logger = logging.getLogger(__name__)
+# Keyed by IP; students on one campus NAT address share the budget.
+RATE_LIMIT_ATTEMPTS = max(1, int(os.getenv("FZU_CHAT_PASSKEY_RATE_LIMIT_ATTEMPTS", "60")))
 
 
 def verification_error(exc):
@@ -61,7 +64,7 @@ def install_passkey_routes(app, require_auth, request_origin, secure_cookie, set
 
     def limited(request, suffix=""):
         integrity(request)
-        if not fixed_window_rate_limit("passkey:" + client_ip(request) + suffix, 20, 300):
+        if not fixed_window_rate_limit("passkey:" + client_ip(request) + suffix, RATE_LIMIT_ATTEMPTS, 300):
             raise HTTPException(429, "尝试过于频繁，请稍后再试。")
 
     def ceremony_response(cookie, options, request):
