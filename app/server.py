@@ -52,7 +52,7 @@ from .campus_dynamic_context import (
     refresh_signal_snapshots,
 )
 from .chat_store import chat_store
-from .edu_tools import set_current_edu_session
+from .edu_tools import set_current_edu_session, submit_confirmed_course_selection
 from .graph import (
     CHAT_MODEL_OPTIONS,
     DEFAULT_CHAT_MODEL,
@@ -66,7 +66,7 @@ from .graph import (
     summary_chain,
     warm_teaching_week_cache_async,
 )
-from .jwch_client import JwchClient, JwchLoginError, JwchSessionError
+from .jwch_client import JwchClient, JwchError, JwchLoginError, JwchSessionError
 from .memory_store import user_memory_store
 from .oauth_logging import install_oauth_log_filter
 from . import passkeys
@@ -118,6 +118,8 @@ CONVERSATION_CREATE_RATE_LIMIT_WINDOW_SECONDS = max(60, int(os.getenv("FZU_CHAT_
 CONVERSATION_CREATE_RATE_LIMIT_MAX_ATTEMPTS = max(1, int(os.getenv("FZU_CHAT_CONVERSATION_CREATE_RATE_LIMIT_ATTEMPTS", "20")))
 MESSAGE_RATE_LIMIT_WINDOW_SECONDS = max(10, int(os.getenv("FZU_CHAT_MESSAGE_RATE_LIMIT_WINDOW", "60")))
 MESSAGE_RATE_LIMIT_MAX_ATTEMPTS = max(1, int(os.getenv("FZU_CHAT_MESSAGE_RATE_LIMIT_ATTEMPTS", "12")))
+COURSE_SELECTION_CONFIRM_RATE_LIMIT_WINDOW_SECONDS = 60
+COURSE_SELECTION_CONFIRM_RATE_LIMIT_MAX_ATTEMPTS = 6
 TOOL_HISTORY_MAX_CHARS = max(2000, int(os.getenv("FZU_CHAT_TOOL_HISTORY_MAX_CHARS", "120000")))
 PUBLIC_DOCS = env_flag("FZU_CHAT_PUBLIC_DOCS", False)
 GLOBAL_STREAM_LIMIT = max(1, int(os.getenv("FZU_CHAT_GLOBAL_STREAM_LIMIT", "80")))
@@ -160,7 +162,7 @@ TOOL_LABELS: Dict[str, Dict[str, str]] = {
     "query_credit_statistics": {"running": "正在查询学分统计", "complete": "学分统计查询完成"},
     "query_courses": {"running": "正在查询课表", "complete": "课表查询完成"},
     "query_course_selection": {"running": "正在查询选课情况", "complete": "选课情况查询完成"},
-    "select_course": {"running": "正在提交选课", "complete": "选课提交完成"},
+    "select_course": {"running": "正在核对选课信息", "complete": "选课待确认"},
     "query_exam_rooms": {"running": "正在查询考场安排", "complete": "考场安排查询完成"},
     "query_student_info": {"running": "正在查询学生信息", "complete": "学生信息查询完成"},
     "query_exam_scores": {"running": "正在查询考试成绩", "complete": "考试成绩查询完成"},
@@ -576,6 +578,11 @@ class FeedbackUpdateRequest(BaseModel):
 
 
 class MemoryProposalActionRequest(BaseModel):
+    message_id: str
+    action: Literal["confirm", "dismiss"]
+
+
+class CourseSelectionActionRequest(BaseModel):
     message_id: str
     action: Literal["confirm", "dismiss"]
 
@@ -1649,6 +1656,60 @@ def _resolve_memory_proposal(
     return None
 
 
+def _resolve_course_selection_request(
+    conversation: Dict[str, Any],
+    message_id: str,
+    tool_id: str,
+) -> tuple[List[Dict[str, Any]], int, Dict[str, Any], Dict[str, Any]] | None:
+    for message in conversation.get("messages", []):
+        if message.get("id") != message_id or message.get("role") != "assistant":
+            continue
+        parts = list(message.get("parts") or [])
+        for index, part in enumerate(parts):
+            if part.get("type") != "tool" or part.get("tool_id") != tool_id:
+                continue
+            if part.get("tool_name") != "select_course":
+                continue
+            data = part.get("data")
+            if isinstance(data, dict) and data.get("mode") == "select_request":
+                return parts, index, part, data
+        return None
+    return None
+
+
+def _course_selection_request_expired(data: Dict[str, Any]) -> bool:
+    try:
+        expires_at = datetime.fromisoformat(str(data.get("expires_at") or ""))
+    except ValueError:
+        return True
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at <= datetime.now(timezone.utc)
+
+
+def _save_course_selection_part(
+    user_id: str,
+    cid: str,
+    message_id: str,
+    parts: List[Dict[str, Any]],
+    index: int,
+    part: Dict[str, Any],
+    data_updates: Dict[str, Any],
+    status_label: str,
+    raw_content: str,
+) -> Dict[str, Any]:
+    updated_part = {
+        **part,
+        "status_label": status_label,
+        "raw_content": raw_content,
+        "data": {**(part.get("data") or {}), **data_updates},
+    }
+    parts[index] = updated_part
+    if not chat_store.update_message_parts(user_id, cid, message_id, parts):
+        raise HTTPException(status_code=500, detail="更新选课申请状态失败")
+    return updated_part
+
+
 # ---------------------------------------------------------------------------
 # Auth endpoints
 # ---------------------------------------------------------------------------
@@ -2381,6 +2442,114 @@ def update_memory_proposal(
     updated = chat_store.update_message_parts(user.user_id, cid, req.message_id, parts)
     if not updated:
         raise HTTPException(status_code=500, detail="更新记忆建议状态失败")
+    return {"ok": True, "part": updated_part}
+
+
+COURSE_SELECTION_FINAL_STATUSES = {"success", "submitted", "error"}
+
+
+@app.post("/api/conversations/{cid}/course-selections/{tool_id}")
+def update_course_selection_request(
+    cid: str,
+    tool_id: str,
+    req: CourseSelectionActionRequest,
+    request: Request,
+    user: AuthUser = Depends(require_auth),
+):
+    """Second, server-side confirmation for select_course.
+
+    The tool only stores a pending request. This endpoint submits it once, using the
+    parameters persisted on the server, and only for the conversation owner.
+    """
+    conversation = chat_store.get_conversation(user.user_id, cid)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    resolved = _resolve_course_selection_request(conversation, req.message_id, tool_id)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="未找到这条选课申请")
+    parts, index, part, data = resolved
+    status = str(data.get("status") or "")
+    timestamp = now_iso()
+
+    if req.action == "dismiss":
+        if status == "dismissed":
+            return {"ok": True, "part": part}
+        if status != "pending_confirmation":
+            raise HTTPException(status_code=409, detail="这条选课申请已处理，无法取消")
+        updated_part = _save_course_selection_part(
+            user.user_id, cid, req.message_id, parts, index, part,
+            {"status": "dismissed", "dismissed_at": timestamp},
+            "已取消选课", "用户已取消这条选课申请，没有向教务系统提交。",
+        )
+        return {"ok": True, "part": updated_part}
+
+    if status in COURSE_SELECTION_FINAL_STATUSES:
+        return {"ok": True, "part": part}
+    if status == "submitting":
+        raise HTTPException(status_code=409, detail="这条选课申请正在提交，请稍候")
+    if status != "pending_confirmation":
+        raise HTTPException(status_code=409, detail="这条选课申请已失效，请重新发起")
+    if _course_selection_request_expired(data):
+        updated_part = _save_course_selection_part(
+            user.user_id, cid, req.message_id, parts, index, part,
+            {"status": "expired", "expired_at": timestamp},
+            "选课确认已过期", "这条选课申请已过期，没有向教务系统提交。如需选课，请重新发起。",
+        )
+        return {"ok": False, "part": updated_part, "detail": "选课确认已过期，请重新发起"}
+
+    if user.student_type != "undergraduate":
+        raise HTTPException(status_code=403, detail="当前账号未绑定本科教务系统，无法提交选课")
+    _enforce_rate_limit(
+        _rate_limit_key("course-selection-confirm", request, user.user_id),
+        COURSE_SELECTION_CONFIRM_RATE_LIMIT_MAX_ATTEMPTS,
+        COURSE_SELECTION_CONFIRM_RATE_LIMIT_WINDOW_SECONDS,
+        "确认选课过于频繁，请稍后再试。",
+    )
+    session = refresh_edu_session_status(user.token) or get_session(user.token)
+    edu_ctx = _edu_context_from_session(user.user_id, session)
+    if not edu_ctx.get("edu_authenticated"):
+        raise HTTPException(status_code=409, detail="教务连接已失效，请在侧栏重新连接教务后再确认")
+
+    # One submission per request, even across devices or double clicks.
+    if not acquire_dedupe_lock(f"course-selection:{user.user_id}:{cid}:{tool_id}", 180):
+        raise HTTPException(status_code=409, detail="这条选课申请正在提交，请稍候")
+    conversation = chat_store.get_conversation(user.user_id, cid)
+    resolved = _resolve_course_selection_request(conversation or {}, req.message_id, tool_id)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="未找到这条选课申请")
+    parts, index, part, data = resolved
+    if str(data.get("status") or "") != "pending_confirmation":
+        return {"ok": True, "part": part}
+    part = _save_course_selection_part(
+        user.user_id, cid, req.message_id, parts, index, part,
+        {"status": "submitting", "confirmed_at": timestamp},
+        "正在提交选课", "用户已确认，服务器正在提交这条选课申请。",
+    )
+
+    try:
+        content, result = submit_confirmed_course_selection(data, edu_ctx)
+        result_status = str(result.get("status") or "submitted")
+        updates = {
+            "status": result_status if result_status in COURSE_SELECTION_FINAL_STATUSES else "submitted",
+            "submitted_at": now_iso(),
+            "message": result.get("message") or "",
+            "alerts": result.get("alerts") or [],
+            "course": result.get("course") or data.get("course"),
+        }
+        label = {"success": "选课成功", "error": "选课未成功"}.get(updates["status"], "选课已提交")
+    except JwchError as exc:
+        content = f"选课提交失败：{exc}"
+        updates = {"status": "error", "submitted_at": now_iso(), "message": str(exc)}
+        label = "选课未成功"
+    except Exception:
+        logger.exception("Confirmed course selection failed for %s", mask_user_id(user.user_id))
+        content = "提交选课时发生错误，请到教务系统核对是否已提交。"
+        updates = {"status": "error", "submitted_at": now_iso(), "message": content}
+        label = "选课未成功"
+    updated_part = _save_course_selection_part(
+        user.user_id, cid, req.message_id, parts, index, part, updates, label, content,
+    )
+    logger.info("Course selection %s for %s", updates["status"], mask_user_id(user.user_id))
     return {"ok": True, "part": updated_part}
 
 

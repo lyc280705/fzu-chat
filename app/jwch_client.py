@@ -1334,14 +1334,14 @@ class JwchClient:
             "needed_credit_types": needed_credit_types,
         }
 
-    def select_course(
+    def _prepare_course_selection(
         self,
         category: str,
         course_name: str,
         teacher: str = "",
         points: str = "",
-    ) -> Dict[str, Any]:
-        """Submit a selection request for one explicitly specified course."""
+    ) -> Tuple[Dict[str, Any], Any, BeautifulSoup, Dict[str, Any], Tuple[Dict[str, str], str, str]]:
+        """Resolve one exact candidate and build its form payload without submitting anything."""
         self._require_login()
         if not course_name.strip():
             raise JwchError("请提供要选的课程名称")
@@ -1389,8 +1389,38 @@ class JwchClient:
         target_course = matched[0]
         payload, submit_name, submit_value = self._selection_form_defaults(soup)
         self._apply_course_selection(payload, target_course, points=points)
+        return config, response, soup, target_course, (payload, submit_name, submit_value)
+
+    def preview_course_selection(
+        self,
+        category: str,
+        course_name: str,
+        teacher: str = "",
+        points: str = "",
+    ) -> Dict[str, Any]:
+        """Check that a selection request could be submitted, using read-only requests only."""
+        config, _, _, target_course, _ = self._prepare_course_selection(category, course_name, teacher, points)
+        return {
+            "category": config["key"],
+            "category_label": config["label"],
+            "course": self._public_course_entry(target_course),
+            "points": points.strip(),
+        }
+
+    def select_course(
+        self,
+        category: str,
+        course_name: str,
+        teacher: str = "",
+        points: str = "",
+    ) -> Dict[str, Any]:
+        """Submit a selection request for one explicitly specified course."""
+        config, response, _, target_course, form = self._prepare_course_selection(category, course_name, teacher, points)
+        payload, submit_name, submit_value = form
         if submit_name:
             payload[submit_name] = submit_value or "确定选课"
+        normalized_name = _normalize_match_text(course_name)
+        normalized_teacher = _normalize_match_text(teacher)
 
         result_resp = self._selection_request(
             config["list_path"],

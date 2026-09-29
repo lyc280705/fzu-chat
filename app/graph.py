@@ -990,7 +990,7 @@ def _build_query_or_respond(edu_tools, user_memory_tools, campus_recommendation_
     - query_credit_statistics: 查询主修/辅修学分统计
     - query_courses: 查询课表和上课信息
     - query_course_selection: 查询各类选课时间、通识缺口和当前候选课程
-    - select_course: 为用户提交真实选课请求
+    - select_course: 为用户生成选课确认申请（只核对课程，不直接提交；用户在确认卡片上点击确认后由服务器提交）
     - query_exam_rooms: 查询考试安排和考场地点
     - query_student_info: 查询学生个人基本信息
     - query_exam_scores: 查询等级考试成绩（四六级等）
@@ -1008,6 +1008,7 @@ def _build_query_or_respond(edu_tools, user_memory_tools, campus_recommendation_
         - 只有当用户明确要求“帮我选/提交某门课”时才调用
         - 必须拿到明确的选课类别和准确课程名；若同名课程可能有多门，还应补充教师信息
         - 如果用户只是询问“现在有什么可以选”或“我还差什么课”，先调用 query_course_selection，不要直接提交选课
+        - 调用后只是生成了待确认的申请，并未提交；请提醒用户核对卡片上的课程信息并点击“确认提交选课”，不要声称已经选上或已经提交
         对于 recommend_campus_context：
         - 推荐必须说明依据来自课表、考试安排、选课窗口、成绩变化、当前位置或用户手动选择的位置
         - 用户说步行、走路时传 travel_mode=walking；用户说骑车、骑行、自行车时传 travel_mode=bicycling；未说明时不要硬编码 travel_mode，让工具使用用户侧选择的出行偏好

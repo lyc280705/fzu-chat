@@ -3,6 +3,16 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.31] - 2026-09-29
+
+- Require a server-side second confirmation for real course selection. `select_course` now only verifies the course with read-only requests and stores a pending, 10-minute request; nothing is sent to the educational system until the owner confirms it on the card.
+- Add `POST /api/conversations/{cid}/course-selections/{tool_id}` (confirm / dismiss). It submits once using the parameters stored on the server, only for the conversation owner with a live undergraduate education session, with a per-request lock and rate limit; expired, dismissed or already-handled requests are never resubmitted.
+- 选课改为“先核对、再确认”：模型只生成选课确认卡片，用户点击“确认提交选课”后服务器才提交，可取消，10 分钟后失效，重复点击不会重复提交。
+- Add 13 regression tests for the confirmation flow and `scripts/load_test.py` (stepped HTTP and concurrent SSE chat load test).
+- 新增压测脚本；在 2 核 2 GB 线上服务上，非模型接口 200 并发零错误，12 路同时对话全部成功，超过全站 12 路上限的请求按设计返回 429。
+
+---
+
 ## [v7.30] - 2026-09-20
 
 - Promote the verified server-only Alipay web-OAuth entry into the release image. Authorization and chat stay in the same Alipay client; preserve consent checks, single-use state, HttpOnly cookie binding and RSA2 response verification.

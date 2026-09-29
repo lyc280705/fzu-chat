@@ -740,6 +740,8 @@ const STATUS_LABELS = {
   error: '失败',
   success: '已成功',
   submitted: '已提交',
+  submitting: '提交中',
+  expired: '已过期',
   open: '开放中',
   closed: '未开放',
   upcoming: '未开始',
@@ -855,9 +857,22 @@ const memoryToolTitle = (part = {}) => {
   return ''
 }
 
+const COURSE_SELECTION_REQUEST_TITLES = {
+  pending_confirmation: '选课待确认',
+  submitting: '正在提交选课',
+  success: '选课成功',
+  submitted: '选课已提交',
+  error: '选课未成功',
+  dismissed: '已取消选课',
+  expired: '选课确认已过期',
+}
+
 const toolCardTitle = (part = {}) => {
   const memoryTitle = memoryToolTitle(part)
   if (memoryTitle) return memoryTitle
+  if (part.tool_name === 'select_course' && part.data?.mode === 'select_request') {
+    return COURSE_SELECTION_REQUEST_TITLES[part.data.status] || part.status_label || '选课申请'
+  }
   return part.status_label || '工具调用'
 }
 
@@ -1891,12 +1906,115 @@ function SelectionStatusBadge({ status }) {
     success: '成功',
     submitted: '已提交',
     error: '失败',
+    pending_confirmation: '待确认',
+    submitting: '提交中',
+    dismissed: '已取消',
+    expired: '已过期',
   }
   return <span className={`selection-status-badge selection-status-badge--${status || 'unknown'}`}>{labelMap[status] || '状态未知'}</span>
 }
 
-function CourseSelectionCard({ data }) {
+const COURSE_REQUEST_CARD_TONE = {
+  pending_confirmation: 'pending_confirmation',
+  submitting: 'pending_confirmation',
+  success: 'saved',
+  submitted: 'saved',
+  dismissed: 'dismissed',
+  expired: 'dismissed',
+  error: 'error',
+}
+
+function CourseSelectionRequestCard({ part, data, conversationId, messageId, onAction }) {
+  const [pendingAction, setPendingAction] = useState('')
+  const [actionError, setActionError] = useState('')
+  const status = data?.status || 'pending_confirmation'
+  const canAct = status === 'pending_confirmation' && conversationId && messageId && typeof onAction === 'function'
+  const course = data?.course || {}
+  const summary = {
+    类别: data?.category_label,
+    课程: course.course_name || data?.course_name,
+    教师: course.teacher || data?.teacher,
+    学分: course.credits,
+    时间: course.schedule,
+    所投积分: data?.points,
+  }
+
+  useEffect(() => {
+    setPendingAction('')
+    setActionError('')
+  }, [status])
+
+  const handleAction = async (action) => {
+    if (!canAct || pendingAction) return
+    setPendingAction(action)
+    setActionError('')
+    try {
+      await onAction(conversationId, messageId, part.tool_id, action)
+    } catch (err) {
+      setActionError(err.message || '更新选课申请失败')
+      setPendingAction('')
+    }
+  }
+
+  return (
+    <div className="tool-sections">
+      <section className={`memory-proposal-card memory-proposal-card--${COURSE_REQUEST_CARD_TONE[status] || 'unavailable'}`}>
+        <div className="selection-category-header">
+          <strong>{status === 'pending_confirmation' ? '请核对后确认是否提交选课' : (data?.message || COURSE_SELECTION_REQUEST_TITLES[status] || '选课申请')}</strong>
+          <SelectionStatusBadge status={status} />
+        </div>
+        <StudentInfoCard data={Object.fromEntries(Object.entries(summary).filter(([, value]) => value))} />
+
+        {status === 'pending_confirmation' && (
+          <>
+            <div className="memory-proposal-note">
+              确认后由服务器向教务系统提交真实选课请求{data?.expires_at ? `，请在 ${fmt(data.expires_at)} 前确认` : ''}；取消则不会提交。
+            </div>
+            <div className="memory-action-row">
+              <button
+                type="button"
+                className="memory-action-btn memory-action-btn--primary"
+                disabled={Boolean(pendingAction)}
+                onClick={() => void handleAction('confirm')}
+              >
+                {pendingAction === 'confirm' ? '提交中…' : '确认提交选课'}
+              </button>
+              <button
+                type="button"
+                className="memory-action-btn memory-action-btn--secondary"
+                disabled={Boolean(pendingAction)}
+                onClick={() => void handleAction('dismiss')}
+              >
+                {pendingAction === 'dismiss' ? '处理中…' : '取消'}
+              </button>
+            </div>
+          </>
+        )}
+
+        {status === 'submitting' && <div className="memory-proposal-note">正在向教务系统提交，请勿重复操作。</div>}
+        {['success', 'submitted', 'error'].includes(status) && <div className="memory-proposal-note">请到教务系统“我的选课”核对最终结果。</div>}
+        {status === 'dismissed' && <div className="memory-proposal-note">已取消，没有向教务系统提交。</div>}
+        {status === 'expired' && <div className="memory-proposal-note">确认已过期，没有向教务系统提交。如需选课，请重新发起。</div>}
+        {actionError && <div className="memory-proposal-error">{actionError}</div>}
+      </section>
+    </div>
+  )
+}
+
+function CourseSelectionCard({ part, data, conversationId, messageId, onAction }) {
   if (!data || typeof data !== 'object') return null
+
+  if (data.mode === 'select_request') {
+    return (
+      <CourseSelectionRequestCard
+        part={part}
+        data={data}
+        conversationId={conversationId}
+        messageId={messageId}
+        onAction={onAction}
+      />
+    )
+  }
 
   if (data.mode === 'submit') {
     const course = data.course || {}
@@ -2368,7 +2486,7 @@ function MessageMarkdown({ content, citationMap = {}, onCitation }) {
 /*  Tool Card                                                          */
 /* ================================================================== */
 
-function ToolCard({ part, conversationId, messageId, onMemoryProposalAction, expanded, onExpandedChange }) {
+function ToolCard({ part, conversationId, messageId, onMemoryProposalAction, onCourseSelectionAction, expanded, onExpandedChange }) {
   const bodyId = useId()
   const icon = TOOL_ICONS[part.tool_name] || '🔧'
   const isRunning = part.status === 'running'
@@ -2381,7 +2499,7 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction, exp
   const hidesRedundantQuery = Boolean(part.data) && (
     isMemoryAction
     || part.tool_name === 'recommend_campus_context'
-    || (part.tool_name === 'select_course' && part.data?.mode === 'submit')
+    || (part.tool_name === 'select_course' && ['submit', 'select_request'].includes(part.data?.mode))
   )
   const summary = isMemoryAction ? '' : toolResultSummary(part)
   const showRawUrls = !['query_cultivate_plan', 'retrieve', 'bocha_websearch_tool'].includes(part.tool_name)
@@ -2405,8 +2523,17 @@ function ToolCard({ part, conversationId, messageId, onMemoryProposalAction, exp
       case 'query_courses':
         return <CourseTable data={part.data} />
       case 'query_course_selection':
-      case 'select_course':
         return <CourseSelectionCard data={part.data} />
+      case 'select_course':
+        return (
+          <CourseSelectionCard
+            part={part}
+            data={part.data}
+            conversationId={conversationId}
+            messageId={messageId}
+            onAction={onCourseSelectionAction}
+          />
+        )
       case 'query_exam_rooms':
         return <ExamRoomTable data={part.data} />
       case 'query_exam_scores':
@@ -3649,6 +3776,21 @@ function App() {
     return payload.part
   }, [replaceMessageToolPart])
 
+  const handleCourseSelectionAction = useCallback(async (cid, mid, toolId, action) => {
+    const response = await api(`/api/conversations/${cid}/course-selections/${toolId}`, {
+      method: 'POST',
+      body: JSON.stringify({ message_id: mid, action }),
+    })
+    const payload = await response.json().catch(() => ({}))
+    if (payload.part) {
+      replaceMessageToolPart(cid, mid, payload.part)
+    }
+    if (!response.ok) {
+      throw new Error(payload.detail || '更新选课申请失败')
+    }
+    return payload.part
+  }, [replaceMessageToolPart])
+
   const readSSE = useCallback(async (res, cid) => {
     const reader = res.body.getReader()
     const dec = new TextDecoder()
@@ -4190,7 +4332,8 @@ function App() {
                                 conversationId={activeId}
                                 messageId={m.id}
                                 onMemoryProposalAction={handleMemoryProposalAction}
-                                expanded={expandedTools[getToolExpansionKey(m.id, p)] ?? !EDUCATIONAL_TOOL_NAMES.has(p.tool_name)}
+                                onCourseSelectionAction={handleCourseSelectionAction}
+                                expanded={expandedTools[getToolExpansionKey(m.id, p)] ?? (!EDUCATIONAL_TOOL_NAMES.has(p.tool_name) || p.tool_name === 'select_course')}
                                 onExpandedChange={(expanded) => setExpandedTools((previous) => ({ ...previous, [getToolExpansionKey(m.id, p)]: expanded }))}
                               />
                             ) : (

@@ -9,10 +9,11 @@ session from a request-local context variable (set by the request handler in
 from __future__ import annotations
 
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import logging
 import re
 from typing import Any, Dict, List, Tuple
+from uuid import uuid4
 
 from langchain_core.tools import tool
 
@@ -1035,13 +1036,17 @@ def _query_course_selection_impl(query: str = "", edu_session: Dict[str, Any] | 
         return f"查询选课信息时发生错误: {exc}", None
 
 
-def _select_course_impl(
+SELECT_COURSE_CONFIRM_TTL_SECONDS = 600
+
+
+def _request_course_selection_impl(
     category: str,
     course_name: str,
     teacher: str = "",
     points: str = "",
     edu_session: Dict[str, Any] | None = None,
 ) -> Tuple[str, Any]:
+    """Prepare a selection request for the user to confirm; never submits to the educational system."""
     try:
         if not category.strip():
             return "执行选课前请明确选课类别，例如学期选课、通识选修课或重新学习选课。", None
@@ -1049,24 +1054,71 @@ def _select_course_impl(
             return "执行选课前请明确课程名称。", None
 
         client = _build_client(edu_session)
-        result = client.select_course(category=category, course_name=course_name, teacher=teacher, points=points)
-        course = result.get("course") or {}
-        lines = ["## 选课提交结果", ""]
-        lines.append(f"- 类别：{_clean_text(result.get('category_label'))}")
+        preview = client.preview_course_selection(category=category, course_name=course_name, teacher=teacher, points=points)
+        created = datetime.now(timezone.utc)
+        expires = created + timedelta(seconds=SELECT_COURSE_CONFIRM_TTL_SECONDS)
+        course = preview.get("course") or {}
+        artifact = {
+            "mode": "select_request",
+            "proposal_id": str(uuid4()),
+            "status": "pending_confirmation",
+            "category": preview.get("category"),
+            "category_label": preview.get("category_label"),
+            "course_name": course_name.strip(),
+            "teacher": teacher.strip(),
+            "points": points.strip(),
+            "course": course,
+            "created_at": created.isoformat(),
+            "expires_at": expires.isoformat(),
+        }
+        lines = ["## 选课确认申请", ""]
+        lines.append(f"- 类别：{_clean_text(preview.get('category_label'))}")
         lines.append(f"- 课程：{_clean_text(course.get('course_name'))}")
         if course.get("teacher"):
             lines.append(f"- 教师：{_clean_text(course.get('teacher'))}")
-        if points:
+        if course.get("schedule"):
+            lines.append(f"- 时间：{_clean_text(course.get('schedule'))}")
+        if points.strip():
             lines.append(f"- 所投积分：{_clean_text(points)}")
-        lines.append(f"- 结果：{_clean_text(result.get('message'))}")
+        lines.append("- 状态：尚未提交，等待用户确认")
         lines.append("")
-        lines.append("> 提醒：涉及真实选课状态变更，请继续到教务系统“我的选课”或再次查询选课结果进行确认。")
-        return "\n".join(lines), result
+        lines.append(
+            f"> 已在对话中生成选课确认卡片。只有用户在卡片上点击“确认提交选课”后，服务器才会向教务系统提交；"
+            f"申请 {SELECT_COURSE_CONFIRM_TTL_SECONDS // 60} 分钟内有效。请提醒用户核对课程信息后在卡片中确认，不要声称已经选上或已经提交。"
+        )
+        return "\n".join(lines), artifact
     except JwchError as exc:
         return str(exc), None
     except Exception as exc:
-        logger.exception("select_course failed")
-        return f"提交选课时发生错误: {exc}", None
+        logger.exception("select_course preview failed")
+        return f"生成选课确认时发生错误: {exc}", None
+
+
+def submit_confirmed_course_selection(
+    request: Dict[str, Any],
+    edu_session: Dict[str, Any] | None = None,
+) -> Tuple[str, Dict[str, Any]]:
+    """Submit a request the user has confirmed. Only the confirmation endpoint calls this."""
+    client = _build_client(edu_session)
+    points = str(request.get("points") or "")
+    result = client.select_course(
+        category=str(request.get("category") or ""),
+        course_name=str(request.get("course_name") or ""),
+        teacher=str(request.get("teacher") or ""),
+        points=points,
+    )
+    course = result.get("course") or {}
+    lines = ["## 选课提交结果", ""]
+    lines.append(f"- 类别：{_clean_text(result.get('category_label'))}")
+    lines.append(f"- 课程：{_clean_text(course.get('course_name'))}")
+    if course.get("teacher"):
+        lines.append(f"- 教师：{_clean_text(course.get('teacher'))}")
+    if points:
+        lines.append(f"- 所投积分：{_clean_text(points)}")
+    lines.append(f"- 结果：{_clean_text(result.get('message'))}")
+    lines.append("")
+    lines.append("> 用户已确认，服务器已提交。涉及真实选课状态变更，请继续到教务系统“我的选课”或再次查询选课结果进行确认。")
+    return "\n".join(lines), result
 
 
 def build_edu_tools(edu_session: Dict[str, Any] | None = None):
@@ -1164,7 +1216,7 @@ def build_edu_tools(edu_session: Dict[str, Any] | None = None):
 
     @tool(response_format="content_and_artifact")
     def select_course(category: str, course_name: str, teacher: str = "", points: str = "") -> Tuple[str, Any]:
-        """为当前登录学生提交一次真实选课请求。
+        """为当前登录学生生成一次选课确认申请。此工具只核对课程，不会提交；用户在确认卡片上点击确认后，服务器才会真正提交选课。
 
         仅当用户明确要求“选某门课”且已提供足够精确的信息时调用。
 
@@ -1174,7 +1226,7 @@ def build_edu_tools(edu_session: Dict[str, Any] | None = None):
         - teacher: 可选。若同名课程有多门，必须补充教师姓名以消除歧义
         - points: 可选。对于需要填写所投积分的课程，必须提供积分
         """
-        return _select_course_impl(category, course_name, teacher, points, edu_session)
+        return _request_course_selection_impl(category, course_name, teacher, points, edu_session)
 
     return [
         query_grades,
