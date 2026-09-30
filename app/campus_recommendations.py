@@ -430,6 +430,8 @@ def manual_location_options() -> List[Dict[str, Any]]:
 def _build_client(edu_session: Dict[str, Any] | None = None) -> JwchClient | None:
     if not edu_session or not edu_session.get("edu_authenticated"):
         return None
+    if edu_session.get("student_type") in {"graduate", "visitor"}:
+        return None
     return JwchClient.from_cookies(
         edu_session.get("user_id", ""),
         edu_session.get("edu_cookies") or [],

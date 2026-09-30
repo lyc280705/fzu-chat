@@ -51,6 +51,8 @@
 .login-page--auth .login-brand p { margin: 0; color: #95a0af; font-size: 13px; }
 .login-page--auth .login-form { gap: 14px; }
 .auth-method-label { display: flex; align-items: center; gap: 7px; color: #a6b2bf; font-size: 12px; }
+.login-page--auth .auth-method-label .auth-student-select { width: auto; min-height: 0; height: 18px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: inherit; font: inherit; cursor: pointer; color-scheme: dark; }
+.login-page--auth .auth-method-label .auth-student-select:focus-visible { outline: 2px solid #8caea1; outline-offset: 3px; }
 .login-page--auth .login-form .field { gap: 7px; color: #d1d9e3; font-size: 12px; font-weight: 500; }
 .login-page--auth .field input {
   min-height: 44px;

@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Tuple
 from uuid import uuid4
 
 from langchain_core.tools import tool
+from .edu_identity import education_student_id
+from .yjsy_client import YjsyClient, SUPPORTED_TOOLS as YJSY_TOOLS
 
 from .jwch_client import (
     JwchClient,
@@ -48,16 +50,19 @@ def _resolve_edu_session(edu_session: Dict[str, Any] | None = None) -> Dict[str,
     return edu_session or get_current_edu_session()
 
 
-def _build_client(edu_session: Dict[str, Any] | None = None) -> JwchClient:
-    """Build a :class:`JwchClient` from the current request session, or raise."""
+def _build_client(edu_session: Dict[str, Any] | None = None) -> JwchClient | YjsyClient:
+    """Restore the client for the current authenticated education provider."""
     session = _resolve_edu_session(edu_session)
     if not session or not session.get("edu_authenticated"):
         status_message = str((session or {}).get("edu_status_message") or "").strip()
         raise JwchError(status_message or "当前用户尚未连接教务系统，无法查询教务信息。请在侧栏重新连接教务后再试。")
     cookies = session.get("edu_cookies") or []
-    student_id = session.get("user_id", "")
+    if session.get("student_type") == "visitor":
+        raise JwchError("访客模式不支持个人教务查询。")
+    student_id = education_student_id(session.get("user_id", ""), session.get("student_type", ""))
     identifier = session.get("edu_identifier", "")
-    return JwchClient.from_cookies(student_id, cookies, identifier)
+    client_class = YjsyClient if session.get("student_type") == "graduate" else JwchClient
+    return client_class.from_cookies(student_id, cookies, identifier)
 
 
 def _sorted_semester_codes(codes: List[str]) -> List[str]:
@@ -201,6 +206,22 @@ def _resolve_single_semester_code(
 
 def _available_semesters_text(codes: List[str]) -> str:
     return "、".join(format_semester_label(code) for code in _sorted_semester_codes(codes))
+
+
+def _graduate_term_filter(query: str, terms: List[str], *, all_by_default: bool = False) -> Tuple[List[str], bool]:
+    """Select only literal YJSY terms; undergraduate normalization corrupts them."""
+    ordered = sorted(set(term for term in terms if term), reverse=True)
+    normalized = _normalize_query_text(query)
+    matches = [term for term in ordered if _normalize_query_text(term) in normalized]
+    if matches:
+        return matches, True
+    if any(word in normalized for word in ("本学期", "这学期", "当前学期", "最新学期", "最近学期")):
+        return ordered[:1], True
+    if any(word in normalized for word in ("上学期", "上一学期")):
+        return ordered[1:2], True
+    if _looks_like_semester_query(query):
+        return [], True
+    return (ordered if all_by_default else ordered[:1]), False
 
 
 def _clean_text(value: Any, default: str = "—") -> str:
@@ -548,14 +569,21 @@ def _query_grades_impl(query: str = "", edu_session: Dict[str, Any] | None = Non
         if not marks:
             return "未查询到成绩记录。可能是教务系统暂无数据或会话已过期。", None
 
-        matched_codes, has_semester_filter = _resolve_grade_semester_filter(query, marks)
+        graduate = isinstance(client, YjsyClient)
+        if graduate:
+            matched_codes, has_semester_filter = _graduate_term_filter(
+                query, [mark.get("semester_code", "") for mark in marks], all_by_default=True,
+            )
+        else:
+            matched_codes, has_semester_filter = _resolve_grade_semester_filter(query, marks)
         matched_code_set = set(matched_codes)
         filtered_marks = [mark for mark in marks if not has_semester_filter or mark.get("semester_code") in matched_code_set]
         if has_semester_filter and not filtered_marks:
-            available = "、".join(_semester_labels_from_marks(marks))
+            available = "、".join(sorted({mark.get("semester", "") for mark in marks}, reverse=True) if graduate else _semester_labels_from_marks(marks))
             return f"未找到对应学期的成绩记录。\n\n可查询学期：{available}", None
 
         recorded_count = sum(1 for mark in filtered_marks if _clean_text(mark.get("score"), default="") not in ("", "成绩尚未录入"))
+        headers = ["课程", "学分", "成绩"] if graduate else ["课程", "学分", "成绩", "绩点"]
         lines = [
             "## 成绩查询",
             "",
@@ -573,23 +601,25 @@ def _query_grades_impl(query: str = "", edu_session: Dict[str, Any] | None = Non
                         [
                             f"### {current_semester}",
                             "",
-                            _markdown_table(["课程", "学分", "成绩", "绩点"], semester_rows),
+                            _markdown_table(headers, semester_rows),
                             "",
                         ]
                     )
                 current_semester = semester
                 semester_rows = []
-            semester_rows.append([mark.get("name"), mark.get("credits"), mark.get("score"), mark.get("gpa")])
+            values = [mark.get("name"), mark.get("credits"), mark.get("score")]
+            semester_rows.append(values if graduate else values + [mark.get("gpa")])
         if current_semester and semester_rows:
             lines.extend(
                 [
                     f"### {current_semester}",
                     "",
-                    _markdown_table(["课程", "学分", "成绩", "绩点"], semester_rows),
+                    _markdown_table(headers, semester_rows),
                 ]
             )
         if not has_semester_filter and len({mark.get('semester_code') for mark in filtered_marks}) > 1:
-            lines.extend(["", "> 提示：可直接说“查询 2025-2026 学年第一学期成绩”或“查询 2026 春季成绩”。"])
+            hint = "提示：可使用上方显示的完整学期名称筛选成绩。" if graduate else "提示：可直接说“查询 2025-2026 学年第一学期成绩”或“查询 2026 春季成绩”。"
+            lines.extend(["", f"> {hint}"])
         return "\n".join(lines), filtered_marks
     except JwchError as exc:
         return str(exc), None
@@ -601,7 +631,17 @@ def _query_grades_impl(query: str = "", edu_session: Dict[str, Any] | None = Non
 def _query_courses_impl(query: str = "", edu_session: Dict[str, Any] | None = None) -> Tuple[str, Any]:
     try:
         client = _build_client(edu_session)
-        courses = client.get_courses()
+        if isinstance(client, YjsyClient):
+            terms = client.get_terms()
+            selected, has_filter = _graduate_term_filter(query, terms)
+            selected_term = selected[0] if selected else None
+            if not terms:
+                return "研究生系统暂无学期课表记录。", []
+            if has_filter and not selected_term:
+                return f"未找到对应学期的课表。\n\n可查询学期：{'、'.join(terms)}", None
+            courses = client.get_courses(selected_term)
+        else:
+            courses = client.get_courses()
         if not courses:
             return "未查询到课表记录。可能是教务系统暂无数据或会话已过期。", None
         semester = _clean_text(courses[0].get("semester"), default="当前学期")
@@ -762,14 +802,21 @@ def _query_exam_rooms_impl(query: str = "", edu_session: Dict[str, Any] | None =
         client = _build_client(edu_session)
         available_codes = client.get_exam_room_terms()
         current_code = None
-        try:
-            current_code = client.get_school_calendar().get("current_term")
-        except Exception:  # noqa: BLE001
-            current_code = None
+        if not isinstance(client, YjsyClient):
+            try:
+                current_code = client.get_school_calendar().get("current_term")
+            except Exception:  # noqa: BLE001
+                current_code = None
 
-        selected_code, has_term_filter = _resolve_single_semester_code(query, available_codes, current_code)
+        if isinstance(client, YjsyClient):
+            selected, has_term_filter = _graduate_term_filter(query, available_codes)
+            selected_code = selected[0] if selected else None
+            available_text = "、".join(available_codes)
+        else:
+            selected_code, has_term_filter = _resolve_single_semester_code(query, available_codes, current_code)
+            available_text = _available_semesters_text(available_codes)
         if has_term_filter and not selected_code:
-            return f"未找到对应学期的考场数据。\n\n可查询学期：{_available_semesters_text(available_codes)}", None
+            return f"未找到对应学期的考场数据。\n\n可查询学期：{available_text}", None
 
         exam_rooms = client.get_exam_rooms(selected_code)
         exams = exam_rooms.get("exams") or []
@@ -1228,7 +1275,7 @@ def build_edu_tools(edu_session: Dict[str, Any] | None = None):
         """
         return _request_course_selection_impl(category, course_name, teacher, points, edu_session)
 
-    return [
+    tools = [
         query_grades,
         query_gpa_ranking,
         query_credit_statistics,
@@ -1241,6 +1288,14 @@ def build_edu_tools(edu_session: Dict[str, Any] | None = None):
         query_academic_calendar,
         query_cultivate_plan,
     ]
+    student_type = (_resolve_edu_session(edu_session) or {}).get("student_type")
+    if student_type == "visitor":
+        return []
+    if student_type == "graduate":
+        query_grades.description = "查询研究生课程成绩和学分，支持按系统中的学期名称筛选；系统不提供绩点或排名。"
+        query_courses.description = "查询研究生课表，含课程、教师、上课时间和地点；支持系统中的学期名称、本学期、上学期。"
+        return [item for item in tools if item.name in YJSY_TOOLS]
+    return tools
 
 
 # ---------------------------------------------------------------------------

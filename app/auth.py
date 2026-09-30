@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional
 from .runtime_state import get_redis_client, redis_configured, redis_delete, redis_get_json, redis_set_json
 from .security_utils import ensure_private_dir
 from .session_crypto import open_session, seal_session, session_cipher
+from .edu_identity import EDU_STUDENT_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +65,8 @@ def _edu_session_key(user_id: str) -> str:
 
 
 def _with_shared_edu_state(session: Dict[str, Any]) -> Dict[str, Any]:
-    # Visitor identities must never inherit undergraduate credentials.
-    if session.get("student_type") != "undergraduate":
+    # Visitor identities must never inherit educational credentials.
+    if session.get("student_type") not in EDU_STUDENT_TYPES:
         return dict(session)
     key = _edu_session_key(session["user_id"])
     raw_shared = redis_get_json(key)

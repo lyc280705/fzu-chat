@@ -3,6 +3,15 @@
 This file tracks notable tagged releases for FZU-Chat.
 本文件记录 FZU-Chat 的对外发布版本变更。
 
+## [v7.33] - 2026-09-30
+
+- Add graduate education login and reconnection using the request protocol and page-field mappings from `west2-online/yjsy v0.0.11` (commit `d6180deb704c465e4572b62d6c9f505ab0cd3289`). Support grades, semester course schedules, student profiles and exam rooms; bind only these four personal query tools for graduate accounts.
+- Keep undergraduate and graduate account storage and sessions separate, preserve original graduate term values and root-path authentication cookies, recognize HTTP-200 session-expiry pages, and share an account-level login attempt limit across login and reconnect. Retain TLS verification and defensive parsing checks.
+- 在原登录类型文字位置加入紧凑的本科生／研究生下拉选择，保持原登录页面布局。研究生不显示上游未提供的绩点，不开放尚无对应实现的培养计划、绩点排名、选课等工具。
+- Validation: 136 related backend tests passed, including synthetic graduate protocol/integration, undergraduate queries, session isolation/reconnection, visitor auth, Passkeys, course confirmation and model pacing. Frontend lint/build and browser identity-switch checks passed. No real graduate account was available; live authenticated login and personal data parsing remain unverified.
+
+---
+
 ## [v7.32] - 2026-09-29
 
 - Pace model requests per model to Huawei's published limits (model list: glm-5.3 and deepseek-v4.1-flash RPM 100, TPM 1,000,000; run at 95% of both) through one shared httpx transport. Requests are spaced evenly (one every 0.63 s, under the provider's 4/s burst limit) and tokens are estimated per request for the TPM budget. Callers queue up to 45 s (90 s on the 2 GB deployment) and provider 429s are retried; a full queue returns a local 429 and the chat shows a "busy, retry shortly" message instead of the generic failure.

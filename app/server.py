@@ -56,6 +56,8 @@ from .campus_dynamic_context import (
 )
 from .chat_store import chat_store
 from .edu_tools import set_current_edu_session, submit_confirmed_course_selection
+from .edu_identity import EDU_STUDENT_TYPES, education_student_id, education_user_id
+from .yjsy_client import YjsyClient
 from .graph import (
     CHAT_MODEL_OPTIONS,
     DEEPSEEK_CHAT_MODEL,
@@ -515,7 +517,7 @@ def require_auth(
 class LoginRequest(BaseModel):
     student_id: str = Field(min_length=1, max_length=30)
     password: str = Field(min_length=1, max_length=100)
-    student_type: str = "undergraduate"
+    student_type: Literal["undergraduate", "graduate"] = "undergraduate"
     accepted_legal: bool = False
 
 
@@ -1536,7 +1538,7 @@ def refresh_edu_session_status(token: str) -> Dict[str, Any] | None:
     session = get_session(token)
     if not session:
         return None
-    if session.get("student_type") != "undergraduate":
+    if session.get("student_type") not in EDU_STUDENT_TYPES:
         return session
     if not session.get("edu_authenticated"):
         return session
@@ -1554,8 +1556,9 @@ def refresh_edu_session_status(token: str) -> Dict[str, Any] | None:
         return get_session(token)
 
     try:
-        client = JwchClient.from_cookies(
-            session.get("user_id", ""),
+        client_class = YjsyClient if session.get("student_type") == "graduate" else JwchClient
+        client = client_class.from_cookies(
+            education_student_id(session.get("user_id", ""), session.get("student_type", "")),
             cookies,
             session.get("edu_identifier", ""),
         )
@@ -1575,7 +1578,7 @@ def refresh_edu_session_status(token: str) -> Dict[str, Any] | None:
         return session
 
 
-def _build_edu_session_state(client: JwchClient) -> Dict[str, Any]:
+def _build_edu_session_state(client: JwchClient | YjsyClient) -> Dict[str, Any]:
     return {
         "edu_authenticated": True,
         "edu_cookies": [{"name": c.name, "value": c.value} for c in client.session.cookies],
@@ -1601,6 +1604,10 @@ def _edu_context_from_session(user_id: str, session: Dict[str, Any] | None) -> D
 def schedule_signal_snapshot_refresh(user_id: str, edu_ctx: Dict[str, Any] | None) -> None:
     if not user_id or not edu_ctx or not edu_ctx.get("edu_authenticated"):
         return
+    if edu_ctx.get("student_type") == "graduate":
+        # Graduate integration currently exposes only the four SDK queries.
+        # Undergraduate calendar/selection reminder logic does not apply.
+        return
     if not acquire_dedupe_lock(f"signal-refresh:{user_id}", 120):
         return
 
@@ -1624,7 +1631,7 @@ def schedule_signal_snapshot_refresh(user_id: str, edu_ctx: Dict[str, Any] | Non
 
 def clear_edu_session(token: str, status_message: str = "", *, expected_revision: str | None = None) -> None:
     session = get_session(token)
-    if not session or session.get("student_type") != "undergraduate":
+    if not session or session.get("student_type") not in EDU_STUDENT_TYPES:
         return
     update_user_edu_session(
         session["user_id"],
@@ -1642,7 +1649,7 @@ def clear_edu_session(token: str, status_message: str = "", *, expected_revision
 def public_auth_sync_state(token: str) -> Dict[str, Any]:
     """A credential-free snapshot for all devices, without upstream polling."""
     session = get_session(token)
-    if session and session.get("student_type") == "undergraduate" and session.get("edu_authenticated"):
+    if session and session.get("student_type") in EDU_STUDENT_TYPES and session.get("edu_authenticated"):
         expires_at = float(session.get("edu_session_expires_at") or 0)
         if expires_at and expires_at <= time.time():
             clear_edu_session(token, "教务连接已超时，请重新连接教务。",
@@ -1654,7 +1661,7 @@ def public_auth_sync_state(token: str) -> Dict[str, Any]:
             "edu_error": session.get("edu_status_message") or ""}
 
 
-def connect_user_edu_session(user_id: str, client: JwchClient) -> None:
+def connect_user_edu_session(user_id: str, client: JwchClient | YjsyClient) -> None:
     try:
         update_user_edu_session(user_id, _build_edu_session_state(client))
     except RuntimeError as exc:
@@ -1997,6 +2004,14 @@ def _acquire_edu_login_slot():
         time.sleep(0.25)
 
 
+def _limit_graduate_login(student_id: str) -> None:
+    # user.go documents an upstream lockout after repeated failures. Share one
+    # conservative account-level budget across initial login and reconnect.
+    subject = hashlib.sha256(student_id.encode("utf-8")).hexdigest()
+    _enforce_rate_limit(f"graduate-edu-login:{subject}", 5, 1800,
+                        "研究生教务登录尝试较多，请半小时后再试，避免触发学校账号锁定。")
+
+
 @app.post("/api/auth/login")
 def login(req: LoginRequest, request: Request) -> JSONResponse:
     _enforce_rate_limit(
@@ -2009,15 +2024,16 @@ def login(req: LoginRequest, request: Request) -> JSONResponse:
     if not req.accepted_legal:
         raise HTTPException(status_code=400, detail="请先阅读并同意用户协议与隐私政策。")
 
-    if req.student_type != "undergraduate":
-        raise HTTPException(status_code=403, detail="当前仅支持本科生通过教务系统登录，研究生登录暂未开放。")
+    if req.student_type == "graduate":
+        _limit_graduate_login(req.student_id)
 
     login_slot = _acquire_edu_login_slot()
     if login_slot is None:
         raise HTTPException(status_code=429, detail="教务登录请求较多，请稍后再试。")
     try:
         try:
-            client = JwchClient(req.student_id, req.password)
+            client_class = YjsyClient if req.student_type == "graduate" else JwchClient
+            client = client_class(req.student_id, req.password)
             client.login()
         except JwchLoginError as exc:
             logger.warning("Edu login rejected for %s: %s", mask_user_id(req.student_id), type(exc).__name__)
@@ -2028,23 +2044,25 @@ def login(req: LoginRequest, request: Request) -> JSONResponse:
     finally:
         release_slot(login_slot)
 
-    connect_user_edu_session(req.student_id, client)
+    user_id = education_user_id(req.student_id, req.student_type)
+    connect_user_edu_session(user_id, client)
     existing_token = request.cookies.get(AUTH_COOKIE_NAME)
     if existing_token:
         invalidate_session(existing_token)
     token = create_session(
-        user_id=req.student_id,
+        user_id=user_id,
         student_type=req.student_type,
         display_name=req.student_id,
         edu_authenticated=False,
     )
     warm_teaching_week_cache_async()
-    schedule_signal_snapshot_refresh(req.student_id, _edu_context_from_session(req.student_id, get_session(token)))
+    schedule_signal_snapshot_refresh(user_id, _edu_context_from_session(user_id, get_session(token)))
 
     response = JSONResponse(
         {
             "user": {
-                "user_id": req.student_id,
+                "user_id": user_id,
+                "student_id": req.student_id,
                 "student_type": req.student_type,
                 "display_name": req.student_id,
                 "edu_authenticated": True,
@@ -2065,15 +2083,19 @@ def relogin_edu(req: EduReloginRequest, request: Request, user: AuthUser = Depen
         "教务重新连接尝试过于频繁，请稍后再试。",
     )
 
-    if user.student_type != "undergraduate":
+    if user.student_type not in EDU_STUDENT_TYPES:
         raise HTTPException(status_code=403, detail="当前账号不支持重新连接教务。")
+
+    if user.student_type == "graduate":
+        _limit_graduate_login(education_student_id(user.user_id, user.student_type))
 
     relogin_slot = _acquire_edu_login_slot()
     if relogin_slot is None:
         raise HTTPException(status_code=429, detail="教务登录请求较多，请稍后再试。")
     try:
         try:
-            client = JwchClient(user.user_id, req.password)
+            client_class = YjsyClient if user.student_type == "graduate" else JwchClient
+            client = client_class(education_student_id(user.user_id, user.student_type), req.password)
             client.login()
         except JwchLoginError as exc:
             logger.warning("Edu relogin rejected for %s: %s", mask_user_id(user.user_id), type(exc).__name__)
@@ -2093,6 +2115,7 @@ def relogin_edu(req: EduReloginRequest, request: Request, user: AuthUser = Depen
         {
             "user": {
                 "user_id": session.get("user_id", user.user_id),
+                "student_id": education_student_id(user.user_id, user.student_type),
                 "student_type": session.get("student_type", user.student_type),
                 "display_name": session.get("display_name", user.display_name),
                 "edu_authenticated": True,
@@ -2121,6 +2144,7 @@ def auth_me(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     session = refresh_edu_session_status(user.token) or get_session(user.token) or {}
     return {
         "user_id": session.get("user_id", user.user_id),
+        "student_id": education_student_id(user.user_id, user.student_type) if user.student_type in EDU_STUDENT_TYPES else "",
         "student_type": session.get("student_type", user.student_type),
         "display_name": session.get("display_name", user.display_name),
         "auth_provider": session.get("auth_provider", ""),

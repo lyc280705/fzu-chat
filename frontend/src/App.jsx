@@ -1104,7 +1104,7 @@ function LegalDocumentPage({ documentKey, onBack, onSelect }) {
 function LoginPage({ onLogin }) {
   const [studentId, setStudentId] = useState('')
   const [password, setPassword] = useState('')
-  const studentType = 'undergraduate'
+  const [studentType, setStudentType] = useState('undergraduate')
   const [acceptedLegal, setAcceptedLegal] = useState(false)
   const [legalDocumentKey, setLegalDocumentKey] = useState(null)
   const [passwordVisible, setPasswordVisible] = useState(false)
@@ -1188,7 +1188,7 @@ function LoginPage({ onLogin }) {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ student_id: studentId.trim(), password: password.trim(), student_type: studentType, accepted_legal: true }),
+        body: JSON.stringify({ student_id: studentId.trim(), password: studentType === 'graduate' ? password : password.trim(), student_type: studentType, accepted_legal: true }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
@@ -1217,7 +1217,7 @@ function LoginPage({ onLogin }) {
       return
     }
     if (providerStatus?.configured === false) {
-      setError(`${label}访客登录尚未配置，请先使用本科生教务登录。`)
+      setError(`${label}访客登录尚未配置，请先使用教务登录。`)
       return
     }
     setError('')
@@ -1258,7 +1258,7 @@ function LoginPage({ onLogin }) {
             <p>从一门课的安排，到一个新想法。<br />灵犀陪你探索校园，也陪你找到答案。</p>
             <ul className="auth-features">
               <li><BookOpen size={20} aria-hidden="true" /><div><strong>校园知识，随时问</strong><span>学校资讯与知识检索，让答案更有依据</span></div></li>
-              <li><GraduationCap size={20} aria-hidden="true" /><div><strong>教务信息，轻松查</strong><span>连接本科教务，查询课表、成绩与考试</span></div></li>
+              <li><GraduationCap size={20} aria-hidden="true" /><div><strong>教务信息，轻松查</strong><span>连接教务，查询课表、成绩与考试</span></div></li>
               <li><MapPin size={20} aria-hidden="true" /><div><strong>校园生活，一起发现</strong><span>食堂、自习与出行，找到适合你的建议</span></div></li>
             </ul>
           </div>
@@ -1271,7 +1271,15 @@ function LoginPage({ onLogin }) {
         </div>
         <form className="login-form" onSubmit={handleSubmit}>
           {error && <div className="login-error" role="alert">{error}</div>}
-          <div className="auth-method-label"><GraduationCap size={16} aria-hidden="true" /><span>本科生教务登录</span></div>
+          <div className="auth-method-label">
+            <GraduationCap size={16} aria-hidden="true" />
+            <select className="auth-student-select" aria-label="教务身份" value={studentType}
+              disabled={loading || Boolean(oauthLoadingProvider)}
+              onChange={(event) => { setStudentType(event.target.value); setPassword(''); setError(''); setSubmitted(false) }}>
+              <option value="undergraduate">本科生教务登录</option>
+              <option value="graduate">研究生教务登录</option>
+            </select>
+          </div>
           <label className={studentIdError ? 'field field--error' : 'field'}>
             <span>学号</span>
             <input
@@ -1381,7 +1389,7 @@ function LoginPage({ onLogin }) {
                   <span>Passkey</span>
                 </button>
               </div>
-              <p className="oauth-login-note">第三方账号与 Passkey 身份可使用公共问答与校园建议，<br />个人教务查询需使用本科生账号登录。</p>
+              <p className="oauth-login-note">第三方访客可使用公共问答与校园建议，<br />个人教务查询需使用本科生或研究生账号登录。</p>
         </form>
         <p className="login-footer"><LockKeyhole size={13} aria-hidden="true" />教务密码仅用于当次认证，不会保存</p>
       </div>
@@ -1497,6 +1505,7 @@ function EduReconnectDialog({ open, message, studentId, onSubmit, onClose }) {
 function GradeTable({ data }) {
   if (!Array.isArray(data) || data.length === 0) return null
   const groups = groupGradesBySemester(data)
+  const showGpa = !data.every((row) => row.student_type === 'graduate')
   return (
     <div className="grade-groups">
       {groups.map((group, index) => (
@@ -1509,7 +1518,7 @@ function GradeTable({ data }) {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>课程</th><th>学分</th><th>成绩</th><th>绩点</th>
+                  <th>课程</th><th>学分</th><th>成绩</th>{showGpa && <th>绩点</th>}
                 </tr>
               </thead>
               <tbody>
@@ -1518,7 +1527,7 @@ function GradeTable({ data }) {
                     <td data-label="课程">{r.name}</td>
                     <td data-label="学分">{r.credits}</td>
                     <td data-label="成绩">{r.score}</td>
-                    <td data-label="绩点">{r.gpa}</td>
+                    {showGpa && <td data-label="绩点">{r.gpa}</td>}
                   </tr>
                 ))}
               </tbody>
@@ -1536,12 +1545,13 @@ function GradeTable({ data }) {
 
 function CourseTable({ data }) {
   if (!Array.isArray(data) || data.length === 0) return null
+  const showCredits = !data.every((row) => row.student_type === 'graduate')
   return (
     <div className="data-table-wrap">
       <table className="data-table">
         <thead>
           <tr>
-            <th>课程</th><th>教师</th><th>学分</th><th>时间</th><th>地点</th>
+            <th>课程</th><th>教师</th>{showCredits && <th>学分</th>}<th>时间</th><th>地点</th>
           </tr>
         </thead>
         <tbody>
@@ -1549,7 +1559,7 @@ function CourseTable({ data }) {
             <tr key={i}>
               <td data-label="课程">{r.name}</td>
               <td data-label="教师">{r.teacher}</td>
-              <td data-label="学分">{r.credits}</td>
+              {showCredits && <td data-label="学分">{r.credits}</td>}
               <td data-label="时间">{r.time}</td>
               <td data-label="地点">{r.location}</td>
             </tr>
@@ -2892,7 +2902,7 @@ function App() {
     ))
   }, [conversationQuery, conversations])
   const userId = user?.user_id ?? ''
-  const needsEduRelogin = user?.student_type === 'undergraduate' && !user?.edu_authenticated
+  const needsEduRelogin = ['undergraduate', 'graduate'].includes(user?.student_type) && !user?.edu_authenticated
   const isVisitorUser = user?.student_type === 'visitor'
   const authProviderLabel = user?.auth_provider === 'passkey' ? 'Passkey' : OAUTH_PROVIDER_LABELS[user?.auth_provider] || '访客'
   const userModeText = isVisitorUser
@@ -4204,7 +4214,7 @@ function App() {
                 <GraduationCap size={16} aria-hidden="true" /><span>教务连接已过期</span><ChevronDown size={14} aria-hidden="true" />
               </button>
               <AnimatedCollapse open={eduReconnectOpen} id="edu-reconnect-fields">
-                <EduReloginPanel key={String(needsEduRelogin)} message={eduError} studentId={user.user_id} onSubmit={handleEduRelogin} />
+                <EduReloginPanel key={String(needsEduRelogin)} message={eduError} studentId={user.student_id || user.display_name} onSubmit={handleEduRelogin} />
               </AnimatedCollapse>
             </div>
           </AnimatedCollapse>
@@ -4244,7 +4254,7 @@ function App() {
           </AnimatedCollapse>
         </header>
 
-        <EduReconnectDialog open={eduDialogOpen && needsEduRelogin} message={eduError} studentId={user.user_id} onSubmit={handleEduRelogin} onClose={() => setEduDialogOpen(false)} />
+        <EduReconnectDialog open={eduDialogOpen && needsEduRelogin} message={eduError} studentId={user.student_id || user.display_name} onSubmit={handleEduRelogin} onClose={() => setEduDialogOpen(false)} />
 
         {isPrivacyView ? (
           <PrivacyPolicyView
